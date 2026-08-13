@@ -29,7 +29,13 @@ export function llmConfig(): LlmConfig {
     'gemini-flash-latest',
     'gemini-3.1-flash-lite',
   ].filter((m, i, a) => a.indexOf(m) === i);
-  const openrouterModels = [process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free'];
+  // OpenRouter :free models share a throttled pool — chain several.
+  // Verified tool-calling: gpt-oss-20b + nemotron-3.5-lightning (Aug 2026).
+  const openrouterModels = [
+    process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
+    'nvidia/nemotron-3.5-lightning:free',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+  ].filter((m, i, a) => a.indexOf(m) === i);
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const fallbacks: LlmConfig[] = [];
@@ -356,16 +362,18 @@ export async function runAgent(
   messages: ChatMessage[],
   tools: ToolSchema[],
   cb: AgentCallbacks = {}
-): Promise<{ content: string; iterations: number }> {
+): Promise<{ content: string; iterations: number; modelUsed: string | null }> {
   const msgs: ChatMessage[] = [...messages];
   let finalText = '';
   let iterations = 0;
+  let modelUsed: string | null = null;
 
   for (; iterations < 5; iterations++) {
     const resp = await streamChatOnce(cfg, msgs, tools, {
       onDelta: cb.onDelta,
       signal: cb.signal,
     });
+    if (resp.modelUsed) modelUsed = resp.modelUsed;
     finalText = resp.content;
 
     if (!resp.toolCalls.length) break;
@@ -406,5 +414,5 @@ export async function runAgent(
     }
   }
 
-  return { content: finalText, iterations: iterations + 1 };
+  return { content: finalText, iterations: iterations + 1, modelUsed };
 }

@@ -103,7 +103,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         .map((m) => ({ role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const), content: m.content })),
     ];
 
-    const { content: finalText } = await runAgent(cfg, messages, getToolSchemas(), {
+    const { content: finalText, modelUsed } = await runAgent(cfg, messages, getToolSchemas(), {
       signal: controller.signal,
       onDelta: (text) => sse(res, 'delta', { text }),
       onToolEvent: (ev) => {
@@ -138,7 +138,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       }
     }
     if (logs.length) sse(res, 'log', { stored: logs.length });
-    sse(res, 'done', {});
+    sse(res, 'done', { modelUsed });
     res.end();
   } catch (e) {
     if (res.writableEnded) return;
