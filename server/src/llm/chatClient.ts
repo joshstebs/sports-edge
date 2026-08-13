@@ -20,39 +20,73 @@ export interface LlmConfig {
 
 export function llmConfig(): LlmConfig {
   const geminiKey = process.env.GEMINI_API_KEY;
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+  // NOTE: 2.5-era models are LISTED in the models endpoint but 404 for new
+  // keys ("no longer available to new users") — only 3.x/current-gen work.
   const geminiModels = [
     process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     'gemini-flash-latest',
-    'gemini-2.5-flash-lite',
+    'gemini-3.1-flash-lite',
   ].filter((m, i, a) => a.indexOf(m) === i);
+  const openrouterModels = [process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free'];
+  const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
+
+  const fallbacks: LlmConfig[] = [];
+  if (openrouterKey) {
+    fallbacks.push({
+      configured: true,
+      provider: 'openrouter',
+      model: openrouterModels[0],
+      models: openrouterModels,
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+  }
+  if (openaiKey) {
+    fallbacks.push({
+      configured: true,
+      provider: 'openai',
+      model: openaiModels[0],
+      models: openaiModels,
+      baseUrl: 'https://api.openai.com/v1',
+    });
+  }
+  const withFallback = (cfg: LlmConfig): LlmConfig => {
+    if (fallbacks.length) cfg.fallback = fallbacks[0];
+    for (let i = 1; i < fallbacks.length; i++) {
+      let cur = cfg.fallback;
+      while (cur?.fallback) cur = cur.fallback;
+      if (cur) cur.fallback = fallbacks[i];
+    }
+    return cfg;
+  };
+
   if (geminiKey) {
-    const cfg: LlmConfig = {
+    return withFallback({
       configured: true,
       provider: 'gemini',
       model: geminiModels[0],
       models: geminiModels,
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    };
-    if (openaiKey) {
-      cfg.fallback = {
-        configured: true,
-        provider: 'openai',
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        models: [process.env.OPENAI_MODEL || 'gpt-4o-mini'],
-        baseUrl: 'https://api.openai.com/v1',
-      };
-    }
-    return cfg;
+    });
+  }
+  if (openrouterKey) {
+    return withFallback({
+      configured: true,
+      provider: 'openrouter',
+      model: openrouterModels[0],
+      models: openrouterModels,
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
   }
   if (openaiKey) {
-    return {
+    return withFallback({
       configured: true,
       provider: 'openai',
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      models: [process.env.OPENAI_MODEL || 'gpt-4o-mini'],
+      model: openaiModels[0],
+      models: openaiModels,
       baseUrl: 'https://api.openai.com/v1',
-    };
+    });
   }
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
@@ -134,7 +168,12 @@ async function tryModel(
   cb: StreamCallbacks
 ): Promise<TryResult> {
   const url = `${pc.baseUrl}/chat/completions`;
-  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+  const apiKey =
+    pc.provider === 'gemini'
+      ? process.env.GEMINI_API_KEY
+      : pc.provider === 'openrouter'
+        ? process.env.OPENROUTER_API_KEY
+        : process.env.OPENAI_API_KEY;
 
   // One quick 429 retry with backoff (respect Retry-After up to 20s), then move on.
   for (let attempt = 0; attempt < 2; attempt++) {
