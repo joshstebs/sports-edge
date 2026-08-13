@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+# pnpm workspace + approved build scripts (pnpm >= 10.14 reads settings here)
+onlyBuiltDependencies:
+  - esbuild

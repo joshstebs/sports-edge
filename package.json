@@ -1,0 +1,14 @@
+{
+  "name": "sports-edge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI sports betting analyst platform - chat with live data grounding",
+  "scripts": {
+    "setup": "cd server && pnpm install && cd ../client && pnpm install",
+    "dev": "concurrently -n server,client -c blue,green \"cd server && pnpm dev\" \"cd client && pnpm dev\"",
+    "build": "cd server && pnpm build && cd ../client && pnpm build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

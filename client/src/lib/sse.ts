@@ -1,0 +1,78 @@
+import type { ChatEvent } from '../types';
+
+export interface StreamChatBody {
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  sport?: string | null;
+}
+
+export interface StreamChatOptions {
+  signal?: AbortSignal;
+  onEvent: (event: ChatEvent) => void;
+}
+
+/**
+ * Parse one complete SSE frame (already split on '\n\n').
+ * Framing: "event: <type>\ndata: <json>\n\n". Malformed frames are dropped —
+ * a bad frame must never kill the stream.
+ */
+function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
+  if (!frame.trim()) return;
+  let type = '';
+  const dataLines: string[] = [];
+  for (const rawLine of frame.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (line.startsWith('event:')) {
+      type = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+  if (!type || dataLines.length === 0) return;
+  try {
+    const data = JSON.parse(dataLines.join('\n'));
+    onEvent({ type, ...data } as ChatEvent);
+  } catch {
+    // Malformed JSON payload — drop the frame, keep streaming.
+  }
+}
+
+/**
+ * POST /api/chat and consume the text/event-stream response.
+ * Incremental TextDecoder (stream:true) + buffer split on '\n\n' handles
+ * frames that arrive split across network chunks, and a final flush handles a
+ * partial trailing frame at stream end.
+ */
+export async function streamChat(body: StreamChatBody, opts: StreamChatOptions): Promise<void> {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    throw new Error(`Chat API returned HTTP ${res.status}`);
+  }
+  if (!res.body) {
+    throw new Error('Chat API returned no response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep = buffer.indexOf('\n\n');
+    while (sep !== -1) {
+      parseFrame(buffer.slice(0, sep), opts.onEvent);
+      buffer = buffer.slice(sep + 2);
+      sep = buffer.indexOf('\n\n');
+    }
+  }
+  buffer += decoder.decode(); // flush any decoder-internal state
+  if (buffer.trim().length > 0) {
+    parseFrame(buffer, opts.onEvent);
+  }
+}

@@ -1,0 +1,195 @@
+@import 'tailwindcss';
+
+/* ---------- PropsBot-style dark-sportsbook design tokens ---------- */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Poppins', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #050b1a; /* page background — deep navy-black */
+  --color-panel: #04122e; /* glassy card */
+  --color-panel2: #071a2a; /* raised surface */
+  --color-line: #0c2b3a; /* subtle borders */
+  --color-edge: #15ffc2; /* primary neon mint accent */
+  --color-edge2: #06ef97; /* mint gradient companion */
+  --color-teal3: #00d49e; /* teal gradient companion */
+  --color-aqua: #22a9ec; /* secondary cyan */
+  --color-sky2: #48e7fe; /* bright cyan */
+  --color-danger: #ff1552; /* negative red */
+  --color-warn: #f0c040; /* warning amber */
+  --color-frost: #a8c3d8; /* muted blue-grey text */
+  --color-frost2: #8fa8c0; /* dimmer muted text */
+  --color-head: #eef2f7; /* headings */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(1100px 520px at 85% -10%, rgba(21, 255, 194, 0.055), transparent 60%),
+    radial-gradient(900px 480px at -10% 110%, rgba(34, 169, 236, 0.05), transparent 60%),
+    #050b1a;
+  color: var(--color-head);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Slim dark scrollbars */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #0c2b3a;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #14394d;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- Markdown body (assistant messages) ---------- */
+.md-body {
+  font-size: 0.925rem;
+  line-height: 1.75;
+  color: var(--color-frost);
+  overflow-wrap: anywhere;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body p {
+  margin: 0.6rem 0;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  font-weight: 700;
+  margin: 1.1rem 0 0.5rem;
+  color: #fff;
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+.md-body h1 {
+  font-size: 1.25rem;
+}
+.md-body h2 {
+  font-size: 1.1rem;
+}
+.md-body h3 {
+  font-size: 1rem;
+}
+.md-body ul {
+  list-style: disc;
+  padding-left: 1.4rem;
+  margin: 0.6rem 0;
+}
+.md-body ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+  margin: 0.6rem 0;
+}
+.md-body li {
+  margin: 0.25rem 0;
+}
+.md-body li > p {
+  margin: 0.15rem 0;
+}
+.md-body strong {
+  color: #fff;
+  font-weight: 700;
+}
+.md-body em {
+  color: #d3e2ef;
+}
+.md-body a {
+  color: var(--color-edge);
+  text-decoration: underline;
+}
+.md-body blockquote {
+  border-left: 3px solid #14394d;
+  padding-left: 0.9rem;
+  color: var(--color-frost2);
+  margin: 0.7rem 0;
+}
+.md-body code {
+  background: rgba(168, 195, 216, 0.12);
+  border: 1px solid rgba(168, 195, 216, 0.1);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+  font-size: 0.84em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.md-body pre {
+  background: #030a18;
+  border: 1px solid var(--color-line);
+  border-radius: 0.6rem;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.md-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.83rem;
+  color: #cbd5e1;
+}
+/* PropsBot-style tables: navy header row, muted-blue text, thin borders, zebra rows */
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8rem 0;
+  font-size: 0.85rem;
+  display: block;
+  overflow-x: auto;
+}
+.md-body th {
+  background: #0c2b3a;
+  font-weight: 600;
+  color: var(--color-frost);
+}
+.md-body th,
+.md-body td {
+  border: 1px solid rgba(140, 190, 220, 0.14);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.md-body tr:nth-child(even) td {
+  background: rgba(148, 163, 184, 0.05);
+}
+.md-body hr {
+  border-color: var(--color-line);
+  margin: 1rem 0;
+}
+
+/* ---------- Streaming cursor: neon mint block ---------- */
+@keyframes cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.cursor-blink {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--color-edge);
+  box-shadow: 0 0 8px rgba(21, 255, 194, 0.6);
+  vertical-align: text-bottom;
+  animation: cursor-blink 0.9s steps(1) infinite;
+}

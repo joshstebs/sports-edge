@@ -1,0 +1,23 @@
+{
+  "name": "sports-edge-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SportsEdge backend - Express + TypeScript, LLM chat grounded in real live sports data via function calling",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "probe": "tsx scripts/probe.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
