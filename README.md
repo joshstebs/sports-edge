@@ -23,8 +23,14 @@ Empirical **P(over) at half-lines** computed from real game logs (Beta-shrunk `(
 - Coefficient of variation (consistency) + form trend per prop
 - Everything derived from real stats — the bot cannot invent numbers (tools return `available:false` and it says so)
 
-## Pick ledger
-`POST /api/ledger` saves SGP legs; `POST /api/ledger/:id/result` marks won/lost/push; `GET /api/ledger` returns ROI + win rate computed from **real odds** (flat 1-unit stakes). Stored in `server/data/ledger.json` (gitignored).
+## Pick ledger & self-learning loop
+- **Pick ledger**: `POST /api/ledger` saves SGP legs; `POST /api/ledger/:id/result` marks won/lost/push; `GET /api/ledger` returns ROI + win rate computed from **real odds** (flat 1-unit stakes). Stored in `server/data/ledger.json` (gitignored).
+- **Self-learning predictions**: every pick the analyst makes appends a `[PREDICTION_LOG]` JSON block that the backend extracts and stores (`server/data/predictions.json`). A daily **6 AM cron** (`scripts/evaluate.ts`, wired to Telegram via Hermes cron) grades each pending pick against the official statsapi box score for the game on the pick's own date, computes hit rate / ROI / per-market calibration, and writes **adaptive learning rules** (`data/learning.json`) that get injected into the system prompt at chat time — the analyst literally learns from its own tracked results. Silent when there are no picks to grade.
+
+## Model fallback chain
+The chat brain rotates through models when one is unavailable (Gemini free-tier quotas are per-model):
+`gemini-3.5-flash` → `gemini-flash-latest` → `gemini-2.5-flash-lite` → (if `OPENAI_API_KEY` set) `gpt-4o-mini`.
+Set `GEMINI_MODEL`/`OPENAI_MODEL` in `server/.env` to override the primary. Also registered as a Windows user environment variable (`GEMINI_API_KEY`) — the server reads the env var first, then `server/.env`.
 
 ## Setup
 ```bash

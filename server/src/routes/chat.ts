@@ -4,6 +4,7 @@ import { Router, Request, Response } from 'express';
 import { SYSTEM_PROMPT } from '../prompt/systemPrompt.js';
 import { llmConfig, runAgent, ChatMessage } from '../llm/chatClient.js';
 import { getToolSchemas } from '../llm/toolRegistry.js';
+import { addPrediction, learningPromptBlock } from '../lib/predictionStore.js';
 
 export const chatRouter = Router();
 
@@ -25,6 +26,35 @@ function extractSgpBlocks(text: string): any[] {
     }
   }
   return blocks;
+}
+
+/** Extract [PREDICTION_LOG] JSON blocks (self-learning protocol). */
+function extractPredictionLogs(text: string): any[] {
+  const out: any[] = [];
+  let idx = 0;
+  while (true) {
+    const start = text.indexOf('[PREDICTION_LOG]', idx);
+    if (start < 0) break;
+    let rest = text.slice(start + '[PREDICTION_LOG]'.length);
+    // skip to the JSON object
+    const open = rest.indexOf('{');
+    if (open < 0) break;
+    rest = rest.slice(open);
+    const fence = rest.indexOf('```');
+    const end = fence >= 0 ? fence : rest.length;
+    const candidate = rest.slice(0, end).trim();
+    const close = candidate.lastIndexOf('}');
+    if (close > 0) {
+      try {
+        const parsed = JSON.parse(candidate.slice(0, close + 1));
+        if (parsed && parsed.prediction_id && Array.isArray(parsed.legs)) out.push(parsed);
+      } catch {
+        // malformed — skip
+      }
+    }
+    idx = start + 15;
+  }
+  return out;
 }
 
 chatRouter.post('/chat', async (req: Request, res: Response) => {
@@ -49,7 +79,11 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   const sport: string | null = typeof body.sport === 'string' && body.sport ? body.sport : null;
 
   const controller = new AbortController();
-  req.on('close', () => {
+  // Node 18+: req 'close' fires when the request BODY is consumed, not on
+  // disconnect — that would abort every request instantly. Detect real client
+  // disconnects via 'aborted' + res 'close' while the response is unfinished.
+  req.on('aborted', () => controller.abort());
+  res.on('close', () => {
     if (!res.writableEnded) controller.abort();
   });
 
@@ -57,7 +91,13 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     sse(res, 'meta', { model: cfg.model, sport, llmConfigured: true, provider: cfg.provider });
 
     const messages: ChatMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT + (sport ? `\nFocus analysis on ${sport}.` : '') },
+      {
+        role: 'system',
+        content:
+          SYSTEM_PROMPT +
+          learningPromptBlock() +
+          (sport ? `\nFocus analysis on ${sport}.` : ''),
+      },
       ...rawMessages
         .filter((m) => m && typeof m.content === 'string')
         .map((m) => ({ role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const), content: m.content })),
@@ -79,6 +119,25 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     for (const block of extractSgpBlocks(finalText)) {
       sse(res, 'sgp', block);
     }
+    // Self-learning protocol: persist every [PREDICTION_LOG] block.
+    const logs = extractPredictionLogs(finalText);
+    for (const log of logs) {
+      try {
+        addPrediction({
+          prediction_id: String(log.prediction_id),
+          timestamp: String(log.timestamp ?? new Date().toISOString()),
+          sport: String(log.sport ?? 'MLB').toUpperCase(),
+          matchup: String(log.matchup ?? ''),
+          bet_type: String(log.bet_type ?? 'PROP'),
+          legs: Array.isArray(log.legs) ? log.legs : [],
+          recommended_units: log.recommended_units != null ? String(log.recommended_units) : null,
+          status: 'pending',
+        });
+      } catch {
+        // never let the log store break the stream
+      }
+    }
+    if (logs.length) sse(res, 'log', { stored: logs.length });
     sse(res, 'done', {});
     res.end();
   } catch (e) {

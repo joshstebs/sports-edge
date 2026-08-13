@@ -5,6 +5,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import { chatRouter } from './routes/chat.js';
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
+import { predictionsRouter } from './routes/predictions.js';
 
 const app = express();
 app.use(express.json());
@@ -13,6 +14,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use('/api', healthRouter);
 app.use('/api', chatRouter);
 app.use('/api', ledgerRouter);
+app.use('/api', predictionsRouter);
 
 app.get('/', (_req, res) => {
   res.json({ name: 'sports-edge-server', version: '0.1.0', endpoints: ['/api/health', '/api/sources', '/api/chat'] });

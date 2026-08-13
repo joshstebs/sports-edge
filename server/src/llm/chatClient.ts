@@ -6,32 +6,55 @@
 // registered tools and re-calls the model, max 5 iterations.
 
 import { executeTool } from './toolRegistry.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface LlmConfig {
   configured: boolean;
   provider: string;
-  model: string;
+  model: string; // default/display model
+  models: string[]; // chain tried in order — per-model quota buckets make rotation the fix for 429s
   baseUrl: string;
+  fallback?: LlmConfig; // secondary provider (e.g. OpenAI) tried after the primary chain
 }
 
 export function llmConfig(): LlmConfig {
-  if (process.env.GEMINI_API_KEY) {
-    return {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const geminiModels = [
+    process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-2.5-flash-lite',
+  ].filter((m, i, a) => a.indexOf(m) === i);
+  if (geminiKey) {
+    const cfg: LlmConfig = {
       configured: true,
       provider: 'gemini',
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: geminiModels[0],
+      models: geminiModels,
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     };
+    if (openaiKey) {
+      cfg.fallback = {
+        configured: true,
+        provider: 'openai',
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        models: [process.env.OPENAI_MODEL || 'gpt-4o-mini'],
+        baseUrl: 'https://api.openai.com/v1',
+      };
+    }
+    return cfg;
   }
-  if (process.env.OPENAI_API_KEY) {
+  if (openaiKey) {
     return {
       configured: true,
       provider: 'openai',
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      models: [process.env.OPENAI_MODEL || 'gpt-4o-mini'],
       baseUrl: 'https://api.openai.com/v1',
     };
   }
-  return { configured: false, provider: 'none', model: '', baseUrl: '' };
+  return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
 
 export interface ChatMessage {
@@ -47,15 +70,25 @@ export interface ToolSchema {
 }
 
 export interface ToolCallFragment {
+  key?: string; // internal map key (id or idx-N)
   index: number;
   id?: string;
   name?: string;
   arguments?: string;
+  extra_content?: any; // Gemini 3.x: thought_signature lives here; MUST be echoed back
 }
 
 export interface OneShotResult {
   content: string;
-  toolCalls: Array<{ index: number; id: string; name: string; arguments: string; parsed: any }>;
+  modelUsed?: string;
+  toolCalls: Array<{
+    index: number;
+    id: string;
+    name: string;
+    arguments: string;
+    parsed: any;
+    extra_content?: any | null;
+  }>;
 }
 
 interface StreamCallbacks {
@@ -64,54 +97,135 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-/** One streaming chat completion. Accumulates content + tool_calls. */
+/** One streaming chat completion with model-chain fallback.
+ * Tries cfg.models in order (Gemini free tier quotas are PER-MODEL, so a 429
+ * on one model is fixed by rotating), then cfg.fallback provider if present. */
 export async function streamChatOnce(
   cfg: LlmConfig,
   messages: ChatMessage[],
   tools: ToolSchema[],
   cb: StreamCallbacks = {}
 ): Promise<OneShotResult> {
-  const url = `${cfg.baseUrl}/chat/completions`;
-  const apiKey = cfg.provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+  const providers = [cfg, ...(cfg.fallback ? [cfg.fallback] : [])];
+  const errors: string[] = [];
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages,
-      tools,
-      temperature: 0.6,
-      stream: true,
-    }),
-    signal: cb.signal ?? AbortSignal.timeout(120000),
-  });
-  if (!res.ok || !res.body) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 300)}`);
+  for (const pc of providers) {
+    for (const model of pc.models) {
+      const attempt = await tryModel(pc, model, messages, tools, cb);
+      if (attempt.ok && attempt.result) return attempt.result;
+      errors.push(`${pc.provider}/${model}: ${attempt.error}`);
+    }
   }
 
-  const reader = res.body.getReader();
+  throw new Error(`All LLM providers failed: ${errors.join(' | ')}`);
+}
+
+interface TryResult {
+  ok: boolean;
+  result?: OneShotResult;
+  error?: string;
+}
+
+async function tryModel(
+  pc: LlmConfig,
+  model: string,
+  messages: ChatMessage[],
+  tools: ToolSchema[],
+  cb: StreamCallbacks
+): Promise<TryResult> {
+  const url = `${pc.baseUrl}/chat/completions`;
+  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+
+  // One quick 429 retry with backoff (respect Retry-After up to 20s), then move on.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          tools,
+          temperature: 0.6,
+          stream: true,
+        }),
+        signal: cb.signal ?? AbortSignal.timeout(120000),
+      });
+
+      if (res.status === 429 && attempt === 0) {
+        const retryAfter = Number(res.headers.get('retry-after')) || 0;
+        await res.body?.cancel().catch(() => {});
+        const wait = Math.min(retryAfter > 0 ? retryAfter : 8, 20);
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
+      }
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => '');
+        if (res.status === 400) {
+          try {
+            fs.writeFileSync(
+              path.join(process.cwd(), 'data', `debug-400-${Date.now()}.json`),
+              JSON.stringify({ model, status: res.status, error: errText.slice(0, 500), messages }, null, 1),
+              'utf8'
+            );
+          } catch { /* debug dump is best-effort */ }
+        }
+        return { ok: false, error: `HTTP ${res.status}: ${errText.slice(0, 300)}` };
+      }
+      const result = await readStream(res, cb);
+      result.modelUsed = model;
+      return { ok: true, result };
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === 'AbortError' && cb.signal?.aborted) throw err; // client left — don't fall through
+      return { ok: false, error: err.message.slice(0, 200) };
+    }
+  }
+  return { ok: false, error: 'HTTP 429 after retry' };
+}
+
+async function readStream(
+  res: Response,
+  cb: StreamCallbacks
+): Promise<OneShotResult> {
+  const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let content = '';
-  const toolCalls = new Map<number, ToolCallFragment>();
+  // Keyed by tool-call id when present (Gemini omits `index`, so keying by
+  // index would merge multiple calls in one turn). OpenAI sends id only on the
+  // first fragment — subsequent fragments fall back to the last key for their index.
+  const toolCalls = new Map<string, ToolCallFragment>();
+  const keyByIndex = new Map<number, string>();
   let sawKey = false;
 
-  const flushToolCall = (idx: number): ToolCallFragment => {
-    const tc = toolCalls.get(idx) ?? { index: idx, id: '', name: '', arguments: '' };
-    toolCalls.set(idx, tc);
+  const flushToolCall = (idx: number, id?: string): ToolCallFragment => {
+    let key = id ?? keyByIndex.get(idx);
+    if (!key) {
+      key = `idx-${idx}`;
+      keyByIndex.set(idx, key);
+    }
+    let tc = toolCalls.get(key);
+    if (!tc) {
+      tc = { key, index: idx, id: id ?? '', name: '', arguments: '' };
+      toolCalls.set(key, tc);
+      if (id) keyByIndex.set(idx, key);
+    }
     return tc;
   };
 
   const mergeToolFragment = (frag: ToolCallFragment) => {
     sawKey = true;
-    const cur = flushToolCall(frag.index);
-    if (frag.id) cur.id = frag.id;
+    const cur = flushToolCall(frag.index ?? 0, frag.id);
+    if (frag.id) {
+      cur.id = frag.id;
+      keyByIndex.set(frag.index ?? 0, cur.key!);
+    }
     if (frag.name) cur.name = frag.name;
     if (frag.arguments) cur.arguments = (cur.arguments ?? '') + frag.arguments;
+    if (frag.extra_content) cur.extra_content = frag.extra_content;
     cb.onToolDelta?.(frag);
   };
 
@@ -140,15 +254,17 @@ export async function streamChatOnce(
         content += delta.content;
         cb.onDelta?.(delta.content);
       }
-      // OpenAI streams tool_calls as {index, id, function:{name, arguments}} fragments
+      // OpenAI streams tool_calls as {index, id, function:{name, arguments}} fragments;
+      // Gemini 3.x also carries extra_content.google.thought_signature per call.
       const tcFrags: any[] = delta.tool_calls ?? json?.choices?.[0]?.message?.tool_calls ?? [];
       for (const f of tcFrags) {
         const idx = f.index ?? 0;
         const name = f.function?.name;
         const args = f.function?.arguments;
         const id = f.id;
-        if (name === undefined && args === undefined && id === undefined) continue;
-        mergeToolFragment({ index: idx, id, name, arguments: args });
+        const extra = f.extra_content;
+        if (name === undefined && args === undefined && id === undefined && extra === undefined) continue;
+        mergeToolFragment({ index: idx, id, name, arguments: args, extra_content: extra });
       }
     }
     if (buf.includes('[DONE]')) break;
@@ -160,16 +276,22 @@ export async function streamChatOnce(
     );
   }
 
-  const calls = [...toolCalls.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([index, tc]) => {
+  const calls = [...toolCalls.values()]
+    .map((tc) => {
       let parsed: any = null;
       try {
         parsed = tc.arguments ? JSON.parse(tc.arguments) : {};
       } catch {
         parsed = null;
       }
-      return { index, id: tc.id ?? `call_${index}`, name: tc.name ?? '', arguments: tc.arguments ?? '', parsed };
+      return {
+        index: tc.index ?? 0,
+        id: tc.id ?? `call_${tc.index ?? 0}`,
+        name: tc.name ?? '',
+        arguments: tc.arguments ?? '',
+        parsed,
+        extra_content: tc.extra_content ?? null,
+      };
     })
     .filter((c) => c.name);
 
@@ -217,6 +339,8 @@ export async function runAgent(
         id: tc.id,
         type: 'function',
         function: { name: tc.name, arguments: tc.arguments || '{}' },
+        // Gemini 3.x requires the thought_signature roundtrip or the API 400s.
+        ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
       })),
     });
 

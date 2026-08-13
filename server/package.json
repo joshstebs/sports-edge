@@ -8,7 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "probe": "tsx scripts/probe.ts"
+    "probe": "tsx scripts/probe.ts",
+    "eval": "tsx scripts/evaluate.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
