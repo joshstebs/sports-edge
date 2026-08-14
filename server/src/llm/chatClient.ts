@@ -24,10 +24,13 @@ export function llmConfig(): LlmConfig {
   const openaiKey = process.env.OPENAI_API_KEY;
   // NOTE: 2.5-era models are LISTED in the models endpoint but 404 for new
   // keys ("no longer available to new users") — only 3.x/current-gen work.
+  // Free-tier quota is per-model: flash lite models keep the generous daily
+  // limits while the flagship flash aliases exhaust quickly — lead with lite.
   const geminiModels = [
-    process.env.GEMINI_MODEL || 'gemini-3.5-flash',
-    'gemini-flash-latest',
+    process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
   ].filter((m, i, a) => a.indexOf(m) === i);
   // OpenRouter :free models share a throttled pool — chain several.
   // Verified tool-calling: gpt-oss-20b + nemotron-3.5-lightning (Aug 2026).
