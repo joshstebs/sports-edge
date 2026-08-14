@@ -370,6 +370,7 @@ export async function runAgent(
   let finalText = '';
   let iterations = 0;
   let modelUsed: string | null = null;
+  let endedWithTools = false;
 
   for (; iterations < 5; iterations++) {
     const resp = await streamChatOnce(cfg, msgs, tools, {
@@ -380,6 +381,7 @@ export async function runAgent(
     finalText = resp.content;
 
     if (!resp.toolCalls.length) break;
+    endedWithTools = true;
 
     // Record assistant turn with tool_calls (required by the API), then run tools.
     msgs.push({
@@ -415,6 +417,27 @@ export async function runAgent(
       });
       msgs.push({ role: 'tool', tool_call_id: tc.id, content: outcome.json });
     }
+  }
+
+  // If the loop exhausted its iteration budget still mid-tool-use, or the final
+  // turn produced no text at all, force one last generation WITHOUT tools so the
+  // user always receives an actual answer (never a silent stream end).
+  if (endedWithTools || !finalText) {
+    const closer = await streamChatOnce(
+      cfg,
+      [
+        ...msgs,
+        {
+          role: 'user',
+          content:
+            'Wrap up now: write your complete final analysis and any recommendations in prose (include any ```sgp / [PREDICTION_LOG] blocks you promised). Do NOT call any more tools. If some data could not be fetched, say so and reason from what you have.',
+        },
+      ],
+      [],
+      { onDelta: cb.onDelta, signal: cb.signal },
+    );
+    if (closer.content) finalText = closer.content;
+    if (closer.modelUsed) modelUsed = closer.modelUsed;
   }
 
   return { content: finalText, iterations: iterations + 1, modelUsed };

@@ -117,6 +117,19 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     });
 
     for (const block of extractSgpBlocks(finalText)) {
+      // Honest confidence fallback: if the model omitted `confidence` on a leg
+      // but stated its own model_probability (0-1 or "55" style), map that onto
+      // confidence rather than leaving the leg at N/A. Never invents numbers.
+      if (Array.isArray(block?.legs)) {
+        block.legs = block.legs.map((leg: any) => {
+          if (leg && typeof leg.confidence !== 'number' && leg.model_probability != null) {
+            const p = Number(leg.model_probability);
+            const pct = p <= 1 ? p * 100 : p;
+            if (Number.isFinite(pct)) leg.confidence = Math.max(0, Math.min(100, Math.round(pct)));
+          }
+          return leg;
+        });
+      }
       sse(res, 'sgp', block);
     }
     // Self-learning protocol: persist every [PREDICTION_LOG] block.

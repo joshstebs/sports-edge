@@ -37,6 +37,7 @@ export default function App() {
   const initial = useRef(loadPersisted());
   const [messages, setMessages] = useState<ChatMessage[]>(initial.current.messages);
   const [sport, setSport] = useState<Sport>(initial.current.sport);
+  const [slipCollapsed, setSlipCollapsed] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
@@ -288,9 +289,39 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           <MessageList messages={messages} onSend={sendMessage} onRetry={retryMessage} />
           {slipLegs.length > 0 && (
-            <div className="shrink-0 border-t border-line/60 px-4 pb-3 pt-3 xl:hidden">
+            <div className="shrink-0 border-t border-line/60 px-4 pb-3 pt-2.5 xl:hidden">
               <div className="mx-auto w-full max-w-3xl">
-                <ParlaySlip legs={slipLegs} onRemove={removeLeg} className="max-h-[420px]" />
+                {slipCollapsed ? (
+                  <button
+                    onClick={() => setSlipCollapsed(false)}
+                    className="flex w-full items-center justify-between rounded-lg border border-line/60 bg-card/60 px-3 py-2.5 text-left transition-colors hover:bg-card"
+                  >
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-frost">
+                      Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
+                    </span>
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-edge" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                      <path d="M6 15l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                ) : (
+                  <>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                        Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
+                      </span>
+                      <button
+                        onClick={() => setSlipCollapsed(true)}
+                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted transition-colors hover:bg-card hover:text-frost"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Hide
+                      </button>
+                    </div>
+                    <ParlaySlip legs={slipLegs} onRemove={removeLeg} className="max-h-[380px]" />
+                  </>
+                )}
               </div>
             </div>
           )}
