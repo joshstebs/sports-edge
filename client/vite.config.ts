@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5180,
       strictPort: true,
+      host: true, // expose on the network (Tailscale) so Josh can reach it from his laptop/phone
       proxy: {
         '/api': {
           target: env.VITE_PROXY_TARGET || 'http://localhost:3100',
