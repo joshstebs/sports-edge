@@ -50,8 +50,8 @@ function LegCard({ leg, index }: { leg: SgpLeg; index: number }) {
             {index + 1}
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold leading-snug text-head">{leg.selection || '—'}</p>
-            <p className="mt-0.5 truncate text-[11px] text-frost2">
+            <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-head">{leg.selection || '—'}</p>
+            <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-frost2">
               {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
             </p>
           </div>

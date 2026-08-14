@@ -131,6 +131,24 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
 
     let sgpEmitted = 0;
     for (const block of extractSgpBlocks(finalText)) {
+      // Data hygiene: the model sometimes writes the full explanation INTO the
+      // selection field. Keep the title short; move the rest to justification
+      // so both the chat panel and the slip render cleanly.
+      const tidyLeg = (leg: any) => {
+        if (!leg || typeof leg.selection !== 'string') return leg;
+        const sel = leg.selection;
+        if (sel.length > 90 && !leg.justification) {
+          const m = sel.match(/^(.{0,80}?[.!?:])\s+(.*)$/s);
+          if (m) {
+            leg.selection = m[1];
+            leg.justification = m[2];
+          } else {
+            leg.selection = `${sel.slice(0, 85)}…`;
+            leg.justification = sel;
+          }
+        }
+        return leg;
+      };
       // Honest confidence fallback: if the model omitted `confidence` on a leg
       // but stated its own model_probability (0-1 or "55" style), map that onto
       // confidence rather than leaving the leg at N/A. Never invents numbers.
@@ -141,7 +159,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
             const pct = p <= 1 ? p * 100 : p;
             if (Number.isFinite(pct)) leg.confidence = Math.max(0, Math.min(100, Math.round(pct)));
           }
-          return leg;
+          return tidyLeg(leg);
         });
       }
       sgpEmitted++;
