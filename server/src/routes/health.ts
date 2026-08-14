@@ -2,7 +2,7 @@
 
 import { Router } from 'express';
 import { llmConfig } from '../llm/chatClient.js';
-import { oddsConfigured, quotaRemaining } from '../providers/oddsApi.js';
+import { oddsConfigured } from '../providers/oddsApi.js';
 
 export const VERSION = '0.1.0';
 
@@ -24,7 +24,7 @@ export const sources = {
   },
   oddsApi: {
     available: oddsConfigured(),
-    reason: oddsConfigured() ? `configured (x-requests-remaining: ${quotaRemaining() ?? 'n/a'})` : 'ODDS_API_KEY not set in server/.env — odds endpoints return available:false',
+    reason: oddsConfigured() ? 'configured' : 'ODDS_API_KEY not set in server/.env — odds endpoints return available:false',
     baseUrl: 'https://api.the-odds-api.com/v4',
     note: 'h2h/spreads/totals on free plan; player props require Business plan',
   },
