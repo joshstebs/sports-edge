@@ -271,7 +271,7 @@ async function main() {
       leg.outcome = r.outcome;
       leg.actual = r.actual;
     }
-    updatePrediction(pred.prediction_id, { status: 'evaluated', gameDate: date });
+    updatePrediction(pred.prediction_id, { status: 'evaluated', gameDate: date, legs: pred.legs });
     results.push({ pred, outcomes: legResults, gameDate: date });
   }
 
