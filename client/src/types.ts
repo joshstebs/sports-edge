@@ -21,6 +21,7 @@ export interface SgpLeg {
   risk?: string;
   correlation?: string;
   confidence?: number;
+  game_odds?: string | null; // real game moneyline (ESPN → DraftKings), e.g. "-141"
 }
 
 export interface ChatMessage {

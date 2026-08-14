@@ -93,6 +93,13 @@ function LegCard({ leg, index }: { leg: SgpLeg; index: number }) {
               <span className="font-semibold text-edge/70">· {(implied * 100).toFixed(1)}% imp</span>
             )}
           </span>
+        ) : leg.game_odds ? (
+          <span
+            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-300"
+            title="Real game moneyline (ESPN → DraftKings). The prop's own market price isn't available without a book feed, so this is the game line for context."
+          >
+            Game ML {leg.game_odds}
+          </span>
         ) : (
           <span className="rounded-md border border-line bg-panel2/80 px-2 py-0.5 text-[11px] font-semibold text-frost2">
             Odds N/A
