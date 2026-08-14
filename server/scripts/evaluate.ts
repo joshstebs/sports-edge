@@ -126,12 +126,18 @@ function teamWon(game: any, teamName: string): boolean | null {
   const t = norm(teamName);
   const isAway = norm(aName).includes(t) || t.split(' ').some((w) => w.length > 3 && norm(aName).includes(w));
   const isHome = norm(hName).includes(t) || t.split(' ').some((w) => w.length > 3 && norm(hName).includes(w));
-  const aRuns = Number(away.runs ?? -1);
-  const hRuns = Number(home.runs ?? -1);
+  const aRuns = Number(teamRuns(away) ?? -1);
+  const hRuns = Number(teamRuns(home) ?? -1);
   if (!isAway && !isHome) return null;
   if (aRuns < 0 || hRuns < 0) return null;
   const won = isAway ? aRuns > hRuns : hRuns > aRuns;
   return aRuns === hRuns ? null : won;
+}
+
+function teamRuns(team: any): number | null {
+  // statsapi boxscore: runs live at teamStats.batting.runs — NOT team.runs.
+  const v = team?.teamStats?.batting?.runs;
+  return v == null ? null : Number(v);
 }
 
 async function evaluateLeg(
@@ -229,7 +235,9 @@ async function main() {
     }
     const box = await getBoxscore(gamePk);
     const game = box?.teams ? { teams: box.teams } : null;
-    if (!game || game.teams?.away?.runs == null && game.teams?.home?.runs == null) {
+    const awayRuns = teamRuns(box?.teams?.away);
+    const homeRuns = teamRuns(box?.teams?.home);
+    if (!game || awayRuns == null && homeRuns == null) {
       // pre-game/in-progress boxscore — not gradable yet; STAY PENDING so the
       // next 6 AM run grades it once the game is final.
       updatePrediction(pred.prediction_id, { status: 'pending', gameDate: targetDate });
