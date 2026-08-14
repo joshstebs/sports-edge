@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 export const ledgerRouter = Router();
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'sports-edge-data') : path.join(process.cwd(), 'data');
 const FILE = path.join(DATA_DIR, 'ledger.json');
 
 export interface LedgerPick {

@@ -64,10 +64,11 @@ async function getScoreboard(sportPath: string): Promise<Array<{ id: string; awa
   });
 }
 
-async function getSummaryOdds(eventId: string): Promise<any> {
+async function getSummaryOdds(eventId: string, sportKey: string): Promise<any> {
   // pickcenter[0] = primary provider (DraftKings verified). Includes
   // moneyline/pointSpread/total with open + close prices.
-  const res = await pacedFetch(`${API}/${SPORT_PATHS.mlb}/summary?event=${eventId}`);
+  const sportPath = SPORT_PATHS[sportKey.toLowerCase()] ?? SPORT_PATHS.mlb;
+  const res = await pacedFetch(`${API}/${sportPath}/summary?event=${eventId}`);
   if (!res.ok) throw new Error(`summary HTTP ${res.status}`);
   const d: any = await res.json();
   const pc = Array.isArray(d?.pickcenter) ? d.pickcenter[0] : null;
@@ -109,7 +110,7 @@ export async function getGameOdds(
       ev = hit;
     }
 
-    const pc = await getSummaryOdds(ev.id);
+    const pc = await getSummaryOdds(ev.id, sportKey);
     if (!pc) {
       return {
         ...bad, eventId: ev.id, away: ev.away, home: ev.home,

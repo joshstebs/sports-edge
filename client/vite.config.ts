@@ -9,6 +9,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), tailwindcss()],
+    // Served under /sportsedge/ on the Tailscale funnel; at the root on Vercel.
+    base: process.env.VITE_BASE_PATH || '/sportsedge/',
     server: {
       port: 5180,
       strictPort: true,
@@ -28,6 +30,5 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    base: '/sportsedge/',
   };
 });

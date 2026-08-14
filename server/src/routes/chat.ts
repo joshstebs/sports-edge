@@ -60,6 +60,30 @@ function extractPredictionLogs(text: string): any[] {
 chatRouter.post('/chat', async (req: Request, res: Response) => {
   const cfg = llmConfig();
 
+  const body = req.body ?? {};
+  const rawMessages: any[] = Array.isArray(body.messages) ? body.messages : [];
+  const sport: string | null = typeof body.sport === 'string' && body.sport ? body.sport : null;
+
+  // Server-side attachment validation (client checks are trivially bypassed):
+  // only data:image/* base64 payloads — no http(s) URLs (which would make the
+  // LLM provider fetch arbitrary URLs server-side), max 4 per message /
+  // 8 per request / ~8MB each. MUST run before the SSE headers are sent.
+  const allImages: string[] = (
+    rawMessages.flatMap((m: any) => (Array.isArray(m?.images) ? m.images : [])) as string[]
+  ).filter((i: any): i is string => typeof i === 'string');
+  if (allImages.length > 8) {
+    res.status(400).json({ ok: false, error: 'Too many images (max 4 per message, 8 per request).' });
+    return;
+  }
+  for (const img of allImages) {
+    if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/.test(img) || img.length > 11_000_000) {
+      res
+        .status(400)
+        .json({ ok: false, error: 'Invalid image attachment — only base64 data:image payloads up to ~8MB are accepted.' });
+      return;
+    }
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -73,10 +97,6 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     res.end();
     return;
   }
-
-  const body = req.body ?? {};
-  const rawMessages: any[] = Array.isArray(body.messages) ? body.messages : [];
-  const sport: string | null = typeof body.sport === 'string' && body.sport ? body.sport : null;
 
   const controller = new AbortController();
   // Node 18+: req 'close' fires when the request BODY is consumed, not on

@@ -1,0 +1,10 @@
+{
+  "buildCommand": "cd server && pnpm install && cd ../client && pnpm install && VITE_BASE_PATH=/ pnpm run build",
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" }
+  ],
+  "functions": {
+    "api/index.ts": { "maxDuration": 60 }
+  }
+}

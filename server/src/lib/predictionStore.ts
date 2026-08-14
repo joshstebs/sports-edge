@@ -7,7 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+// Vercel serverless has a read-only filesystem: route data to /tmp there
+// (ephemeral per-instance, but writes never crash). Local dev keeps ./data.
+const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'sports-edge-data') : path.join(process.cwd(), 'data');
 const FILE = path.join(DATA_DIR, 'predictions.json');
 const LEARN_FILE = path.join(DATA_DIR, 'learning.json');
 

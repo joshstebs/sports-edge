@@ -374,15 +374,28 @@ export async function runAgent(
   let modelUsed: string | null = null;
   let endedWithTools = false;
 
-  for (; iterations < 5; iterations++) {
+  // Streaming budget: Vercel serverless functions cap at 60s, so cap the loop
+  // at 3 tool rounds (the prompt mandates gathering all data in round one);
+  // the forced closer below guarantees a final answer either way.
+  for (; iterations < 3; iterations++) {
+    // Buffer per-turn deltas: when a turn contains BOTH text and tool calls the
+    // text is usually a fragment ("let me check...") that the closer then
+    // re-answers fully. Only forward deltas for final text turns so the user
+    // never sees duplicated fragments.
+    let turnText = '';
     const resp = await streamChatOnce(cfg, msgs, tools, {
-      onDelta: cb.onDelta,
-      signal: cb.signal,
+      onDelta: (d) => {
+        turnText += d;
+      },
+      signal: cb.signal ? AbortSignal.any([cb.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
     });
     if (resp.modelUsed) modelUsed = resp.modelUsed;
     finalText = resp.content;
 
-    if (!resp.toolCalls.length) break;
+    if (!resp.toolCalls.length) {
+      if (turnText) cb.onDelta?.(turnText);
+      break;
+    }
     endedWithTools = true;
 
     // Record assistant turn with tool_calls (required by the API), then run tools.
@@ -436,7 +449,7 @@ export async function runAgent(
         },
       ],
       [],
-      { onDelta: cb.onDelta, signal: cb.signal },
+      { onDelta: cb.onDelta, signal: cb.signal ? AbortSignal.any([cb.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000) },
     );
     if (closer.content) finalText = closer.content;
     if (closer.modelUsed) modelUsed = closer.modelUsed;
