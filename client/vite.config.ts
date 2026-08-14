@@ -13,12 +13,21 @@ export default defineConfig(({ mode }) => {
       port: 5180,
       strictPort: true,
       host: true, // expose on the network (Tailscale) so Josh can reach it from his laptop/phone
+      allowedHosts: ['hermes-cloud.tail44041e.ts.net'], // Tailscale funnel public host
       proxy: {
+        // Base-aware API path (base: '/sportsedge/') — strips the prefix then
+        // falls into the plain /api rule below.
+        '/sportsedge/api': {
+          target: env.VITE_PROXY_TARGET || 'http://localhost:3100',
+          changeOrigin: true,
+          rewrite: (p: string) => p.replace(/^\/sportsedge\/api/, '/api'),
+        },
         '/api': {
           target: env.VITE_PROXY_TARGET || 'http://localhost:3100',
           changeOrigin: true,
         },
       },
     },
+    base: '/sportsedge/',
   };
 });

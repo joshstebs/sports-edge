@@ -43,7 +43,7 @@ function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
  * partial trailing frame at stream end.
  */
 export async function streamChat(body: StreamChatBody, opts: StreamChatOptions): Promise<void> {
-  const res = await fetch('/api/chat', {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

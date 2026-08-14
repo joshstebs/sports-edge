@@ -182,7 +182,17 @@ export default function App() {
                 break;
               case 'done':
                 setMessages((prev) =>
-                  prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
+                  prev.map((m) => {
+                    if (m.id !== assistantId) return m;
+                    // Harden against silent failure: if the stream ended with
+                    // no text and no error, surface that instead of nothing.
+                    const next = { ...m, streaming: false };
+                    if (!next.content && !next.error) {
+                      next.error =
+                        'The analyst returned no text this time — hit Retry, or rephrase the question.';
+                    }
+                    return next;
+                  }),
                 );
                 break;
               case 'error':

@@ -8,7 +8,7 @@ export interface HealthInfo {
 
 /** GET /api/health — drives the "Live data" dot in the header. */
 export async function fetchHealth(): Promise<HealthInfo> {
-  const res = await fetch('/api/health', { headers: { Accept: 'application/json' } });
+  const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
   if (!res.ok) {
     throw new Error(`Health check returned HTTP ${res.status}`);
   }
