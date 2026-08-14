@@ -44,44 +44,36 @@ function LegCard({ leg, index }: { leg: SgpLeg; index: number }) {
 
   return (
     <div className="flex flex-col gap-2.5 rounded-xl border border-line/70 bg-panel/80 p-3.5 transition hover:border-edge/30 hover:shadow-[0_0_18px_rgba(21,255,194,0.07)]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-edge/15 text-[10px] font-extrabold tabular-nums text-edge ring-1 ring-edge/35">
-            {index + 1}
-          </span>
-          <div className="min-w-0">
-            <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-head">{leg.selection || '—'}</p>
-            <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-frost2">
-              {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
-            </p>
-          </div>
+      {/* Pick title + game meta — full card width, grade sits BELOW */}
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-edge/15 text-[10px] font-extrabold tabular-nums text-edge ring-1 ring-edge/35">
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-3 break-words text-sm font-semibold leading-snug text-head">{leg.selection || '—'}</p>
+          <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-frost2">
+            {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
+          </p>
         </div>
-
-        {(grade || typeof leg.confidence === 'number') && (
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-frost2">AI Grade</span>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              {grade && (
-                <span
-                  className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1 ${GRADE_STYLES[grade.grade]}`}
-                  title="AI Grade — model confidence-derived (A ≥ 65, B ≥ 58, C ≥ 50, D < 50)"
-                >
-                  {grade.grade} · {grade.label}
-                </span>
-              )}
-              {typeof leg.confidence === 'number' && (
-                <span
-                  className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${confClasses(leg.confidence)}`}
-                >
-                  Conf {Math.round(leg.confidence)}%
-                </span>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      {/* Chips row: grade, confidence, market, odds, EV */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {grade && (
+          <span
+            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1 ${GRADE_STYLES[grade.grade]}`}
+            title="AI Grade — model confidence-derived (A ≥ 65, B ≥ 58, C ≥ 50, D < 50)"
+          >
+            AI {grade.grade} · {grade.label}
+          </span>
+        )}
+        {typeof leg.confidence === 'number' && (
+          <span
+            className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${confClasses(leg.confidence)}`}
+          >
+            Conf {Math.round(leg.confidence)}%
+          </span>
+        )}
         <span className="rounded-md border border-line/70 bg-panel2/80 px-2 py-0.5 text-[11px] font-semibold text-frost">
           {leg.market || 'Market'}
           {line}
