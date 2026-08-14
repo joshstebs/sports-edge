@@ -31,7 +31,7 @@ export default function MessageList({ messages, onSend, onRetry }: MessageListPr
       <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
         {messages.map((m) =>
           m.role === 'user' ? (
-            <MessageBubble key={m.id} content={m.content} />
+            <MessageBubble key={m.id} content={m.content} images={m.images} />
           ) : (
             <AssistantMessage key={m.id} message={m} onRetry={onRetry} />
           ),

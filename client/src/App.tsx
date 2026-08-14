@@ -124,8 +124,13 @@ export default function App() {
   }, []);
 
   const beginStream = useCallback(
-    (text: string, history: ChatMessage[], appendUser: boolean) => {
-      const userMsg: ChatMessage = { id: uid(), role: 'user', content: text };
+    (text: string, history: ChatMessage[], appendUser: boolean, images?: string[]) => {
+      const userMsg: ChatMessage = {
+        id: uid(),
+        role: 'user',
+        content: text,
+        ...(images && images.length ? { images } : {}),
+      };
       const assistantId = uid();
       const assistantMsg: ChatMessage = {
         id: assistantId,
@@ -147,6 +152,7 @@ export default function App() {
       const requestMessages = (appendUser ? [...history, userMsg] : history).map((m) => ({
         role: m.role,
         content: m.content,
+        ...(m.images && m.images.length ? { images: m.images } : {}),
       }));
       const requestSport = sportRef.current === 'All' ? null : sportRef.current;
 
@@ -253,10 +259,10 @@ export default function App() {
   }, []);
 
   const sendMessage = useCallback(
-    (raw: string) => {
+    (raw: string, images?: string[]) => {
       const text = raw.trim();
-      if (!text || streamingRef.current) return;
-      beginStream(text, messagesRef.current, true);
+      if ((!text && (!images || images.length === 0)) || streamingRef.current) return;
+      beginStream(text, messagesRef.current, true, images);
     },
     [beginStream],
   );

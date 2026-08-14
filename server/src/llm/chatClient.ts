@@ -102,7 +102,9 @@ export function llmConfig(): LlmConfig {
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
-  content?: string | null;
+  // string for plain text; content-part arrays (e.g. [{type:'text'},{type:'image_url'}])
+  // for multimodal user messages with attached screenshots.
+  content?: string | null | Array<{ type: string; [k: string]: unknown }>;
   tool_calls?: any[];
   tool_call_id?: string;
 }

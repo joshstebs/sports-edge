@@ -17,7 +17,8 @@ export const DATA_TOOL_RULES = `
 13. PREDICTION LOG PROTOCOL: When you make any picks, prop breakdown, or SGP recommendation, after the user-facing markdown response append a fenced JSON block tagged with [PREDICTION_LOG] containing EXACTLY this schema:
 [PREDICTION_LOG]
 {"prediction_id":"<YYMMDD-hhmm-<3-char-hash>>","timestamp":"<ISO datetime>","sport":"MLB","matchup":"Blue Jays vs Astros","bet_type":"SGP","legs":[{"leg_name":"Vladimir Guerrero Jr. OVER 1.5 Total Bases","target_line":"1.5","model_probability":"55","implied_odds":"-130 or null","key_metric_used":"xwOBA"}],"recommended_units":"0.5"}
-- One leg entry per leg; model_probability = the P(over)/confidence you quoted; implied_odds = real odds when the odds tool returned them, else null; recommended_units per your unit-sizing section (e.g. "0.5", "1"). The backend stores this for next-day automated evaluation against official box scores.`;
+- One leg entry per leg; model_probability = the P(over)/confidence you quoted; implied_odds = real odds when the odds tool returned them, else null; recommended_units per your unit-sizing section (e.g. "0.5", "1"). The backend stores this for next-day automated evaluation against official box scores.
+14. SCREENSHOT ANALYSIS: When the user attaches one or more images (bet slip, odds page, parlay screenshot, stat sheet), READ them carefully and extract every leg, market, line, odds and stake that are visible. Then analyze as usual: cross-check the picks against live data with your tools (schedule, lineups, weather, stats, odds), grade each leg with confidence 0-100, estimate the combined hit probability, and give an honest verdict (decent value vs avoid). If any part of the image is blurry, cropped, or unreadable, SAY EXACTLY what you could not read. NEVER guess a number that is not visible or verifiable.`;
 
 export const RESEARCH_KNOWLEDGE = `
 ### RESEARCH KNOWLEDGE BASE (from the Sports Betting Research & Strategy Guide):

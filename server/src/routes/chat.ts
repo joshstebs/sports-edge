@@ -98,9 +98,22 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
           learningPromptBlock() +
           (sport ? `\nFocus analysis on ${sport}.` : ''),
       },
-      ...rawMessages
-        .filter((m) => m && typeof m.content === 'string')
-        .map((m) => ({ role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const), content: m.content })),
+      ...(rawMessages.map((m: any): ChatMessage | null => {
+        if (!m || typeof m.content !== 'string') return null;
+        const role: ChatMessage['role'] = m.role === 'assistant' ? 'assistant' : 'user';
+        const images: string[] = Array.isArray(m.images)
+          ? m.images.filter((i: any) => typeof i === 'string')
+          : [];
+        if (images.length === 0) return { role, content: m.content };
+        // Multimodal: text + image_url parts (data: URLs from the client).
+        return {
+          role,
+          content: [
+            { type: 'text', text: m.content || '' },
+            ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+          ],
+        };
+      }).filter((m): m is ChatMessage => m !== null)),
     ];
 
     const { content: finalText, modelUsed } = await runAgent(cfg, messages, getToolSchemas(), {

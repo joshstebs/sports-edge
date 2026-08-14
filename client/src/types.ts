@@ -28,6 +28,7 @@ export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  images?: string[]; // attached screenshot data URLs (resized client-side)
   tools?: ToolEvent[];
   sgp?: SgpLeg[];
   error?: string;

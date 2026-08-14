@@ -8,7 +8,7 @@ import { ledgerRouter } from './routes/ledger.js';
 import { predictionsRouter } from './routes/predictions.js';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '12mb' })); // room for attached screenshots (data URLs)
 app.use(express.urlencoded({ extended: false }));
 
 app.use('/api', healthRouter);

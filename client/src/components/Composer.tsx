@@ -1,17 +1,43 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { MAX_ATTACHMENTS, readAndResizeImage, isImageFile } from '../lib/images';
 
 interface ComposerProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: string[]) => void;
   streaming: boolean;
 }
 
 export default function Composer({ onSend, streaming }: ComposerProps) {
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const canSend = !streaming && (input.trim().length > 0 || attachments.length > 0);
 
   const submit = () => {
-    if (!input.trim() || streaming) return;
-    onSend(input);
+    if (!canSend) return;
+    onSend(input, attachments);
     setInput('');
+    setAttachments([]);
+    setAttachError(null);
+  };
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setAttachError(null);
+    const room = MAX_ATTACHMENTS - attachments.length;
+    const picked = Array.from(files).filter(isImageFile).slice(0, room);
+    if (picked.length === 0) {
+      setAttachError('Only image files can be attached.');
+      return;
+    }
+    try {
+      const dataUrls = await Promise.all(picked.map((f) => readAndResizeImage(f)));
+      setAttachments((prev) => [...prev, ...dataUrls].slice(0, MAX_ATTACHMENTS));
+    } catch (e) {
+      setAttachError(e instanceof Error ? e.message : 'Could not process image.');
+    }
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
@@ -22,43 +48,102 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
         submit();
       }}
     >
-      <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={1}
-          disabled={streaming}
-          placeholder={
-            streaming ? 'Analyst is working…' : 'Ask about props, parlays, or tonight\u2019s slate…'
-          }
-          className="max-h-40 min-h-[46px] w-full resize-none rounded-xl border border-line/80 bg-panel2/80 px-4 py-3 text-sm text-head placeholder:text-frost2/70 focus:border-edge/60 focus:outline-none focus:ring-1 focus:ring-edge/30 disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        <button
-          type="submit"
-          disabled={streaming || !input.trim()}
-          title="Send"
-          className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-edge to-edge2 text-ink shadow-[0_0_16px_rgba(21,255,194,0.3)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 disabled:shadow-none"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+      <div className="mx-auto w-full max-w-3xl">
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            {attachments.map((src, i) => (
+              <div key={i} className="group relative">
+                <img
+                  src={src}
+                  alt={`attachment ${i + 1}`}
+                  className="h-16 w-16 rounded-lg border border-line/70 object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  title="Remove attachment"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500/90 text-[10px] font-bold text-white opacity-0 shadow transition group-hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-frost2">
+              {attachments.length}/{MAX_ATTACHMENTS} images attached
+            </span>
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
+            title="Attach screenshot"
+            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border border-line/80 bg-panel2/80 text-frost2 transition hover:border-edge/50 hover:text-edge disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <path d="M22 2L11 13" />
-            <path d="M22 2l-7 20-4-9-9-4 20-7z" />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={1}
+            disabled={streaming}
+            placeholder={
+              streaming
+                ? 'Analyst is working…'
+                : 'Ask about props, parlays, or attach a screenshot…'
+            }
+            className="max-h-40 min-h-[46px] w-full resize-none rounded-xl border border-line/80 bg-panel2/80 px-4 py-3 text-sm text-head placeholder:text-frost2/70 focus:border-edge/60 focus:outline-none focus:ring-1 focus:ring-edge/30 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={!canSend}
+            title="Send"
+            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-edge to-edge2 text-ink shadow-[0_0_16px_rgba(21,255,194,0.3)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 disabled:shadow-none"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M22 2L11 13" />
+              <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+            </svg>
+          </button>
+        </div>
+        {attachError && (
+          <p className="mt-1.5 text-[11px] font-semibold text-red-400">{attachError}</p>
+        )}
       </div>
     </form>
   );
