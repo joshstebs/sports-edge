@@ -129,6 +129,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       },
     });
 
+    let sgpEmitted = 0;
     for (const block of extractSgpBlocks(finalText)) {
       // Honest confidence fallback: if the model omitted `confidence` on a leg
       // but stated its own model_probability (0-1 or "55" style), map that onto
@@ -143,7 +144,37 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
           return leg;
         });
       }
+      sgpEmitted++;
       sse(res, 'sgp', block);
+    }
+
+    // Reliability fallback: the model sometimes omits the ```sgp fence but
+    // reliably writes the [PREDICTION_LOG]. Derive the slip from the log so
+    // the Parlay Slip always populates after a picks response.
+    if (sgpEmitted === 0) {
+      for (const log of extractPredictionLogs(finalText)) {
+        const legs = (Array.isArray(log.legs) ? log.legs : [])
+          .map((l: any) => {
+            if (!l || typeof l.leg_name !== 'string') return null;
+            const oddsStr = l.implied_odds != null ? String(l.implied_odds) : '';
+            const oddsNum = /^-?\d+$/.test(oddsStr) ? Number(oddsStr) : null;
+            const prob = l.model_probability != null ? Number(String(l.model_probability).replace('%', '')) : NaN;
+            return {
+              sport: log.sport ?? 'MLB',
+              game: log.matchup ?? '',
+              selection: l.leg_name,
+              market: null,
+              line: l.target_line != null ? String(l.target_line) : null,
+              odds: oddsNum,
+              game_odds: null,
+              confidence: Number.isFinite(prob)
+                ? Math.max(0, Math.min(100, prob <= 1 && prob > 0 ? Math.round(prob * 100) : Math.round(prob)))
+                : undefined,
+            };
+          })
+          .filter((l: any): l is any => l !== null);
+        if (legs.length) sse(res, 'sgp', { legs });
+      }
     }
     // Self-learning protocol: persist every [PREDICTION_LOG] block.
     const logs = extractPredictionLogs(finalText);

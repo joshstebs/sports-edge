@@ -23,10 +23,6 @@ const DOT: Record<Grade, string> = {
   D: 'bg-danger shadow-[0_0_6px_rgba(255,21,82,0.8)]',
 };
 
-function oddsLabel(odds: number | null | undefined): string {
-  return odds == null ? 'N/A' : formatAmerican(odds);
-}
-
 /**
  * Sticky Parlay Slip side panel. Legs come from every SGP event in the
  * conversation (deduped by selection+line, latest wins). The combined price is
@@ -79,33 +75,23 @@ export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySli
             const grade = typeof leg.confidence === 'number' ? gradeForConfidence(leg.confidence) : null;
             const line = leg.line != null && leg.line !== '' ? ` ${leg.line}` : '';
             return (
-              <li key={legKey(leg)} className="group flex items-start gap-2.5 px-4 py-2.5 transition hover:bg-panel2/40">
-                <span
-                  className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${grade ? DOT[grade.grade] : 'bg-slate-600'}`}
-                  title={grade ? `AI Grade ${grade.grade} — ${grade.label}` : 'No confidence grade'}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-head">{leg.selection || '—'}</p>
-                  <p className="truncate text-[10px] text-frost2">
-                    {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
-                    {leg.market ? ` · ${leg.market}${line}` : ''}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+              <li
+                key={legKey(leg)}
+                className="group relative px-4 py-2.5 transition hover:bg-panel2/40"
+              >
+                <div className="flex items-start gap-2 pr-6">
                   <span
-                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${
-                      leg.odds != null
-                        ? 'bg-edge/10 text-edge ring-edge/25'
-                        : 'bg-slate-700/30 text-frost2 ring-line'
-                    }`}
-                  >
-                    {oddsLabel(leg.odds)}
-                  </span>
+                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${grade ? DOT[grade.grade] : 'bg-slate-600'}`}
+                    title={grade ? `AI Grade ${grade.grade} — ${grade.label}` : 'No confidence grade'}
+                  />
+                  <p className="line-clamp-3 min-w-0 flex-1 text-xs font-semibold leading-snug text-head">
+                    {leg.selection || '—'}
+                  </p>
                   <button
                     onClick={() => onRemove(legKey(leg))}
                     title="Remove from slip"
                     aria-label="Remove from slip"
-                    className="flex h-5 w-5 items-center justify-center rounded-full text-frost2 transition hover:bg-danger/15 hover:text-danger"
+                    className="absolute right-3 top-2.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-frost2 transition hover:bg-danger/15 hover:text-danger"
                   >
                     <svg
                       viewBox="0 0 20 20"
@@ -119,6 +105,45 @@ export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySli
                       <path d="M6 6l8 8M14 6l-8 8" />
                     </svg>
                   </button>
+                </div>
+                <p className="mt-0.5 line-clamp-2 pl-4 text-[10px] leading-snug text-frost2">
+                  {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
+                  {leg.market ? ` · ${leg.market}${line}` : ''}
+                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-4">
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${
+                      leg.odds != null
+                        ? 'bg-edge/10 text-edge ring-edge/25'
+                        : 'bg-slate-700/30 text-frost2 ring-line'
+                    }`}
+                  >
+                    {leg.odds != null ? formatAmerican(leg.odds) : 'Odds N/A'}
+                  </span>
+                  {leg.game_odds ? (
+                    <span
+                      title="Real game moneyline (ESPN → DraftKings); prop-level price unavailable"
+                      className="rounded-md bg-warn/10 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-warn ring-1 ring-warn/25"
+                    >
+                      Game ML {leg.game_odds}
+                    </span>
+                  ) : null}
+                  {grade ? (
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${
+                        grade.grade === 'A'
+                          ? 'bg-edge/10 text-edge ring-edge/25'
+                          : grade.grade === 'B'
+                            ? 'bg-sky2/10 text-sky2 ring-sky2/25'
+                            : grade.grade === 'C'
+                              ? 'bg-warn/10 text-warn ring-warn/25'
+                              : 'bg-danger/10 text-danger ring-danger/25'
+                      }`}
+                      title={grade.label}
+                    >
+                      Grade {grade.grade} · {leg.confidence}%
+                    </span>
+                  ) : null}
                 </div>
               </li>
             );
