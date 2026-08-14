@@ -14,6 +14,17 @@ export default function AssistantMessage({ message, onRetry }: AssistantMessageP
   const { content, streaming, tools, sgp, error, id } = message;
   const waiting = Boolean(streaming) && content.length === 0;
 
+  // Strip internal protocol blocks from the user-facing markdown:
+  // [PREDICTION_LOG] JSON and raw ```sgp fences are consumed by the backend
+  // (learning loop / slip) — users never need to see the raw payloads.
+  const visible = content.replace(
+    /```sgp[\s\S]*?```/g,
+    '',
+  ).replace(
+    /\[PREDICTION_LOG\][\s\S]*?(```|$)/g,
+    '',
+  ).replace(/\n{3,}/g, '\n\n').trim();
+
   return (
     <div className="flex gap-3">
       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-edge/25 to-aqua/20 ring-1 ring-edge/25">
@@ -40,9 +51,9 @@ export default function AssistantMessage({ message, onRetry }: AssistantMessageP
               />
             ))}
           </span>
-        ) : content ? (
+        ) : visible ? (
           <div className="md-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{visible}</ReactMarkdown>
             {streaming && <span className="cursor-blink" aria-hidden="true" />}
           </div>
         ) : null}
