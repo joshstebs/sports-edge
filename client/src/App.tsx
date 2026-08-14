@@ -37,7 +37,14 @@ export default function App() {
   const initial = useRef(loadPersisted());
   const [messages, setMessages] = useState<ChatMessage[]>(initial.current.messages);
   const [sport, setSport] = useState<Sport>(initial.current.sport);
-  const [slipCollapsed, setSlipCollapsed] = useState(false);
+  // Bet slip starts MINIMIZED so it never covers the chatbox; state persists.
+  const [slipCollapsed, setSlipCollapsed] = useState<boolean>(() => {
+    try {
+      return (sessionStorage.getItem('se_slip_collapsed') ?? '1') === '1';
+    } catch {
+      return true;
+    }
+  });
   const [model, setModel] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
@@ -236,6 +243,15 @@ export default function App() {
     [setStreamingState],
   );
 
+  const setSlipCollapsedPersisted = useCallback((v: boolean) => {
+    setSlipCollapsed(v);
+    try {
+      sessionStorage.setItem('se_slip_collapsed', v ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const sendMessage = useCallback(
     (raw: string) => {
       const text = raw.trim();
@@ -293,7 +309,7 @@ export default function App() {
               <div className="mx-auto w-full max-w-3xl">
                 {slipCollapsed ? (
                   <button
-                    onClick={() => setSlipCollapsed(false)}
+                    onClick={() => setSlipCollapsedPersisted(false)}
                     className="flex w-full items-center justify-between rounded-lg border border-line/60 bg-card/60 px-3 py-2.5 text-left transition-colors hover:bg-card"
                   >
                     <span className="text-[11px] font-bold uppercase tracking-wider text-frost">
@@ -310,7 +326,7 @@ export default function App() {
                         Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
                       </span>
                       <button
-                        onClick={() => setSlipCollapsed(true)}
+                        onClick={() => setSlipCollapsedPersisted(true)}
                         className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted transition-colors hover:bg-card hover:text-frost"
                       >
                         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
