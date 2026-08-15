@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import Composer from './components/Composer';
 import Header from './components/Header';
 import MessageList from './components/MessageList';
@@ -304,57 +305,60 @@ export default function App() {
   }, [setStreamingState]);
 
   return (
-    <div className="flex h-full flex-col">
-      <Header model={model} health={health} healthInfo={healthInfo} onNewChat={newChat} />
-      <SportSelector sports={SPORTS} active={sport} onChange={setSport} />
-      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <MessageList messages={messages} onSend={sendMessage} onRetry={retryMessage} />
-          {slipLegs.length > 0 && (
-            <div className="shrink-0 border-t border-line/60 px-4 pb-3 pt-2.5 xl:hidden">
-              <div className="mx-auto w-full max-w-3xl">
-                {slipCollapsed ? (
-                  <button
-                    onClick={() => setSlipCollapsedPersisted(false)}
-                    className="flex w-full items-center justify-between rounded-lg border border-line/60 bg-card/60 px-3 py-2.5 text-left transition-colors hover:bg-card"
-                  >
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-frost">
-                      Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
-                    </span>
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-edge" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-                      <path d="M6 15l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                ) : (
-                  <>
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+    <>
+      <div className="flex h-full flex-col">
+        <Header model={model} health={health} healthInfo={healthInfo} onNewChat={newChat} />
+        <SportSelector sports={SPORTS} active={sport} onChange={setSport} />
+        <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <MessageList messages={messages} onSend={sendMessage} onRetry={retryMessage} />
+            {slipLegs.length > 0 && (
+              <div className="shrink-0 border-t border-line/60 px-4 pb-3 pt-2.5 xl:hidden">
+                <div className="mx-auto w-full max-w-3xl">
+                  {slipCollapsed ? (
+                    <button
+                      onClick={() => setSlipCollapsedPersisted(false)}
+                      className="flex w-full items-center justify-between rounded-lg border border-line/60 bg-card/60 px-3 py-2.5 text-left transition-colors hover:bg-card"
+                    >
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-frost">
                         Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
                       </span>
-                      <button
-                        onClick={() => setSlipCollapsedPersisted(true)}
-                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted transition-colors hover:bg-card hover:text-frost"
-                      >
-                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        Hide
-                      </button>
-                    </div>
-                    <ParlaySlip legs={slipLegs} onRemove={removeLeg} className="max-h-[380px]" />
-                  </>
-                )}
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-edge" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                        <path d="M6 15l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                          Parlay Slip · {slipLegs.length} leg{slipLegs.length === 1 ? '' : 's'}
+                        </span>
+                        <button
+                          onClick={() => setSlipCollapsedPersisted(true)}
+                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted transition-colors hover:bg-card hover:text-frost"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          Hide
+                        </button>
+                      </div>
+                      <ParlaySlip legs={slipLegs} onRemove={removeLeg} className="max-h-[380px]" />
+                    </>
+                  )}
+                </div>
               </div>
+            )}
+            <Composer onSend={sendMessage} streaming={streaming} />
+          </div>
+          <div className="hidden w-80 shrink-0 xl:block">
+            <div className="sticky top-0 flex h-full flex-col p-4 pl-2">
+              <ParlaySlip legs={slipLegs} onRemove={removeLeg} />
             </div>
-          )}
-          <Composer onSend={sendMessage} streaming={streaming} />
-        </div>
-        <div className="hidden w-80 shrink-0 xl:block">
-          <div className="sticky top-0 flex h-full flex-col p-4 pl-2">
-            <ParlaySlip legs={slipLegs} onRemove={removeLeg} />
           </div>
         </div>
       </div>
-    </div>
+      <Analytics />
+    </>
   );
 }
