@@ -4,12 +4,11 @@
   "private": true,
   "description": "AI sports betting analyst platform - chat with live data grounding",
   "scripts": {
-    "setup": "cd server && pnpm install && cd ../client && pnpm install",
-    "dev": "concurrently -n server,client -c blue,green \"cd server && pnpm dev\" \"cd client && pnpm dev\"",
-    "build": "cd server && pnpm build && cd ../client && pnpm build"
+    "setup": "cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently -n server,client -c blue,green \"cd server && npm run dev\" \"cd client && npm run dev\"",
+    "build": "cd server && npm run build && cd ../client && npm run build"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
-  },
-  "packageManager": "pnpm@11.21.0"
+  }
 }
