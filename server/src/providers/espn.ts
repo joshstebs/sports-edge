@@ -17,20 +17,56 @@
 //      NFL: yards/play = totalYards / totalOffensivePlays (labeled).
 //      NFL defensive yards allowed are NOT exposed -> honest unavailable.
 
-import { cacheGet, cacheSet, normalizeName, round } from './http.js';
+import { cacheGet, cacheSet, fetchJson, normalizeName, round } from './http.js';
 
 const API = 'https://site.web.api.espn.com/apis/site/v2/sports';
 const V3 = 'https://site.web.api.espn.com/apis/common/v3/sports';
 const SOURCE = 'site.web.api.espn.com';
 const CACHE_TTL = 30 * 60 * 1000;
+const ROSTER_TTL = 5 * 60 * 1000;
 const CONCURRENCY = 6;
 
-export type EspnSport = 'basketball/nba' | 'football/nfl';
+export type EspnSport = 'baseball/mlb' | 'basketball/nba' | 'football/nfl' | 'hockey/nhl';
 
 export interface TeamInfo {
   id: string;
   name: string;
   abbr: string;
+}
+
+export interface EspnRosterPlayer {
+  id: string;
+  displayName: string;
+  position: string;
+  rosterStatus: { name: string | null; type: string | null; abbreviation: string | null };
+  injuries: Array<{ status: string | null; date: string | null; type: string | null; detail: string | null }>;
+}
+
+export interface EspnInjury {
+  id: string;
+  playerId: string;
+  playerName: string;
+  teamId: string | null;
+  teamName: string | null;
+  status: string;
+  date: string | null;
+  shortComment: string | null;
+  longComment: string | null;
+  type: string | null;
+  detail: string | null;
+  returnDate: string | null;
+}
+
+export interface EspnGameDayStatus {
+  eventId: string;
+  eventDate: string | null;
+  state: string;
+  status: string;
+  completed: boolean;
+  teams: Array<{ id: string; name: string }>;
+  playerListedInEventInjuries: boolean;
+  playerEventInjuryStatus: string | null;
+  checkedAt: string;
 }
 
 // --- teams list -------------------------------------------------------------
@@ -53,7 +89,7 @@ export async function getTeams(sport: EspnSport): Promise<TeamInfo[]> {
 
 async function fetchRoster(sport: EspnSport, teamId: string): Promise<any[]> {
   const key = `espn:roster:${sport}:${teamId}`;
-  const cached = cacheGet<any[]>(key, CACHE_TTL);
+  const cached = cacheGet<any[]>(key, ROSTER_TTL);
   if (cached) return cached;
   const res = await fetch(`${API}/${sport}/teams/${teamId}/roster`, {
     headers: { 'User-Agent': UA() },
@@ -79,17 +115,37 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 }
 
 /** Flatten roster athletes into {id, displayName, position}. */
-function flattenAthletes(athletes: any[]): Array<{ id: string; displayName: string; position: string }> {
-  const out: Array<{ id: string; displayName: string; position: string }> = [];
+function readRosterPlayer(p: any, groupPosition = ''): EspnRosterPlayer {
+  const status = p?.status ?? {};
+  return {
+    id: String(p?.id ?? ''),
+    displayName: p?.displayName ?? p?.fullName ?? '',
+    position: p?.position?.abbreviation ?? p?.position?.displayName ?? groupPosition ?? '',
+    rosterStatus: {
+      name: status?.name ?? null,
+      type: status?.type ?? null,
+      abbreviation: status?.abbreviation ?? null,
+    },
+    injuries: (Array.isArray(p?.injuries) ? p.injuries : []).map((i: any) => ({
+      status: i?.status ?? null,
+      date: i?.date ?? null,
+      type: i?.details?.type ?? null,
+      detail: i?.details?.detail ?? null,
+    })),
+  };
+}
+
+function flattenAthletes(athletes: any[]): EspnRosterPlayer[] {
+  const out: EspnRosterPlayer[] = [];
   for (const a of athletes) {
     if (Array.isArray(a.items)) {
       // NFL: position group {position, items[]}
       for (const p of a.items) {
-        out.push({ id: String(p.id), displayName: p.displayName ?? p.fullName ?? '', position: a.position ?? p.position ?? '' });
+        out.push(readRosterPlayer(p, a.position ?? ''));
       }
     } else if (a.id) {
-      // NBA: flat player objects
-      out.push({ id: String(a.id), displayName: a.displayName ?? a.fullName ?? '', position: a.position?.abbreviation ?? '' });
+      // NBA/MLB/NHL: flat player objects
+      out.push(readRosterPlayer(a));
     }
   }
   return out;
@@ -99,14 +155,21 @@ function flattenAthletes(athletes: any[]): Array<{ id: string; displayName: stri
 export async function findPlayer(
   name: string,
   sport: EspnSport
-): Promise<{ available: boolean; reason?: string; player?: { id: string; displayName: string; position: string; teamId: string; teamName: string } }> {
+): Promise<{
+  available: boolean;
+  reason?: string;
+  coverage?: { teams: number; succeeded: number; failed: number };
+  player?: EspnRosterPlayer & { teamId: string; teamName: string };
+}> {
   try {
     const target = normalizeName(name);
     if (!target) return { available: false, reason: 'no player name provided' };
     const teams = await getTeams(sport);
+    let succeeded = 0;
     const all = await mapLimit(teams, CONCURRENCY, async (t) => {
       try {
         const athletes = await fetchRoster(sport, t.id);
+        succeeded++;
         const flat = flattenAthletes(athletes);
         return flat.map((p) => ({ ...p, teamId: t.id, teamName: t.name }));
       } catch {
@@ -116,19 +179,144 @@ export async function findPlayer(
     const flat = all.flat();
     let hit = flat.find((p) => normalizeName(p.displayName) === target);
     if (!hit) hit = flat.find((p) => normalizeName(p.displayName).includes(target));
-    if (!hit) return { available: false, reason: `no "${name}" found in ${sport} rosters` };
+    const coverage = { teams: teams.length, succeeded, failed: teams.length - succeeded };
+    if (!hit) return { available: false, reason: `no "${name}" found in ${sport} rosters`, coverage };
     return {
       available: true,
+      coverage,
       player: {
-        id: hit.id,
-        displayName: hit.displayName,
-        position: hit.position,
+        ...hit,
         teamId: hit.teamId,
         teamName: hit.teamName,
       },
     };
   } catch (e) {
     return { available: false, reason: `ESPN lookup failed: ${(e as Error).message}` };
+  }
+}
+
+// --- league injury reports -------------------------------------------------
+
+/** Current ESPN league injury report. This is separate from roster status:
+ * ESPN commonly leaves an injured player's roster status as "Active" while
+ * publishing Out/Questionable/Day-To-Day on this feed. */
+export async function getLeagueInjuries(
+  sport: EspnSport
+): Promise<{ available: boolean; reason?: string; source: string; checkedAt: string; injuries: EspnInjury[] }> {
+  const key = `espn:injuries:${sport}`;
+  const cached = cacheGet<{ checkedAt: string; injuries: EspnInjury[] }>(key, 5 * 60 * 1000);
+  if (cached) return { available: true, source: SOURCE, ...cached };
+  const checkedAt = new Date().toISOString();
+  try {
+    const j = await fetchJson(`${API}/${sport}/injuries`);
+    if (!Array.isArray(j?.injuries)) {
+      return { available: false, reason: 'ESPN injury response did not include an injury list', source: SOURCE, checkedAt, injuries: [] };
+    }
+    const injuries: EspnInjury[] = [];
+    for (const team of j.injuries) {
+      for (const i of Array.isArray(team?.injuries) ? team.injuries : []) {
+        const athlete = i?.athlete ?? {};
+        const playerName = String(athlete?.displayName ?? athlete?.fullName ?? '').trim();
+        if (!playerName) continue;
+        injuries.push({
+          id: String(i?.id ?? ''),
+          playerId: String(athlete?.id ?? ''),
+          playerName,
+          teamId: athlete?.team?.id != null ? String(athlete.team.id) : team?.id != null ? String(team.id) : null,
+          teamName: athlete?.team?.displayName ?? team?.displayName ?? null,
+          status: String(i?.status ?? 'Unknown'),
+          date: i?.date ?? null,
+          shortComment: i?.shortComment ?? null,
+          longComment: i?.longComment ?? null,
+          type: i?.details?.type ?? null,
+          detail: i?.details?.detail ?? null,
+          returnDate: i?.details?.returnDate ?? null,
+        });
+      }
+    }
+    cacheSet(key, { checkedAt, injuries });
+    return { available: true, source: SOURCE, checkedAt, injuries };
+  } catch (e) {
+    return { available: false, reason: `ESPN injury report failed: ${(e as Error).message}`, source: SOURCE, checkedAt, injuries: [] };
+  }
+}
+
+// --- event-specific game-day status ---------------------------------------
+
+/** Resolve one exact scheduled event and re-check its event injury report.
+ * Absence from the league feed alone is not enough for a game-day prop: late
+ * scratches are often attached to the event summary closer to lock. */
+export async function getGameDayStatus(
+  sport: EspnSport,
+  playerName: string,
+  teamId: string,
+  date: string,
+  eventId?: string | number | null,
+): Promise<{ available: boolean; reason?: string; source: string; data?: EspnGameDayStatus }> {
+  const checkedAt = new Date().toISOString();
+  const day = date.replace(/-/g, '');
+  if (!/^\d{8}$/.test(day)) return { available: false, reason: `invalid event date "${date}"`, source: SOURCE };
+  try {
+    const scoreboard = await fetchJson(`${API}/${sport}/scoreboard?dates=${day}`);
+    const events: any[] = Array.isArray(scoreboard?.events) ? scoreboard.events : [];
+    const requestedId = eventId != null && String(eventId).trim() ? String(eventId).trim() : null;
+    const teamEvents = events.filter((event) =>
+      (event?.competitions?.[0]?.competitors ?? []).some((c: any) => String(c?.team?.id ?? '') === String(teamId))
+    );
+    const matches = requestedId ? events.filter((event) => String(event?.id ?? '') === requestedId) : teamEvents;
+    if (matches.length !== 1) {
+      return {
+        available: false,
+        reason: requestedId
+          ? `event ${requestedId} was not found exactly once on ${date}`
+          : teamEvents.length > 1
+            ? `multiple events found for team ${teamId} on ${date}; exact eventId required`
+            : `no event found for team ${teamId} on ${date}`,
+        source: SOURCE,
+      };
+    }
+    const event = matches[0];
+    const competitors: any[] = event?.competitions?.[0]?.competitors ?? [];
+    if (!competitors.some((c) => String(c?.team?.id ?? '') === String(teamId))) {
+      return { available: false, reason: `event ${event.id} does not include the player's current team`, source: SOURCE };
+    }
+    const type = event?.status?.type ?? {};
+    const state = String(type?.state ?? '').toLowerCase();
+    const completed = type?.completed === true;
+    if (state !== 'pre' || completed) {
+      return {
+        available: false,
+        reason: `event ${event.id} is ${(type?.detail ?? type?.name ?? state) || 'not in a pregame state'}`,
+        source: SOURCE,
+      };
+    }
+
+    const summary = await fetchJson(`${API}/${sport}/summary?event=${encodeURIComponent(String(event.id))}`);
+    if (!Array.isArray(summary?.injuries)) {
+      return { available: false, reason: `event ${event.id} injury report is unavailable`, source: SOURCE };
+    }
+    const target = normalizeName(playerName);
+    const eventInjuries: any[] = summary.injuries.flatMap((group: any) => Array.isArray(group?.injuries) ? group.injuries : []);
+    const hit = eventInjuries.find((injury: any) =>
+      normalizeName(injury?.athlete?.displayName ?? injury?.athlete?.fullName ?? '') === target
+    );
+    return {
+      available: true,
+      source: SOURCE,
+      data: {
+        eventId: String(event.id),
+        eventDate: event?.date ?? null,
+        state,
+        status: String(type?.detail ?? type?.name ?? 'pregame'),
+        completed,
+        teams: competitors.map((c) => ({ id: String(c?.team?.id ?? ''), name: c?.team?.displayName ?? c?.team?.name ?? '' })),
+        playerListedInEventInjuries: Boolean(hit),
+        playerEventInjuryStatus: hit ? String(hit?.status ?? hit?.type?.description ?? 'Unknown') : null,
+        checkedAt,
+      },
+    };
+  } catch (e) {
+    return { available: false, reason: `ESPN game-day status failed: ${(e as Error).message}`, source: SOURCE };
   }
 }
 

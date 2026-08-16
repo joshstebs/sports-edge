@@ -15,7 +15,7 @@ export interface StreamChatOptions {
  * Framing: "event: <type>\ndata: <json>\n\n". Malformed frames are dropped —
  * a bad frame must never kill the stream.
  */
-function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
+export function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
   if (!frame.trim()) return;
   let type = '';
   const dataLines: string[] = [];
@@ -38,9 +38,9 @@ function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
 
 /**
  * POST /api/chat and consume the text/event-stream response.
- * Incremental TextDecoder (stream:true) + buffer split on '\n\n' handles
- * frames that arrive split across network chunks, and a final flush handles a
- * partial trailing frame at stream end.
+ * Incremental TextDecoder (stream:true) + blank-line splitting handles LF and
+ * CRLF frames arriving across network chunks. A final flush handles a partial
+ * trailing frame at stream end.
  */
 export async function streamChat(body: StreamChatBody, opts: StreamChatOptions): Promise<void> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/chat`, {
@@ -64,11 +64,11 @@ export async function streamChat(body: StreamChatBody, opts: StreamChatOptions):
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    let sep = buffer.indexOf('\n\n');
-    while (sep !== -1) {
-      parseFrame(buffer.slice(0, sep), opts.onEvent);
-      buffer = buffer.slice(sep + 2);
-      sep = buffer.indexOf('\n\n');
+    let boundary = buffer.match(/\r?\n\r?\n/);
+    while (boundary?.index !== undefined) {
+      parseFrame(buffer.slice(0, boundary.index), opts.onEvent);
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      boundary = buffer.match(/\r?\n\r?\n/);
     }
   }
   buffer += decoder.decode(); // flush any decoder-internal state

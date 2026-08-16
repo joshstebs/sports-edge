@@ -13,7 +13,16 @@ import type { SgpLeg } from '../types';
 interface ParlaySlipProps {
   legs: SgpLeg[];
   onRemove: (key: string) => void;
+  onClear?: () => void;
+  onSave?: () => void;
+  unsavedCount?: number;
+  saveStatus?: SlipSaveStatus;
   className?: string;
+}
+
+export interface SlipSaveStatus {
+  state: 'idle' | 'saving' | 'success' | 'error';
+  message?: string;
 }
 
 const DOT: Record<Grade, string> = {
@@ -25,12 +34,20 @@ const DOT: Record<Grade, string> = {
 
 /**
  * Sticky Parlay Slip side panel. Legs come from every SGP event in the
- * conversation (deduped by selection+line, latest wins). The combined price is
+ * conversation (deduped by sport/game/selection/market/line, latest wins). The combined price is
  * real arithmetic on real odds only: decimal odds of legs WITH odds are
  * multiplied and converted back to American. If any leg is unpriced we show
  * '—' instead of pretending the full ticket has a price.
  */
-export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySlipProps) {
+export default function ParlaySlip({
+  legs,
+  onRemove,
+  onClear,
+  onSave,
+  unsavedCount = legs.length,
+  saveStatus = { state: 'idle' },
+  className = '',
+}: ParlaySlipProps) {
   const combined = useMemo(() => {
     if (legs.length === 0) return null;
     const allPriced = legs.every((l) => typeof l.odds === 'number' && Number.isFinite(l.odds));
@@ -60,9 +77,20 @@ export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySli
           </svg>
           <h2 className="font-display text-sm font-bold tracking-tight text-head">Parlay Slip</h2>
         </div>
-        <span className="rounded-full bg-edge/10 px-2 py-0.5 text-[10px] font-bold tabular-nums text-edge ring-1 ring-edge/25">
-          {legs.length} {legs.length === 1 ? 'leg' : 'legs'}
-        </span>
+        <div className="flex items-center gap-2">
+          {legs.length > 0 && onClear ? (
+            <button
+              type="button"
+              onClick={onClear}
+              className="rounded px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide text-frost2 transition hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+            >
+              Clear
+            </button>
+          ) : null}
+          <span className="rounded-full bg-edge/10 px-2 py-0.5 text-[10px] font-bold tabular-nums text-edge ring-1 ring-edge/25">
+            {legs.length} {legs.length === 1 ? 'leg' : 'legs'}
+          </span>
+        </div>
       </div>
 
       {legs.length === 0 ? (
@@ -88,6 +116,7 @@ export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySli
                     {leg.selection || '—'}
                   </p>
                   <button
+                    type="button"
                     onClick={() => onRemove(legKey(leg))}
                     title="Remove from slip"
                     aria-label="Remove from slip"
@@ -163,9 +192,41 @@ export default function ParlaySlip({ legs, onRemove, className = '' }: ParlaySli
             {combined != null ? formatAmerican(combined) : '—'}
           </span>
         </div>
-        <p className="mt-1.5 text-[10px] leading-snug text-frost2/80">
-          Parlays amplify variance — size in fractional units. Play responsibly.
-        </p>
+        {legs.length > 0 && onSave ? (
+          <>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saveStatus.state === 'saving' || unsavedCount === 0}
+              className="mt-3 flex w-full items-center justify-center rounded-lg bg-edge px-3 py-2 text-xs font-extrabold text-ink shadow-[0_0_16px_rgba(21,255,194,0.16)] transition hover:bg-edge/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/70 disabled:cursor-not-allowed disabled:bg-line disabled:text-frost2 disabled:shadow-none"
+            >
+              {saveStatus.state === 'saving'
+                ? 'Saving…'
+                : unsavedCount === 0
+                  ? 'All Picks Tracked'
+                  : `Save & Track ${unsavedCount === 1 ? 'Bet' : `${unsavedCount} Picks`}`}
+            </button>
+            <p
+              aria-live="polite"
+              className={`mt-1.5 min-h-4 text-[10px] leading-snug ${
+                saveStatus.state === 'error'
+                  ? 'text-danger'
+                  : saveStatus.state === 'success'
+                    ? 'text-edge'
+                    : 'text-frost2/80'
+              }`}
+            >
+              {saveStatus.message ?? 'Saves picks to the results ledger; this does not place a wager.'}
+            </p>
+            <p className="mt-1 text-[10px] leading-snug text-frost2/80">
+              Parlays amplify variance — size in fractional units. Play responsibly.
+            </p>
+          </>
+        ) : (
+          <p className="mt-1.5 text-[10px] leading-snug text-frost2/80">
+            Parlays amplify variance — size in fractional units. Play responsibly.
+          </p>
+        )}
       </div>
     </aside>
   );

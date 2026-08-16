@@ -46,9 +46,31 @@ export function gradeForConfidence(confidence: number): { grade: Grade; label: s
   return { grade: 'D', label: 'Weak' };
 }
 
-/** Stable dedupe key for slip legs: selection + line. */
-export function legKey(leg: { selection?: string; line?: string | number | null }): string {
-  return `${leg.selection ?? ''}::${String(leg.line ?? '')}`;
+function normalizeKeyPart(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Stable identity for one wager. Odds and confidence are intentionally omitted
+ * so a later recommendation can refresh those values without duplicating the
+ * same leg. Game and market are included so equal player/line text in different
+ * matchups or prop markets never collides in the bet slip.
+ */
+export function legKey(leg: {
+  sport?: string;
+  game?: string;
+  eventId?: string;
+  selection?: string;
+  market?: string;
+  line?: string | number | null;
+}): string {
+  return [leg.sport, leg.game, leg.eventId, leg.selection, leg.market, leg.line]
+    .map(normalizeKeyPart)
+    .join('::');
 }
 
 /** American odds as display text: +150 stays +150, -130 stays -130. */

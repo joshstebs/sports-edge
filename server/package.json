@@ -1,6 +1,6 @@
 {
   "name": "sports-edge-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "SportsEdge backend - Express + TypeScript, LLM chat grounded in real live sports data via function calling",
@@ -9,7 +9,11 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "probe": "tsx scripts/probe.ts",
-    "eval": "tsx scripts/evaluate.ts"
+    "eval": "tsx scripts/evaluate.ts",
+    "auth:generate": "tsx scripts/generate-auth-users.ts",
+    "test:auth": "node --import tsx --test test/auth.test.ts",
+    "test:evaluator": "node --import tsx scripts/evaluator.test.ts",
+    "test": "node --import tsx --test test/*.test.ts scripts/*.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

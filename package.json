@@ -1,6 +1,6 @@
 {
   "name": "sports-edge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "AI sports betting analyst platform - chat with live data grounding",
@@ -10,6 +10,8 @@
     "client": "vite",
     "build": "tsc --noEmit && vite build",
     "build:server": "tsc -p server/tsconfig.json",
+    "test": "npm run test:frontend && npm run test --prefix server",
+    "test:frontend": "node --import tsx --test test/*.test.ts",
     "setup": "npm install && npm install --prefix server"
   },
   "dependencies": {

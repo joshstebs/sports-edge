@@ -1,6 +1,6 @@
 // Types mirror the backend API contract exactly (server on :3100).
 
-export type Sport = 'All' | 'MLB' | 'NFL' | 'NBA';
+export type Sport = 'All' | 'MLB' | 'NFL' | 'NBA' | 'NHL';
 
 export type Role = 'user' | 'assistant';
 
@@ -13,6 +13,8 @@ export interface ToolEvent {
 export interface SgpLeg {
   sport?: string;
   game?: string;
+  eventDate?: string;
+  eventId?: string;
   selection?: string;
   market?: string;
   line?: string | number | null;
@@ -41,6 +43,7 @@ export type ChatEvent =
   | { type: 'tool'; name: string; status: ToolEvent['status']; summary?: string }
   | { type: 'delta'; text: string }
   | { type: 'sgp'; legs: SgpLeg[] }
+  | { type: 'log'; stored?: number }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
