@@ -8,6 +8,11 @@
     "dev": "concurrently -n server,client -c blue,green \"cd server && npm run dev\" \"cd client && npm run dev\"",
     "build": "cd server && npm run build && cd ../client && npm run build"
   },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.6.2"
+  },
   "devDependencies": {
     "concurrently": "^9.0.0"
   }
