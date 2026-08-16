@@ -6,7 +6,7 @@
   "description": "AI sports betting analyst platform - chat with live data grounding",
   "scripts": {
     "dev": "concurrently -n server,client -c blue,green \"npm run server\" \"npm run client\"",
-    "server": "tsx server/server.ts",
+    "server": "cd server && tsx src/server.ts",
     "client": "vite",
     "build": "tsc --noEmit && vite build",
     "build:server": "tsc -p server/tsconfig.json",
