@@ -1,10 +1,13 @@
 import type { HealthInfo } from '../lib/api';
+import type { AuthUser } from '../lib/auth';
 import type { HealthState } from '../types';
 
 interface HeaderProps {
   model: string | null;
   health: HealthState;
   healthInfo: HealthInfo | null;
+  user: AuthUser;
+  onLogout: () => Promise<void>;
   onNewChat: () => void;
 }
 
@@ -21,7 +24,7 @@ function liveTooltip(health: HealthState, info: HealthInfo | null): string {
   return bits.length > 0 ? `Live data feed connected · ${bits.join(' · ')}` : 'Live data feed connected';
 }
 
-export default function Header({ model, health, healthInfo, onNewChat }: HeaderProps) {
+export default function Header({ model, health, healthInfo, user, onLogout, onNewChat }: HeaderProps) {
   const live = health === 'ok';
   return (
     <header className="z-20 flex shrink-0 items-center justify-between gap-3 border-b border-line/70 bg-ink/85 px-4 py-3 backdrop-blur-xl">
@@ -75,11 +78,27 @@ export default function Header({ model, health, healthInfo, onNewChat }: HeaderP
           Live data
         </span>
         <button
+          type="button"
           onClick={onNewChat}
           className="rounded-full border border-line/70 bg-panel2/80 px-3 py-1 text-[11px] font-semibold text-frost transition hover:border-edge/50 hover:text-edge"
         >
           New chat
         </button>
+        <div className="flex items-center gap-2 rounded-full border border-line/70 bg-panel2/80 py-1 pl-1 pr-1 sm:pl-2.5">
+          <span className="hidden max-w-28 truncate text-[10px] font-semibold text-frost sm:inline" title={user.username}>
+            {user.username}
+          </span>
+          <span className="hidden rounded-full bg-edge/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-edge md:inline">
+            {user.role}
+          </span>
+          <button
+            type="button"
+            onClick={() => void onLogout()}
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-frost2 transition hover:bg-danger/10 hover:text-danger focus:outline-none focus:ring-2 focus:ring-edge/40"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
   );

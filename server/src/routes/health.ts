@@ -2,9 +2,10 @@
 
 import { Router } from 'express';
 import { llmConfig } from '../llm/chatClient.js';
+import { storageStatus } from '../lib/predictionStore.js';
 import { oddsConfigured } from '../providers/oddsApi.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export const sources = {
   mlbStatsApi: {
@@ -20,7 +21,7 @@ export const sources = {
   espn: {
     available: true,
     baseUrl: 'https://site.web.api.espn.com/apis',
-    note: 'NFL/NBA rosters, v3 gamelogs, team statistics — site.api.espn.com is 403-blocked from some networks, same API works on site.web.api.espn.com (keyless)',
+    note: 'MLB/NFL/NBA/NHL rosters and injury reports, plus league gamelogs/team statistics where available (keyless)',
   },
   oddsApi: {
     available: oddsConfigured(),
@@ -39,9 +40,11 @@ export const sources = {
     note: 'real ESPN headlines for mlb/nfl/nba/nhl, player-name filterable — injury/lineup context (keyless)',
   },
   ledger: {
-    available: true,
-    baseUrl: 'file://server/data/ledger.json',
-    note: 'pick ledger: save SGP legs, mark won/lost/push, ROI + win rate from real odds (flat 1-unit stakes)',
+    available: storageStatus().backend !== 'not-configured',
+    baseUrl: storageStatus().backend === 'upstash-redis'
+      ? 'upstash-redis://configured'
+      : storageStatus().backend === 'local-json' ? 'local-json://data/ledger.json' : null,
+    note: 'per-user pick ledger: idempotent SGP saves, settlement, ROI and win rate from real odds (flat 1-unit stakes)',
   },
   parkFactors: {
     available: true,
@@ -54,6 +57,7 @@ export const healthRouter = Router();
 
 healthRouter.get('/health', (_req, res) => {
   const cfg = llmConfig();
+  const storage = storageStatus();
   res.json({
     ok: true,
     llmConfigured: cfg.configured,
@@ -65,7 +69,7 @@ healthRouter.get('/health', (_req, res) => {
       oddsApi: { available: sources.oddsApi.available, reason: sources.oddsApi.reason },
       weather: { available: true },
       news: { available: true },
-      ledger: { available: true },
+      ledger: { available: storage.backend !== 'not-configured', backend: storage.backend, durable: storage.durable },
       parkFactors: { available: true },
     },
     version: VERSION,

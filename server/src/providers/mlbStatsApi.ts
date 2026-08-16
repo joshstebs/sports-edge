@@ -39,6 +39,49 @@ export async function searchPlayer(name: string): Promise<ProviderResult<{ id: n
   }
 }
 
+export interface MlbPlayerStatus {
+  id: number;
+  fullName: string;
+  teamId: number | null;
+  teamName: string | null;
+  rosterStatusCode: string | null;
+  rosterStatus: string | null;
+  isActive: boolean;
+  statusDate: string | null;
+}
+
+/** Official current MLB roster status. Historical roster entries are returned
+ * by the API too, so only the open entry for currentTeam is considered. */
+export async function getPlayerStatus(playerId: number): Promise<ProviderResult<MlbPlayerStatus>> {
+  try {
+    const j = await fetchJson(`${BASE}/people/${playerId}?hydrate=currentTeam,rosterEntries`);
+    const p = j?.people?.[0];
+    if (!p) return fail(`no player record for ${playerId}`);
+    const currentTeamId = p?.currentTeam?.id != null ? Number(p.currentTeam.id) : null;
+    const entries: any[] = Array.isArray(p?.rosterEntries) ? p.rosterEntries : [];
+    const current = entries
+      .filter((e) => !e?.endDate && (currentTeamId == null || Number(e?.team?.id) === currentTeamId))
+      .sort((a, b) => String(b?.statusDate ?? '').localeCompare(String(a?.statusDate ?? '')))[0];
+    if (!current) return fail(`current MLB roster status unavailable for ${p.fullName ?? playerId}`);
+    return {
+      available: true,
+      source: SOURCE,
+      data: {
+        id: Number(p.id),
+        fullName: p.fullName ?? String(playerId),
+        teamId: currentTeamId,
+        teamName: p?.currentTeam?.name ?? current?.team?.name ?? null,
+        rosterStatusCode: current?.status?.code ?? null,
+        rosterStatus: current?.status?.description ?? null,
+        isActive: current?.isActive === true && current?.status?.code === 'A',
+        statusDate: current?.statusDate ?? null,
+      },
+    };
+  } catch (e) {
+    return fail(`player status failed: ${(e as Error).message}`);
+  }
+}
+
 // --- season stats -----------------------------------------------------------
 
 export async function getSeasonStats(
@@ -216,9 +259,12 @@ export async function getLineups(gamePk: number): Promise<ProviderResult<any>> {
   try {
     const j = await fetchJson(`${BASE}/game/${gamePk}/boxscore`);
     const teams = j?.teams ?? {};
-    const players: Record<string, any> = j?.players ?? {};
     const read = (side: 'away' | 'home') => {
       const t = teams[side] ?? {};
+      // MLB boxscore player records live under each team, not at the response
+      // root. Using a root `players` object silently produced only "#id" names
+      // and made every confirmed-lineup check fail.
+      const players: Record<string, any> = t.players ?? {};
       const order = (t.battingOrder ?? []).map((id: string) => {
         const p = players[`ID${id}`];
         return { id, fullName: p?.person?.fullName ?? `#${id}` };
@@ -226,9 +272,9 @@ export async function getLineups(gamePk: number): Promise<ProviderResult<any>> {
       const prob = t.probablePitcher
         ? { id: t.probablePitcher.id, fullName: t.probablePitcher.fullName }
         : null;
-      const pitchers = Object.values(t.pitchers ?? {}).map((p: any) => ({
-        id: p?.person?.id,
-        fullName: p?.person?.fullName ?? p?.person?.fullName ?? null,
+      const pitchers = (Array.isArray(t.pitchers) ? t.pitchers : []).map((id: any) => ({
+        id: Number(id),
+        fullName: players[`ID${id}`]?.person?.fullName ?? null,
       }));
       return {
         team: { id: t.team?.id, name: t.team?.name },

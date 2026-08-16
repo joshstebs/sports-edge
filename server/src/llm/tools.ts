@@ -10,8 +10,18 @@ import * as odds from '../providers/oddsApi.js';
 import * as weather from '../providers/weather.js';
 import * as news from '../providers/news.js';
 import * as espnOdds from '../providers/espnOdds.js';
+import * as availability from '../providers/playerAvailability.js';
+import {
+  buildPlayerPropModel,
+  espnObservation,
+  mlbObservation,
+  normalizeMarket,
+  type HistoricalObservation,
+  type ModelSport,
+} from '../models/playerPropModel.js';
 import { getParkFactor } from '../providers/parkFactors.js';
 import { normalizeName, round } from '../providers/http.js';
+import { loadLearning } from '../lib/predictionStore.js';
 
 export interface ToolOutcome {
   available: boolean;
@@ -519,15 +529,56 @@ const playerNews = async (args: any): Promise<ToolOutcome> => {
   );
 };
 
+// --- player_availability ---------------------------------------------------
+
+const playerAvailability = async (args: any): Promise<ToolOutcome> => {
+  const player = String(args?.player ?? '').trim();
+  const sport = availability.parseSportKey(args?.sport ?? 'mlb');
+  if (!player) return unavail('no player name provided');
+  if (!sport) return unavail(`unsupported sport "${String(args?.sport ?? '')}" (use mlb, nfl, nba or nhl)`);
+
+  const status = await availability.verifyRecommendationAvailability({
+    player,
+    sport,
+    team: args?.team,
+    date: args?.date ?? today(),
+    gamePk: Number(args?.gamePk) || null,
+    eventId: args?.eventId ?? null,
+  });
+  const recommendationEligible = status.recommendationEligible;
+  const payload = {
+    available: true,
+    source: status.sources,
+    ...status,
+  };
+  return ok(
+    recommendationEligible
+      ? `${status.player} passed current ${sport.toUpperCase()} availability checks`
+      : `${status.player} is NOT eligible for a betting recommendation: ${!status.rosterAndInjuryEligible ? status.reason : status.gameDay.reason}`,
+    payload,
+    {
+      player: status.player,
+      team: status.team,
+      playingStatus: status.playingStatus,
+      recommendationEligible,
+      reason: recommendationEligible ? payload.rule : `${status.reason} ${status.gameDay.reason}`,
+      checkedAt: status.checkedAt,
+    }
+  );
+};
+
 // --- espn_gamelog -----------------------------------------------------------
 
-const ESPN_SPORTS: Record<string, espn.EspnSport> = { nfl: 'football/nfl', football: 'football/nfl', nba: 'basketball/nba', basketball: 'basketball/nba' };
+const ESPN_SPORTS: Record<string, espn.EspnSport> = {
+  nfl: 'football/nfl', football: 'football/nfl', nba: 'basketball/nba', basketball: 'basketball/nba',
+  nhl: 'hockey/nhl', hockey: 'hockey/nhl',
+};
 
 const espnGamelog = async (args: any): Promise<ToolOutcome> => {
   const player: string = args?.player ?? '';
   const sportKey: string = String(args?.sport ?? 'nba').toLowerCase();
   const sport = ESPN_SPORTS[sportKey];
-  if (!sport) return unavail(`unsupported sport "${sportKey}" (use nfl or nba)`);
+  if (!sport) return unavail(`unsupported sport "${sportKey}" (use nfl, nba or nhl)`);
   const gamesN = Math.min(Number(args?.games ?? 10) || 10, 20);
   if (!player) return unavail('no player name provided');
 
@@ -562,7 +613,7 @@ const espnGamelog = async (args: any): Promise<ToolOutcome> => {
         threePtMade: tpm ? parseInt(tpm.split('-')[0], 10) : null,
         ft: s['freeThrowsMade-freeThrowsAttempted'] ?? null,
       };
-    } else {
+    } else if (sport === 'football/nfl') {
       out = {
         ...out,
         passing: s.completions !== undefined
@@ -575,6 +626,18 @@ const espnGamelog = async (args: any): Promise<ToolOutcome> => {
           ? { receptions: s.receptions, targets: s.receivingTargets, yards: s.receivingYards, tds: s.receivingTouchdowns }
           : undefined,
         fumbles: s.fumbles ?? null,
+      };
+    } else {
+      out = {
+        ...out,
+        goals: s.goals ?? null,
+        assists: s.assists ?? null,
+        points: s.points ?? null,
+        shotsOnGoal: s.shots ?? s.shotsOnGoal ?? null,
+        blockedShots: s.blockedShots ?? s.blocked ?? null,
+        saves: s.saves ?? null,
+        goalsAgainst: s.goalsAgainst ?? null,
+        timeOnIce: s.timeOnIce ?? null,
       };
     }
     return out;
@@ -603,12 +666,110 @@ const espnGamelog = async (args: any): Promise<ToolOutcome> => {
   });
 };
 
+// --- player_prop_model ------------------------------------------------------
+
+const playerPropModel = async (args: any): Promise<ToolOutcome> => {
+  const sport = availability.parseSportKey(args?.sport) as ModelSport | null;
+  const player = String(args?.player ?? '').trim();
+  const market = normalizeMarket(String(args?.market ?? ''));
+  const side = String(args?.side ?? 'over').toLowerCase() === 'under' ? 'under' : 'over';
+  const line = Number(args?.line);
+  const oddsValue = args?.odds == null || String(args.odds).trim() === ''
+    ? null : Number(String(args.odds).replace(/−/g, '-').replace('+', ''));
+  const americanOdds = Number.isFinite(oddsValue) && oddsValue !== 0 ? oddsValue : null;
+  if (!sport) return unavail(`unsupported sport "${String(args?.sport ?? '')}" (use mlb, nfl, nba or nhl)`);
+  if (!player) return unavail('no player name provided');
+  if (!market) return unavail('no prop market provided');
+  if (!Number.isFinite(line) || line < 0) return unavail('a valid non-negative sportsbook line is required');
+
+  // Models are intentionally downstream of the mandatory live status gate.
+  const status = await availability.verifyRecommendationAvailability({
+    player, sport, team: args?.team,
+    date: typeof args?.date === 'string' ? args.date : today(),
+    gamePk: Number(args?.gamePk) || null,
+    eventId: args?.eventId ?? null,
+  });
+  if (!status.recommendationEligible) {
+    return unavail(`availability gate failed for ${status.player}: ${status.reason} ${status.gameDay.reason}`);
+  }
+
+  let observations: HistoricalObservation[] = [];
+  let source = '';
+  let playerId: string | number | null = null;
+  let playerName = status.player;
+  if (sport === 'mlb') {
+    const found = await mlb.searchPlayer(player);
+    if (!found.available || !found.data) return unavail(found.reason ?? 'official MLB player not found');
+    playerId = found.data.id;
+    playerName = found.data.fullName;
+    const pitcherMarkets = new Set(['strikeouts', 'earnedRuns', 'hitsAllowed', 'walksAllowed', 'outsRecorded']);
+    const group = pitcherMarkets.has(market) ? 'pitching' : 'hitting';
+    const log = await mlb.getGameLog(found.data.id, group, mlb.CURRENT_SEASON, 20);
+    if (!log.available || !Array.isArray(log.data)) return unavail(log.reason ?? 'official MLB game log unavailable');
+    observations = log.data.flatMap((game: any): HistoricalObservation[] => {
+      const value = mlbObservation(market, game.stat ?? {});
+      return value == null || !Number.isFinite(value) ? [] : [{ date: game.date ?? null, value }];
+    });
+    source = 'statsapi.mlb.com official gameLog';
+  } else {
+    const espnSport = ESPN_SPORTS[sport];
+    const found = await espn.findPlayer(player, espnSport);
+    if (!found.available || !found.player) return unavail(found.reason ?? 'current ESPN roster player not found');
+    playerId = found.player.id;
+    playerName = found.player.displayName;
+    const log = await espn.getGamelog(found.player.id, espnSport, 20);
+    if (!log.available || !Array.isArray(log.games)) return unavail(log.reason ?? 'official ESPN game log unavailable');
+    observations = log.games.flatMap((game): HistoricalObservation[] => {
+      const value = espnObservation(sport, market, game.stats);
+      return value == null || !Number.isFinite(value) ? [] : [{ date: game.gameDate, value }];
+    });
+    source = 'site.web.api.espn.com v3 official game log';
+  }
+
+  let calibration = null;
+  try {
+    const learning = await loadLearning();
+    const learned = learning?.perSportMarket?.[`${sport.toUpperCase()}:${market}`];
+    if (learned) calibration = { n: learned.n, averageConfidence: learned.averageConfidence ?? null, hitRate: learned.hitRate };
+  } catch {
+    // Model remains usable from official history when optional learning state is unavailable.
+  }
+  const model = buildPlayerPropModel({ sport, market, side, line, observations, americanOdds, source, calibration });
+  const payload = {
+    ...model, player: playerName, playerId,
+    availability: {
+      recommendationEligible: status.recommendationEligible,
+      playingStatus: status.playingStatus,
+      checkedAt: status.checkedAt,
+      reason: status.reason,
+      gameDay: status.gameDay,
+    },
+    observations: observations.map((row) => ({ date: row.date ?? null, value: row.value })),
+    rule: 'Use probability only for this exact market side and line. A grade D is no recommendation. Positive EV requires verified odds and estimatedEdge > 0.',
+  };
+  if (!model.available) {
+    return { available: false, reason: model.reason, summary: `model unavailable: ${model.reason}`, data: payload, payload };
+  }
+  return ok(
+    `${sport.toUpperCase()} ${playerName} ${side} ${line} ${market}: ${round((model.probability ?? 0) * 100, 1)}% from ${model.sampleSize} real games (${model.grade})`,
+    payload,
+    {
+      player: playerName, sport, market, side, line,
+      probability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
+      impliedProbability: model.impliedProbability, estimatedEdge: model.estimatedEdge,
+      modelVersion: model.modelVersion, source: model.source,
+      eventDate: String(args?.date ?? today()).slice(0, 10),
+      eventId: String(status.gameDay.eventId ?? status.gameDay.gamePk ?? ''),
+    },
+  );
+};
+
 // --- team_efficiency --------------------------------------------------------
 
 const teamEfficiency = async (args: any): Promise<ToolOutcome> => {
   const sportKey: string = String(args?.sport ?? 'nba').toLowerCase();
   const sport = ESPN_SPORTS[sportKey];
-  if (!sport) return unavail(`unsupported sport "${sportKey}" (use nfl or nba)`);
+  if (!sport || sport === 'hockey/nhl') return unavail(`unsupported sport "${sportKey}" (use nfl or nba)`);
   const team: string = args?.team ?? '';
   if (!team) return unavail('no team name provided');
   const r = await espn.getTeamStats(sport, team);
@@ -624,6 +785,46 @@ const teamEfficiency = async (args: any): Promise<ToolOutcome> => {
 // --- registry ---------------------------------------------------------------
 
 export const TOOL_DEFS: ToolDef[] = [
+  {
+    name: 'player_prop_model',
+    description:
+      'Deterministic evidence-only player prop model for MLB/NFL/NBA/NHL. REQUIRED for every player-prop recommendation after supplying the exact sportsbook market, side and line. It first runs the mandatory current player_availability gate, then estimates probability from official recent game logs with transparent shrinkage. Returns unavailable instead of inventing missing history. Grade D means do not recommend; +EV requires verified odds and positive estimatedEdge.',
+    parameters: {
+      type: 'object',
+      properties: {
+        player: { type: 'string', description: 'Full player name' },
+        sport: { type: 'string', description: 'mlb, nfl, nba or nhl' },
+        market: { type: 'string', description: 'Exact market, e.g. hits, strikeouts, points, rebounds, passing_yards, shots_on_goal, saves' },
+        side: { type: 'string', enum: ['over', 'under'] },
+        line: { type: 'number', description: 'Exact current sportsbook prop line' },
+        odds: { type: 'number', description: 'Optional verified American odds for this exact prop, e.g. -110' },
+        team: { type: 'string', description: 'Optional team name for availability resolution' },
+        date: { type: 'string', description: 'Event date YYYY-MM-DD' },
+        gamePk: { type: 'number', description: 'Optional MLB official gamePk' },
+        eventId: { type: 'string', description: 'Official ESPN event ID for NFL/NBA/NHL game-day verification' },
+      },
+      required: ['player', 'sport', 'market', 'side', 'line'],
+    },
+    handler: playerPropModel,
+  },
+  {
+    name: 'player_availability',
+    description:
+      'MANDATORY final safety gate before recommending or adding ANY player prop. Verifies current active roster plus league and exact-event injury status for MLB/NFL/NBA/NHL. MLB additionally requires the exact scheduled game and confirmed batting order/probable pitcher. NFL/NBA/NHL require an exact pregame ESPN event (pass date + eventId when known). recommendationEligible=false is fail-closed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        player: { type: 'string', description: 'Full player name' },
+        sport: { type: 'string', description: 'mlb, nfl, nba or nhl' },
+        team: { type: 'string', description: 'Optional team name; helps resolve the MLB game' },
+        date: { type: 'string', description: 'Game date YYYY-MM-DD (default today)' },
+        gamePk: { type: 'number', description: 'Optional MLB Stats API gamePk from mlb_schedule' },
+        eventId: { type: 'string', description: 'Official ESPN event ID for NFL/NBA/NHL' },
+      },
+      required: ['player', 'sport'],
+    },
+    handler: playerAvailability,
+  },
   {
     name: 'mlb_batter_stats',
     description:
@@ -726,7 +927,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: 'espn_gamelog',
     description:
-      'Real per-game stats for NFL/NBA players from ESPN v3 gamelog: NBA points/rebounds/assists/steals/blocks/3PM; NFL passing/rushing/receiving. Season label comes from ESPN (off-season shows the most recent completed season).',
+      'Real per-game stats for NFL/NBA/NHL players from ESPN v3 gamelog: NBA points/rebounds/assists/steals/blocks/3PM; NFL passing/rushing/receiving; NHL goals/assists/points/shots/saves when published. Season label comes from ESPN.',
     parameters: {
       type: 'object',
       properties: {

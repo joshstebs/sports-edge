@@ -3,6 +3,7 @@ import {
   evFromConfidence,
   formatAmerican,
   gradeForConfidence,
+  legKey,
   type Grade,
 } from '../lib/odds';
 import type { SgpLeg } from '../types';
@@ -167,7 +168,7 @@ export default function SgpPanel({ legs }: { legs: SgpLeg[] }) {
 
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         {legs.map((leg, i) => (
-          <LegCard key={i} leg={leg} index={i} />
+          <LegCard key={legKey(leg)} leg={leg} index={i} />
         ))}
       </div>
 

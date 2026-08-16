@@ -1,135 +1,336 @@
-// Prediction log store — the self-learning ledger.
-// JSON-file storage (zero deps, atomic writes). Every [PREDICTION_LOG] block
-// from the analyst is stored here with status pending, evaluated next day
-// against official box scores (scripts/evaluate.ts), and the resulting hit
-// rates feed back into the system prompt as adaptive learning context.
+// Durable prediction/learning store. Development uses atomic JSON files.
+// Production can use Upstash Redis REST via UPSTASH_REDIS_REST_URL/TOKEN.
 
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 
-// Vercel serverless has a read-only filesystem: route data to /tmp there
-// (ephemeral per-instance, but writes never crash). Local dev keeps ./data.
-const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'sports-edge-data') : path.join(process.cwd(), 'data');
+const DATA_DIR = process.env.SPORTS_EDGE_DATA_DIR
+  ? path.resolve(process.env.SPORTS_EDGE_DATA_DIR)
+  : process.env.VERCEL ? path.join('/tmp', 'sports-edge-data') : path.join(process.cwd(), 'data');
 const FILE = path.join(DATA_DIR, 'predictions.json');
 const LEARN_FILE = path.join(DATA_DIR, 'learning.json');
+const REDIS_PREFIX = process.env.SPORTS_EDGE_REDIS_PREFIX || 'sports-edge';
+const PREDICTIONS_KEY = `${REDIS_PREFIX}:predictions`;
+const LEARNING_KEY = `${REDIS_PREFIX}:learning`;
+
+export type LegOutcome = 'won' | 'lost' | 'push' | 'ungraded';
 
 export interface PredictionLeg {
   leg_name: string;
   target_line: string;
-  model_probability?: string | null;
+  model_probability?: string | number | null;
   implied_odds?: string | number | null;
   key_metric_used?: string | null;
-  // evaluation results:
-  outcome?: 'won' | 'lost' | 'push' | null;
+  market?: string | null;
+  player_id?: string | number | null;
+  side?: 'over' | 'under' | null;
+  line?: number | null;
+  model_version?: string | null;
+  model_sample_size?: number | null;
+  model_source?: string | null;
+  outcome?: LegOutcome | null;
   actual?: number | null;
+  evaluation_note?: string | null;
+  evaluated_at?: string | null;
 }
 
 export interface Prediction {
   prediction_id: string;
+  userId?: string;
+  source_prediction_id?: string | null;
   timestamp: string;
   sport: string;
   matchup: string;
   bet_type: string;
   legs: PredictionLeg[];
   recommended_units?: string | null;
-  gameDate?: string | null; // set at evaluation time
-  status: 'pending' | 'evaluated';
+  gameDate?: string | null;
+  gamePk?: number | null;
+  event_id?: string | number | null;
+  status: 'pending' | 'evaluated' | 'needs_review';
+  evaluationNote?: string | null;
+  evaluatedAt?: string | null;
+  evaluationAttempts?: number;
+  lastEvaluationAttemptAt?: string | null;
 }
 
-interface StoreFile {
-  predictions: Prediction[];
+interface StoreFile { predictions: Prediction[] }
+
+export interface MarketLearning {
+  n: number;
+  hitRate: number;
+  averageConfidence?: number | null;
+  calibrationError?: number | null;
+  brierScore?: number | null;
 }
 
 export interface LearningContext {
   updatedAt: string;
   evaluated: number;
+  won?: number;
+  lost?: number;
+  pushes?: number;
+  priced?: number;
   hitRate: number | null;
   roi: number | null;
-  perMarket: Record<string, { n: number; hitRate: number }>;
+  brierScore?: number | null;
+  perMarket: Record<string, MarketLearning>;
+  perSportMarket?: Record<string, MarketLearning>;
   adaptiveRules: string[];
 }
 
-function load(): StoreFile {
-  try {
-    const raw = fs.readFileSync(FILE, 'utf8');
+interface StorageAdapter {
+  loadPredictions(): Promise<StoreFile>;
+  addPrediction(prediction: Prediction): Promise<Prediction>;
+  updatePrediction(id: string, patch: Partial<Prediction>): Promise<Prediction | null>;
+  loadLearning(): Promise<LearningContext | null>;
+  saveLearning(context: LearningContext): Promise<void>;
+}
+
+export function redisConfigured(): boolean {
+  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+}
+
+async function atomicWrite(file: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  await fs.rename(tmp, file);
+}
+
+async function loadJson<T>(file: string, fallback: T): Promise<T> {
+  try { return JSON.parse(await fs.readFile(file, 'utf8')) as T; }
+  catch { return fallback; }
+}
+
+let localPredictionMutationTail = Promise.resolve();
+function withLocalPredictionMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const run = localPredictionMutationTail.then(operation, operation);
+  localPredictionMutationTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+class FileStorage implements StorageAdapter {
+  async loadPredictions(): Promise<StoreFile> {
+    const value = await loadJson<StoreFile>(FILE, { predictions: [] });
+    return value && Array.isArray(value.predictions) ? value : { predictions: [] };
+  }
+  async addPrediction(prediction: Prediction): Promise<Prediction> {
+    return withLocalPredictionMutation(async () => {
+      const file = await this.loadPredictions();
+      const existing = file.predictions.find((p) => p.prediction_id === prediction.prediction_id);
+      if (existing) return existing;
+      file.predictions.push(prediction);
+      await atomicWrite(FILE, file);
+      return prediction;
+    });
+  }
+  async updatePrediction(id: string, patch: Partial<Prediction>): Promise<Prediction | null> {
+    return withLocalPredictionMutation(async () => {
+      const file = await this.loadPredictions();
+      const prediction = file.predictions.find((p) => p.prediction_id === id);
+      if (!prediction) return null;
+      Object.assign(prediction, patch);
+      await atomicWrite(FILE, file);
+      return prediction;
+    });
+  }
+  loadLearning(): Promise<LearningContext | null> { return loadJson<LearningContext | null>(LEARN_FILE, null); }
+  saveLearning(context: LearningContext): Promise<void> { return atomicWrite(LEARN_FILE, context); }
+}
+
+export async function redisCommand<T>(command: Array<string | number>): Promise<T> {
+  const base = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, '');
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!base || !token) throw new Error('Upstash Redis REST is not configured');
+  const response = await fetch(base, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(command), signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Upstash Redis error: HTTP ${response.status}`);
+  const payload = (await response.json()) as { result?: T; error?: string };
+  if (payload.error) throw new Error(`Upstash Redis error: ${payload.error}`);
+  return payload.result as T;
+}
+
+const ADD_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+local doc = raw and cjson.decode(raw) or {predictions={}}
+local incoming = cjson.decode(ARGV[1])
+for _, p in ipairs(doc.predictions) do
+  if p.prediction_id == incoming.prediction_id then return cjson.encode(p) end
+end
+table.insert(doc.predictions, incoming)
+redis.call('SET', KEYS[1], cjson.encode(doc))
+return cjson.encode(incoming)`;
+
+const UPDATE_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return nil end
+local doc = cjson.decode(raw)
+local patch = cjson.decode(ARGV[2])
+for _, p in ipairs(doc.predictions or {}) do
+  if p.prediction_id == ARGV[1] then
+    for k, v in pairs(patch) do p[k] = v end
+    redis.call('SET', KEYS[1], cjson.encode(doc))
+    return cjson.encode(p)
+  end
+end
+return nil`;
+
+class RedisStorage implements StorageAdapter {
+  async loadPredictions(): Promise<StoreFile> {
+    const raw = await redisCommand<string | null>(['GET', PREDICTIONS_KEY]);
+    if (!raw) return { predictions: [] };
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.predictions)) return parsed;
-  } catch {
-    // missing/corrupt — fresh
+    if (!parsed || !Array.isArray(parsed.predictions)) throw new Error('Stored prediction history is corrupt');
+    return parsed;
   }
-  return { predictions: [] };
-}
-
-function save(file: StoreFile): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(file, null, 2), 'utf8');
-  fs.renameSync(tmp, FILE);
-}
-
-export function addPrediction(pred: Prediction): Prediction {
-  const file = load();
-  if (file.predictions.some((p) => p.prediction_id === pred.prediction_id)) {
-    return pred; // dedupe
+  async addPrediction(prediction: Prediction): Promise<Prediction> {
+    const raw = await redisCommand<string>(['EVAL', ADD_SCRIPT, 1, PREDICTIONS_KEY, JSON.stringify(prediction)]);
+    return JSON.parse(raw) as Prediction;
   }
-  file.predictions.push(pred);
-  save(file);
-  return pred;
-}
-
-export function listPredictions(): { predictions: Prediction[]; summary: any } {
-  const file = load();
-  const pending = file.predictions.filter((p) => p.status === 'pending').length;
-  const evaluated = file.predictions.filter((p) => p.status === 'evaluated').length;
-  return { predictions: file.predictions, summary: { total: file.predictions.length, pending, evaluated } };
-}
-
-export function getPendingPredictions(): Prediction[] {
-  return load().predictions.filter((p) => p.status === 'pending');
-}
-
-export function updatePrediction(id: string, patch: Partial<Prediction>): Prediction | null {
-  const file = load();
-  const pred = file.predictions.find((p) => p.prediction_id === id);
-  if (!pred) return null;
-  Object.assign(pred, patch);
-  save(file);
-  return pred;
-}
-
-export function loadLearning(): LearningContext | null {
-  try {
-    const raw = fs.readFileSync(LEARN_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {
-    // none yet
+  async updatePrediction(id: string, patch: Partial<Prediction>): Promise<Prediction | null> {
+    const raw = await redisCommand<string | null>(['EVAL', UPDATE_SCRIPT, 1, PREDICTIONS_KEY, id, JSON.stringify(patch)]);
+    return raw ? JSON.parse(raw) as Prediction : null;
   }
-  return null;
+  async loadLearning(): Promise<LearningContext | null> {
+    const raw = await redisCommand<string | null>(['GET', LEARNING_KEY]);
+    return raw ? JSON.parse(raw) as LearningContext : null;
+  }
+  async saveLearning(context: LearningContext): Promise<void> {
+    await redisCommand<string>(['SET', LEARNING_KEY, JSON.stringify(context)]);
+  }
 }
 
-export function saveLearning(ctx: LearningContext): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = `${LEARN_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(ctx, null, 2), 'utf8');
-  fs.renameSync(tmp, LEARN_FILE);
+export class StorageNotConfiguredError extends Error {
+  code = 'STORAGE_NOT_CONFIGURED' as const;
+  constructor() {
+    super('Durable prediction storage is not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
+  }
 }
 
-/** Human-readable learning section injected into the system prompt at chat time. */
-export function learningPromptBlock(): string {
-  const ctx = loadLearning();
-  if (!ctx || !ctx.evaluated) return '';
+class UnconfiguredProductionStorage implements StorageAdapter {
+  private fail(): never { throw new StorageNotConfiguredError(); }
+  loadPredictions(): Promise<StoreFile> { return Promise.reject(this.fail()); }
+  addPrediction(): Promise<Prediction> { return Promise.reject(this.fail()); }
+  updatePrediction(): Promise<Prediction | null> { return Promise.reject(this.fail()); }
+  // Chat can still answer when learning is unavailable, but all stateful APIs
+  // and writes fail closed instead of pretending /tmp is durable.
+  loadLearning(): Promise<LearningContext | null> { return Promise.resolve(null); }
+  saveLearning(): Promise<void> { return Promise.reject(this.fail()); }
+}
+
+const storage: StorageAdapter = redisConfigured()
+  ? new RedisStorage()
+  : process.env.VERCEL ? new UnconfiguredProductionStorage() : new FileStorage();
+
+function validDate(value: unknown): string | null {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T12:00:00Z`)) ? text : null;
+}
+
+function safeTimestamp(value: unknown): string {
+  const parsed = new Date(typeof value === 'string' ? value : '');
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value == null || String(value).trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function predictionFingerprint(prediction: Omit<Prediction, 'prediction_id'>): string {
+  const stable = JSON.stringify({
+    userId: prediction.userId ?? 'admin', date: prediction.timestamp.slice(0, 10), gameDate: prediction.gameDate, sport: prediction.sport, matchup: prediction.matchup,
+    bet_type: prediction.bet_type,
+    legs: prediction.legs.map((leg) => ({ leg_name: leg.leg_name, target_line: leg.target_line, implied_odds: leg.implied_odds ?? null })),
+  });
+  return createHash('sha256').update(stable).digest('hex').slice(0, 10);
+}
+
+export function normalizePrediction(input: any): Prediction {
+  const timestamp = safeTimestamp(input?.timestamp);
+  const sourceId = (String(input?.prediction_id ?? `prediction-${Date.now()}`).trim() || `prediction-${Date.now()}`).slice(0, 120);
+  const legs: PredictionLeg[] = (Array.isArray(input?.legs) ? input.legs : [])
+    .filter((leg: any) => leg && typeof leg.leg_name === 'string' && leg.leg_name.trim())
+    .map((leg: any) => ({
+      leg_name: leg.leg_name.trim().slice(0, 300), target_line: String(leg.target_line ?? '').trim().slice(0, 40),
+      model_probability: leg.model_probability ?? null, implied_odds: leg.implied_odds ?? null,
+      key_metric_used: leg.key_metric_used != null ? String(leg.key_metric_used).slice(0, 100) : null,
+      market: leg.market != null ? String(leg.market).slice(0, 80) : null, player_id: leg.player_id ?? null,
+      side: /^(over|under)$/i.test(String(leg.side ?? '')) ? String(leg.side).toLowerCase() as 'over' | 'under' : null,
+      line: optionalNumber(leg.line),
+      model_version: leg.model_version != null ? String(leg.model_version).slice(0, 80) : null,
+      model_sample_size: optionalNumber(leg.model_sample_size),
+      model_source: leg.model_source != null ? String(leg.model_source).slice(0, 200) : null,
+    }));
+  const base: Omit<Prediction, 'prediction_id'> = {
+    source_prediction_id: sourceId, timestamp,
+    userId: typeof input?.userId === 'string' && input.userId.trim() ? input.userId.trim().slice(0, 120) : 'admin',
+    sport: String(input?.sport ?? 'MLB').trim().toUpperCase().slice(0, 20),
+    matchup: String(input?.matchup ?? '').trim().slice(0, 200),
+    bet_type: String(input?.bet_type ?? 'PROP').trim().toUpperCase().slice(0, 40), legs,
+    recommended_units: input?.recommended_units != null ? String(input.recommended_units).slice(0, 20) : null,
+    gameDate: validDate(input?.game_date ?? input?.gameDate),
+    gamePk: Number.isInteger(optionalNumber(input?.gamePk)) ? optionalNumber(input.gamePk) : null, status: 'pending',
+    event_id: input?.event_id ?? input?.game_id ?? null, evaluationAttempts: 0, lastEvaluationAttemptAt: null,
+  };
+  // Content suffix: exact retries are idempotent; reused model IDs cannot drop a different pick.
+  return { ...base, prediction_id: `${sourceId}-${predictionFingerprint(base)}` };
+}
+
+export async function addPrediction(input: Prediction | any): Promise<Prediction> {
+  const prediction = normalizePrediction(input);
+  if (!prediction.legs.length) throw new Error('Prediction must contain at least one valid leg');
+  return storage.addPrediction(prediction);
+}
+
+export async function listPredictions(userId?: string): Promise<{ predictions: Prediction[]; summary: Record<string, number> }> {
+  const all = (await storage.loadPredictions()).predictions;
+  const predictions = userId ? all.filter((prediction) => (prediction.userId ?? 'admin') === userId) : all;
+  return { predictions, summary: {
+    total: predictions.length, pending: predictions.filter((p) => p.status === 'pending').length,
+    evaluated: predictions.filter((p) => p.status === 'evaluated').length,
+    needsReview: predictions.filter((p) => p.status === 'needs_review').length,
+  } };
+}
+
+export async function getPendingPredictions(): Promise<Prediction[]> {
+  return (await storage.loadPredictions()).predictions.filter((p) => p.status === 'pending');
+}
+export async function getAllPredictions(): Promise<Prediction[]> { return (await storage.loadPredictions()).predictions; }
+export function updatePrediction(id: string, patch: Partial<Prediction>): Promise<Prediction | null> { return storage.updatePrediction(id, patch); }
+export function loadLearning(): Promise<LearningContext | null> { return storage.loadLearning(); }
+export function saveLearning(context: LearningContext): Promise<void> { return storage.saveLearning(context); }
+
+export function storageStatus(): { backend: 'upstash-redis' | 'local-json' | 'not-configured'; durable: boolean; dataDir?: string } {
+  if (redisConfigured()) return { backend: 'upstash-redis', durable: true };
+  if (process.env.VERCEL) return { backend: 'not-configured', durable: false };
+  return { backend: 'local-json', durable: true, dataDir: DATA_DIR };
+}
+
+export async function learningPromptBlock(): Promise<string> {
+  const context = await loadLearning();
+  if (!context || !context.evaluated) return '';
   const lines = [
-    '### ADAPTIVE LEARNING CONTEXT (from your own tracked predictions — update your prior probabilities with this evidence):',
-    `Your last ${ctx.evaluated} logged picks (all real box-score results): overall hit rate ${ctx.hitRate ?? 'n/a'}%, flat-1u ROI ${ctx.roi ?? 'n/a'}%.`,
+    '\n### ADAPTIVE LEARNING CONTEXT (historical, settled predictions only):',
+    `${context.evaluated} graded legs: ${context.won ?? 'n/a'} won, ${context.lost ?? 'n/a'} lost, ${context.pushes ?? 0} pushes; hit rate ${context.hitRate ?? 'n/a'}%.`,
+    `Flat-1u ROI is ${context.roi ?? 'n/a'}% across ${context.priced ?? 'n/a'} legs with verified odds.${context.brierScore != null ? ` Probability Brier score: ${context.brierScore}.` : ''}`,
   ];
-  const markets = Object.entries(ctx.perMarket)
-    .map(([m, v]) => `${m}: ${v.n} picks, ${v.hitRate}% hit rate`)
-    .join('; ');
-  if (markets) lines.push(`Per-market calibration: ${markets}.`);
-  for (const rule of ctx.adaptiveRules ?? []) lines.push(`- Learning rule: ${rule}`);
-  lines.push(
-    'Adjust your confidence grades and P(over) estimates toward the empirical evidence where your hit rate deviates from your stated probability.'
-  );
+  const markets = Object.entries(context.perMarket ?? {}).map(([market, value]) => {
+    const calibration = value.averageConfidence != null ? `, stated ${value.averageConfidence}% (error ${value.calibrationError ?? 'n/a'} pts)` : '';
+    return `${market}: n=${value.n}, hit ${value.hitRate}%${calibration}`;
+  }).join('; ');
+  if (markets) lines.push(`Market calibration: ${markets}.`);
+  const sportMarkets = Object.entries(context.perSportMarket ?? {}).map(([key, value]) =>
+    `${key}: n=${value.n}, hit ${value.hitRate}%${value.averageConfidence != null ? `, stated ${value.averageConfidence}%` : ''}`
+  ).join('; ');
+  if (sportMarkets) lines.push(`Sport-specific calibration: ${sportMarkets}.`);
+  for (const rule of context.adaptiveRules ?? []) lines.push(`- ${rule}`);
+  lines.push('Use this as calibration evidence, not as permission to invent an edge. Small samples must not be treated as proof of predictive skill.');
   return lines.join('\n');
 }

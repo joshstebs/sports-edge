@@ -393,6 +393,10 @@ export async function runAgent(
     finalText = resp.content;
 
     if (!resp.toolCalls.length) {
+      // A normal answer completed this loop. Without resetting this flag, any
+      // earlier tool round incorrectly triggers a second, no-tools closer that
+      // can duplicate (or contradict) the already-grounded recommendation.
+      endedWithTools = false;
       if (turnText) cb.onDelta?.(turnText);
       break;
     }

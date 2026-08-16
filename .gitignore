@@ -2,7 +2,10 @@ node_modules/
 dist/
 .env
 *.log
+SportsEdge-release-*.zip
 data/cache/
 .DS_Store
 .vercel
 .env*
+!.env.example
+!server/.env.example
