@@ -90,12 +90,16 @@ if idem ~= '' then
     local owner = p.userId or 'admin'
     if owner == userId and p.idempotencyKey == idem then table.insert(existing, p) end
   end
-  if #existing > 0 then return cjson.encode({duplicate=true, picks=existing, doc=doc}) end
+  if #existing > 0 then
+    local copy = cjson.decode(cjson.encode(doc))
+    return cjson.encode({duplicate=true, picks=existing, doc=copy})
+  end
 end
 local incoming = cjson.decode(ARGV[3])
 for _, p in ipairs(incoming) do table.insert(doc.picks, p) end
 redis.call('SET', KEYS[1], cjson.encode(doc))
-return cjson.encode({duplicate=false, picks=incoming, doc=doc})`;
+local copy = cjson.decode(cjson.encode(doc))
+return cjson.encode({duplicate=false, picks=incoming, doc=copy})`;
 
 async function addTicketAtomic(added: LedgerPick[], userId: string, idempotencyKey: string | null): Promise<{ duplicate: boolean; picks: LedgerPick[]; doc: LedgerFile }> {
   if (redisConfigured()) {
@@ -124,7 +128,8 @@ for _, p in ipairs(doc.picks or {}) do
     p.settledAt = ARGV[4]
     p.settlementSource = 'manual'
     redis.call('SET', KEYS[1], cjson.encode(doc))
-    return cjson.encode({found=true, pick=p, doc=doc})
+    local copy = cjson.decode(cjson.encode(doc))
+    return cjson.encode({found=true, pick=p, doc=copy})
   end
 end
 return cjson.encode({found=false})`;
