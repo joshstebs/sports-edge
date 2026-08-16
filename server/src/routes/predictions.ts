@@ -19,8 +19,16 @@ function cronAuthorized(header: string | undefined): boolean {
   return suppliedBuffer.length === expectedBuffer.length && timingSafeEqual(suppliedBuffer, expectedBuffer);
 }
 
-// Vercel Cron sends Authorization: Bearer $CRON_SECRET. Never expose this as
-// an unprotected public endpoint because it performs provider calls and writes.
+function torontoHour(now = new Date()): number {
+  const hour = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto', hour: '2-digit', hour12: false,
+  }).formatToParts(now).find((part) => part.type === 'hour')?.value;
+  return Number(hour);
+}
+
+// Vercel Cron schedules are UTC. vercel.json invokes this at both 10:00 and
+// 11:00 UTC so one invocation always lands at 06:00 America/Toronto across
+// daylight-saving changes. The other invocation is an authenticated no-op.
 evaluationRouter.get('/evaluate', async (req, res) => {
   if (!process.env.CRON_SECRET) {
     res.status(503).json({ ok: false, code: 'CRON_NOT_CONFIGURED', error: 'CRON_SECRET is required' });
@@ -28,6 +36,10 @@ evaluationRouter.get('/evaluate', async (req, res) => {
   }
   if (!cronAuthorized(req.header('authorization'))) {
     res.status(401).json({ ok: false, code: 'UNAUTHORIZED', error: 'Invalid cron authorization' });
+    return;
+  }
+  if (torontoHour() !== 6) {
+    res.json({ ok: true, skipped: true, reason: 'outside 06:00 America/Toronto evaluation window' });
     return;
   }
   try {
