@@ -20,6 +20,7 @@
     "api/index.ts": { "maxDuration": 60 }
   },
   "crons": [
+    { "path": "/api/evaluate", "schedule": "0 10 * * *" },
     { "path": "/api/evaluate", "schedule": "0 11 * * *" }
   ]
 }
