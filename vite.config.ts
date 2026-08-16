@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     // Served under /sportsedge/ on the Tailscale funnel; at the root on Vercel.
-    base: process.env.VITE_BASE_PATH || '/sportsedge/',
+    base: process.env.VITE_BASE_PATH || '/',
     server: {
       port: 5180,
       strictPort: true,
