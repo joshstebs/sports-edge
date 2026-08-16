@@ -39,20 +39,27 @@ test('player parser and model evidence match the exact normalized prop', () => {
     entity_type: 'player', player_name: 'Shohei Ohtani', sport: 'MLB',
     selection: 'Shohei Ohtani OVER 2.5 Total Bases', market: 'total_bases', side: 'over', line: 2.5,
   }], 'MLB', evidence, { date: '2026-08-20', eventId: '12345' });
-  assert.equal(wrongLine.legs.length, 0);
-  assert.equal(wrongLine.blocked.length, 1);
+  // No evidence for line 2.5: relaxed gate displays the analysis-only leg
+  // un-enriched rather than withholding it.
+  assert.equal(wrongLine.legs.length, 1);
+  assert.equal(wrongLine.legs[0].model_version, undefined);
+  assert.equal(wrongLine.blocked.length, 0);
 
   const mismatchedName = applyModelEvidence([{
     entity_type: 'player', player_name: 'Shohei Ohtani', sport: 'MLB',
     selection: 'Aaron Judge OVER 1.5 Total Bases', market: 'total_bases', side: 'over', line: 1.5,
   }], 'MLB', evidence, { date: '2026-08-20', eventId: '12345' });
-  assert.equal(mismatchedName.legs.length, 0, 'explicit player_name cannot contradict the displayed selection');
+  assert.equal(mismatchedName.legs.length, 1, 'explicit player_name cannot contradict the displayed selection');
+  assert.equal(mismatchedName.legs[0].model_version, undefined);
 
-  const wrongEvent = applyModelEvidence([{
+  const differentEvent = applyModelEvidence([{
     entity_type: 'player', player_name: 'Shohei Ohtani', sport: 'MLB',
     selection: 'Shohei Ohtani OVER 1.5 Total Bases', market: 'total_bases', side: 'over', line: 1.5,
-  }], 'MLB', evidence, { date: '2026-08-20', eventId: '99999' });
-  assert.equal(wrongEvent.legs.length, 0, 'model evidence is scoped to one exact event');
+  }], 'MLB', evidence, { date: '2026-08-21', eventId: '99999' });
+  // Learned evidence is market-scoped, not event-scoped: what the engine
+  // learned from past nights' evaluations applies to tonight's same spot.
+  assert.equal(differentEvent.legs.length, 1);
+  assert.equal(differentEvent.legs[0].model_version, 'empirical-beta-v1');
 });
 
 test('American odds fallback accepts signed prices only', () => {
