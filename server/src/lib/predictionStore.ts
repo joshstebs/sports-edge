@@ -334,3 +334,95 @@ export async function learningPromptBlock(): Promise<string> {
   lines.push('Use this as calibration evidence, not as permission to invent an edge. Small samples must not be treated as proof of predictive skill.');
   return lines.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Learned per-leg evidence: aggregates EVALUATED predictions by
+// (sport, player, market, side, line) — i.e. what the engine learned by
+// comparing past nights' picks against actual results — and turns it into
+// ModelEvidence rows that the chat pipeline can enrich live recommendations
+// with. Rows with fewer than MIN_SAMPLES legs are not emitted (too little
+// data to claim a verified edge), and D-grade rows are emitted as-is so the
+// strict gate can withhold them while the relaxed gate ignores them.
+// ---------------------------------------------------------------------------
+export interface ModelEvidence {
+  player: string;
+  sport: string;
+  market: string;
+  side: string;
+  line: number | null;
+  probability: number;
+  grade: string;
+  estimatedEdge: number | null;
+  modelVersion: string;
+  sampleSize: number;
+  source: string;
+  eventDate: string;
+  eventId: string;
+}
+
+const EVIDENCE_MIN_SAMPLES = 5;
+
+function evidenceKey(sport: string, player: string, market: string, side: string, line: number | null): string {
+  return `${sport}|${player.toLowerCase().replace(/\s+/g, ' ').trim()}|${market.toLowerCase()}|${side}|${line ?? ''}`;
+}
+
+function evidenceAmericanToDecimal(american: number | null): number | null {
+  if (american == null || !Number.isFinite(american)) return null;
+  return american > 0 ? american / 100 + 1 : 100 / Math.abs(american) + 1;
+}
+
+export async function loadModelEvidence(): Promise<ModelEvidence[]> {
+  try {
+    const predictions = await getAllPredictions();
+    const buckets = new Map<string, { won: number; n: number; oddsSum: number }>();
+    for (const p of predictions) {
+      if (!p || p.status !== 'evaluated') continue;
+      const sport = String(p.sport ?? '').toLowerCase();
+      for (const leg of Array.isArray(p.legs) ? p.legs : []) {
+        if (!leg || (leg.outcome !== 'won' && leg.outcome !== 'lost')) continue;
+        const player = String(leg.leg_name ?? '').trim();
+        if (!player) continue;
+        const market = String(leg.market ?? '').trim().toLowerCase() || 'unknown';
+        const side = leg.side ?? (/\bunder\b/i.test(player) ? 'under' : 'over');
+        const line = leg.line != null
+          ? Number(leg.line)
+          : Number(String(leg.target_line ?? '').replace(/[^\d.]/g, ''));
+        const key = evidenceKey(sport, player, market, side, Number.isFinite(line) ? line : null);
+        const bucket = buckets.get(key) ?? { won: 0, n: 0, oddsSum: 0 };
+        bucket.n += 1;
+        if (leg.outcome === 'won') bucket.won += 1;
+        const decimal = evidenceAmericanToDecimal(parseInt(String(leg.implied_odds ?? '').replace(/[^\d-]/g, ''), 10));
+        if (decimal != null) bucket.oddsSum += decimal;
+        buckets.set(key, bucket);
+      }
+    }
+    const rows: ModelEvidence[] = [];
+    for (const [key, bucket] of buckets) {
+      if (bucket.n < EVIDENCE_MIN_SAMPLES) continue; // no verified edge on tiny samples
+      const hitRate = bucket.won / bucket.n;
+      const grade = hitRate >= 0.7 ? 'A' : hitRate >= 0.6 ? 'B' : hitRate >= 0.5 ? 'C' : 'D';
+      const avgDecimal = bucket.oddsSum / bucket.n || 1;
+      const edge = hitRate * avgDecimal - 1;
+      const [sport, player, market, side, line] = key.split('|');
+      rows.push({
+        player,
+        sport,
+        market,
+        side,
+        line: line ? Number(line) : null,
+        probability: hitRate,
+        grade,
+        estimatedEdge: Number.isFinite(edge) ? edge : null,
+        modelVersion: 'learned-v0.2',
+        sampleSize: bucket.n,
+        source: 'evaluated-predictions',
+        eventDate: '',
+        eventId: '',
+      });
+    }
+    return rows;
+  } catch (err) {
+    console.error('loadModelEvidence failed:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}

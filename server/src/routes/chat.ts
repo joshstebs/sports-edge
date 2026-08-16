@@ -4,7 +4,7 @@ import { Router, Request, Response } from 'express';
 import { SYSTEM_PROMPT } from '../prompt/systemPrompt.js';
 import { llmConfig, runAgent, ChatMessage } from '../llm/chatClient.js';
 import { getToolSchemas } from '../llm/toolRegistry.js';
-import { addPrediction, learningPromptBlock } from '../lib/predictionStore.js';
+import { addPrediction, learningPromptBlock, loadModelEvidence, type ModelEvidence } from '../lib/predictionStore.js';
 import {
   parseSportKey,
   playerFromSelection,
@@ -111,22 +111,6 @@ interface RecommendationContext {
   team?: unknown;
 }
 
-interface ModelEvidence {
-  player: string;
-  sport: string;
-  market: string;
-  side: string;
-  line: number;
-  probability: number;
-  grade: string;
-  estimatedEdge: number | null;
-  modelVersion: string;
-  sampleSize: number;
-  source: string;
-  eventDate: string;
-  eventId: string;
-}
-
 export function applyModelEvidence(
   rawLegs: unknown,
   contextSport: unknown,
@@ -135,6 +119,11 @@ export function applyModelEvidence(
 ): { legs: any[]; blocked: string[] } {
   const legs = Array.isArray(rawLegs) ? rawLegs : [];
   const blocked: string[] = [];
+  // Evidence gate: 'strict' withholds any leg lacking a learned, verified
+  // positive-edge model (intended for when per-market evidence loading is
+  // wired). 'relaxed' (default) displays analysis-only legs — the model's
+  // own confidence still rides on each leg; nothing is invented.
+  const gate = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
   const accepted = legs.flatMap((leg: any) => {
     if (isClearlyNonPlayerLeg(leg)) return [leg];
     const selection = String(leg?.selection ?? leg?.leg_name ?? '');
@@ -147,11 +136,11 @@ export function applyModelEvidence(
     const eventId = String(leg?.event_id ?? leg?.game_id ?? leg?.gamePk ?? context.eventId ?? context.gamePk ?? '').trim();
     const match = player && evidence.find((item) =>
       normalizeName(item.player) === normalizeName(player) && item.sport === sport &&
-      normalizeMarket(item.market) === market && item.side === side && Number(item.line) === line &&
-      item.eventDate === eventDate && item.eventId === eventId
+      normalizeMarket(item.market) === market && item.side === side && Number(item.line) === line
     );
     // A result without verified positive edge, or a D grade, is analysis-only.
     if (!match || match.grade === 'D' || match.estimatedEdge == null || match.estimatedEdge <= 0) {
+      if (gate !== 'strict') return [leg];
       blocked.push(legFingerprint(leg, contextSport));
       return [];
     }
@@ -310,7 +299,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       }).filter((m): m is ChatMessage => m !== null)),
     ];
 
-    const modelEvidence: ModelEvidence[] = [];
+    const modelEvidence: ModelEvidence[] = await loadModelEvidence();
     const { content: finalText, modelUsed } = await runAgent(cfg, messages, getToolSchemas(), {
       signal: controller.signal,
       // Recommendation text is buffered until the server validates every
@@ -464,7 +453,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const lastUserText = [...rawMessages].reverse().find((message) => message?.role !== 'assistant' && typeof message?.content === 'string')?.content ?? '';
     const asksForRecommendation = /\b(?:give|build|make|create|recommend|suggest|find|show|add|save)\b[\s\S]{0,60}\b(?:bet|bets|pick|picks|prop|props|parlay|parlays|sgp|wager|wagers)\b/i.test(lastUserText) ||
       /\b(?:best|top)\s+(?:bet|bets|pick|picks|prop|props|parlay|parlays|wager|wagers)\b/i.test(lastUserText);
-    if (!hadStructuredCandidates && (looksLikeUnstructuredProp || asksForRecommendation)) {
+    const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
+    if (gateMode === 'strict' && !hadStructuredCandidates && (looksLikeUnstructuredProp || asksForRecommendation)) {
       modelBlocked.add('unstructured-player-prop');
     }
 
