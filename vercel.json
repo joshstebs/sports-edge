@@ -1,15 +1,9 @@
 {
-  "buildCommand": "cd server && npm install && cd ../client && npm install && VITE_BASE_PATH=/ npm run build",
-  "outputDirectory": "client/dist",
+  "framework": "vite",
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
-    }
+    { "source": "/api/(.*)", "destination": "/api/index" }
   ],
   "functions": {
-    "api/index.ts": {
-      "maxDuration": 60
-    }
+    "api/index.ts": { "maxDuration": 60 }
   }
 }
