@@ -24,7 +24,10 @@ const authConfig = loadAuthConfig();
 // Vercel terminates TLS and forwards the real client IP. Trust exactly that
 // first proxy hop so per-IP rate limiting does not collapse every visitor into
 // the same bucket (or reject X-Forwarded-For as an unexpected header).
-app.set('trust proxy', process.env.VERCEL ? 1 : false);
+// Trust proxies so express-rate-limit accepts X-Forwarded-For (Tailscale
+// funnel locally, Vercel edge in prod). Without this, funnel requests crash
+// the limiter with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR and take the server down.
+app.set('trust proxy', true);
 app.disable('x-powered-by');
 app.use(securityHeaders(authConfig.production));
 app.use(enforceTrustedOrigin(authConfig.allowedOrigins));
