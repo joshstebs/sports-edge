@@ -80,8 +80,10 @@ app.use(authenticatedNoStore);
 // to reach these without a session. Entitlement enforcement lives in
 // requireChatAccess on the chat/ledger routes below.
 app.use('/api/billing', billingRouter);
-app.use('/api/chat', durableChatLimiter, chatLimiter);
-app.use('/api/ledger', durableWriteLimiter, writeLimiter);
+// Gate BEFORE the durable limiters: they key on req.auth (set by a session or
+// by requireChatAccess for entitled customers) and 401 without it.
+app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
+app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
