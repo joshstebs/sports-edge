@@ -8,24 +8,26 @@ interface SportSelectorProps {
 
 export default function SportSelector({ sports, active, onChange }: SportSelectorProps) {
   return (
-    <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-line/70 bg-ink/60 px-4 py-2">
-      <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.18em] text-frost2">Sport</span>
-      {sports.map((s) => {
-        const isActive = s === active;
+    <nav className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-ink px-3 sm:px-4" aria-label="Sport scope">
+      <span className="mr-1 shrink-0 font-mono text-[9px] font-medium uppercase tracking-[0.12em] text-frost2">Scope</span>
+      {sports.map((sport) => {
+        const isActive = sport === active;
         return (
           <button
-            key={s}
-            onClick={() => onChange(s)}
-            className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+            key={sport}
+            type="button"
+            onClick={() => onChange(sport)}
+            aria-pressed={isActive}
+            className={`h-7 shrink-0 rounded-md px-2.5 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30 ${
               isActive
-                ? 'border-edge/60 bg-edge/10 text-edge shadow-[0_0_12px_rgba(21,255,194,0.15)]'
-                : 'border-line/70 bg-transparent text-frost2 hover:border-edge/40 hover:text-frost'
+                ? 'border border-line-strong bg-panel2 text-head'
+                : 'border border-transparent text-frost2 hover:bg-panel hover:text-frost'
             }`}
           >
-            {s}
+            {sport}
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }

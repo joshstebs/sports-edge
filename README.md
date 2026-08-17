@@ -5,7 +5,14 @@ A sports analytics chat platform where an AI betting analyst answers matchup, pr
 ## Stack
 - **Backend** (`server/`, port 3100): Express + TypeScript. Authenticated LLM chat with function-calling tools that pull live data on demand.
 - **Frontend** (repository root, port 5180): React 19 + Vite + Tailwind v4. ChatGPT-style chat with markdown, tool-provenance chips, structured SGP leg cards, AI grades, EV chips, and a persistent Parlay Slip with combined odds.
-- **Voice**: browser-native microphone dictation fills the composer, and completed analyst replies include a read-aloud/stop control. Unsupported browsers fall back to text without breaking chat; audio is not uploaded to the SportsEdge server.
+- **Voice**: browser-native microphone dictation fills the composer, completed analyst replies include a read-aloud/stop control, and **Call SportsEdge** runs a continuous hands-free conversation that automatically listens, sends the transcript through the same grounded chat route, reads the validated answer aloud, and returns to listening. Unsupported browsers fall back to text without breaking chat; audio is not uploaded to the SportsEdge server.
+
+## Grounded agent runtime
+- Tool calls emitted in the same model turn execute **in parallel**, cutting avoidable latency when a request needs stats, odds, lineup, weather, news and availability together.
+- Every tool result is enriched server-side with `_evidence`: source labels extracted from the real provider payload, fetch timestamp, measured latency and a `verified-live` / `available-unlabeled` / `unavailable` quality flag.
+- Tool failures stay isolated and fail closed. One unavailable provider does not discard successful sibling evidence and never becomes a fabricated value.
+- Tool results are appended back into LLM history in their original model-call order, preserving deterministic tool-call semantics while the underlying network work runs concurrently.
+- The existing availability gate, positive-edge model gate, prediction ledger and evaluation loop remain authoritative and unchanged.
 
 ## Data sources (all real, all labeled)
 | Source | What it provides | Key |
@@ -78,5 +85,6 @@ The same install, build, and test sequence runs automatically in GitHub Actions 
 - Walk-forward backtest harness for the predictive engine (per-fold ROI/Yield, consensus-odds baseline)
 - Expand supported market coverage as stable league-specific box-score fields become available
 - Kelly sizing + bankroll tracker
+- Optional Mastra adapter after the current runtime has a stable evidence contract; framework migration is intentionally separate from the merge-safe agent/data-quality work
 
 *For entertainment only. Sports betting involves risk. Fractional unit sizing is encouraged.*

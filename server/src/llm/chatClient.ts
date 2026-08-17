@@ -2,10 +2,10 @@
 // Provider selection: GEMINI_API_KEY -> generativelanguage.googleapis.com/v1beta/openai
 // else OPENAI_API_KEY -> api.openai.com/v1. Neither set -> llmConfigured=false.
 // Supports streaming content deltas AND streaming tool_calls (accumulated per
-// index, partial JSON fragments concatenated). The tool-calling loop executes
-// registered tools and re-calls the model, max 5 iterations.
+// index, partial JSON fragments concatenated). Tool calls emitted in one model
+// turn execute concurrently, then the model receives results in original order.
 
-import { executeTool } from './toolRegistry.js';
+import { executeToolBatch } from './toolBatch.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -361,7 +361,7 @@ export interface AgentCallbacks {
   signal?: AbortSignal;
 }
 
-/** Full tool-calling loop: stream -> execute tools -> re-call, max 5 iterations. */
+/** Full tool-calling loop: stream -> execute tool batches -> re-call. */
 export async function runAgent(
   cfg: LlmConfig,
   messages: ChatMessage[],
@@ -402,7 +402,9 @@ export async function runAgent(
     }
     endedWithTools = true;
 
-    // Record assistant turn with tool_calls (required by the API), then run tools.
+    // Record assistant turn with tool_calls (required by the API), then execute
+    // every independent call from this model turn concurrently. Tool messages
+    // are still appended in model order so provider history stays deterministic.
     msgs.push({
       role: 'assistant',
       content: resp.content || null,
@@ -415,26 +417,19 @@ export async function runAgent(
       })),
     });
 
-    for (const tc of resp.toolCalls) {
-      cb.onToolEvent?.({ name: tc.name, status: 'running' });
-      let outcome: { ok: boolean; summary: string; data: any; json: string };
-      try {
-        outcome = await executeTool(tc.name, tc.parsed ?? {});
-      } catch (e) {
-        outcome = {
-          ok: false,
-          summary: `${tc.name} crashed: ${(e as Error).message}`,
-          data: null,
-          json: JSON.stringify({ available: false, reason: `tool crashed: ${(e as Error).message}` }),
-        };
-      }
-      cb.onToolEvent?.({
-        name: tc.name,
-        status: outcome.ok ? 'done' : 'error',
-        summary: outcome.summary,
-        data: outcome.data,
-      });
-      msgs.push({ role: 'tool', tool_call_id: tc.id, content: outcome.json });
+    const results = await executeToolBatch(
+      resp.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, parsed: tc.parsed ?? {} })),
+      {
+        onEvent: (event) => cb.onToolEvent?.({
+          name: event.name,
+          status: event.status,
+          summary: event.summary,
+          data: event.data,
+        }),
+      },
+    );
+    for (const result of results) {
+      msgs.push({ role: 'tool', tool_call_id: result.call.id, content: result.outcome.json });
     }
   }
 
