@@ -9,6 +9,7 @@ import {
   parseSportKey,
   playerFromSelection,
   verifyRecommendationAvailability,
+  type RecommendationAvailability,
 } from '../providers/playerAvailability.js';
 import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
@@ -163,7 +164,7 @@ export function applyModelEvidence(
 async function filterRecommendationLegs(
   rawLegs: unknown,
   context: RecommendationContext,
-  cache: Map<string, Promise<boolean>>,
+  cache: Map<string, Promise<RecommendationAvailability | null>>,
 ): Promise<{ legs: any[]; blocked: string[] }> {
   const legs = Array.isArray(rawLegs) ? rawLegs : [];
   const blocked: string[] = [];
@@ -211,16 +212,27 @@ async function filterRecommendationLegs(
         eventId,
       }).then((status) => {
         if (!status.recommendationEligible) {
-          console.warn(`Availability gate blocked ${status.player}: ${status.reason} ${status.gameDay.reason}`);
+          console.warn(
+            `Availability gate ${status.rosterAndInjuryEligible ? 'unconfirmed' : 'blocked'} ${status.player}: ${status.reason} ${status.gameDay?.reason ?? ''}`,
+          );
         }
-        return status.recommendationEligible === true;
+        return status;
       }).catch((error) => {
         console.error(`Availability gate failed for ${player}:`, error);
-        return false;
+        return null;
       });
-      cache.set(key, promise);
+      cache.set(key as never, promise as never);
     }
-    if (await promise) return leg;
+    const verdict = await promise;
+    if (verdict?.recommendationEligible) return leg;
+    // RELAXED GATE: block only CONFIRMED-OUT (injury/roster). "Not yet confirmed"
+    // (lineup unposted / probable not linked) passes with a note so slots populate.
+    if (passUnverifiable && verdict?.rosterAndInjuryEligible) {
+      leg.__gateNote = 'lineup not yet confirmed at check time - verify before betting';
+      return leg;
+    }
+    const why = verdict?.gameDay?.reason ?? verdict?.reason ?? 'unavailable';
+    console.warn(`Availability gate blocked ${player}: ${why}`);
     blocked.push(legFingerprint(leg, context.sport));
     return null;
   }));
@@ -327,7 +339,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       },
     });
 
-    const availabilityCache = new Map<string, Promise<boolean>>();
+    const availabilityCache = new Map<string, Promise<RecommendationAvailability | null>>();
     const rawSgpBlocks = extractSgpBlocks(finalText);
     const rawLogs = extractPredictionLogs(finalText);
     const hadStructuredCandidates = rawLogs.some((log) => Array.isArray(log?.legs) && log.legs.length) ||
