@@ -90,9 +90,6 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
       return;
     }
 
-    // Web Speech emits its last final result immediately before `onend`. Wait
-    // for that lifecycle before snapshotting input so the sent prompt includes
-    // the final spoken words. The timeout is a defensive browser fallback.
     try {
       submitTimerRef.current = setTimeout(() => finishSubmit(true), 1200);
       recognition.stop();
@@ -122,11 +119,7 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
       for (let index = 0; index < event.results.length; index++) {
         transcript += event.results[index][0]?.transcript ?? '';
       }
-      const next = mergeDictationTranscript(
-        inputRef.current,
-        dictationTranscriptRef.current,
-        transcript,
-      );
+      const next = mergeDictationTranscript(inputRef.current, dictationTranscriptRef.current, transcript);
       dictationTranscriptRef.current = transcript.trim();
       inputRef.current = next;
       setInput(next);
@@ -179,163 +172,137 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
       return;
     }
     try {
-      const dataUrls = await Promise.all(picked.map((f) => readAndResizeImage(f)));
+      const dataUrls = await Promise.all(picked.map((file) => readAndResizeImage(file)));
       setAttachments((prev) => [...prev, ...dataUrls].slice(0, MAX_ATTACHMENTS));
-    } catch (e) {
-      setAttachError(e instanceof Error ? e.message : 'Could not process image.');
+    } catch (error) {
+      setAttachError(error instanceof Error ? error.message : 'Could not process image.');
     }
     if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
     <form
-      className="shrink-0 border-t border-line/70 bg-ink/85 px-4 py-3 backdrop-blur"
-      onSubmit={(e) => {
-        e.preventDefault();
+      className="shrink-0 border-t border-line bg-ink/95 px-3 py-3 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
         submit();
       }}
     >
       <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-2 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={openCall}
-            disabled={!voiceSupported}
-            title={voiceSupported ? 'Start a continuous voice conversation with SportsEdge' : 'Continuous voice is not supported in this browser'}
-            className="inline-flex items-center gap-1.5 rounded-full border border-edge/25 bg-edge/5 px-3 py-1.5 text-[10px] font-bold text-edge transition hover:border-edge/50 hover:bg-edge/10 disabled:cursor-not-allowed disabled:border-line/70 disabled:bg-panel2/60 disabled:text-frost2 disabled:opacity-60"
-          >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.12.9.33 1.78.62 2.63a2 2 0 01-.45 2.11L8 9.73a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0122 16.92z" />
-            </svg>
-            Call SportsEdge
-          </button>
-        </div>
-        {attachments.length > 0 && (
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            {attachments.map((src, i) => (
-              <div key={i} className="group relative">
-                <img
-                  src={src}
-                  alt={`attachment ${i + 1}`}
-                  className="h-16 w-16 rounded-lg border border-line/70 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                  title="Remove attachment"
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500/90 text-[10px] font-bold text-white opacity-0 shadow transition group-hover:opacity-100"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-frost2">
-              {attachments.length}/{MAX_ATTACHMENTS} images attached
-            </span>
-          </div>
-        )}
-        <div className="flex items-end gap-2">
+        <div className="overflow-hidden rounded-xl border border-line-strong bg-panel shadow-[0_14px_38px_rgba(0,0,0,0.22)] focus-within:border-edge/40 focus-within:ring-1 focus-within:ring-edge/15">
           <input
             ref={fileRef}
             type="file"
             accept="image/*"
             multiple
             className="hidden"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(event) => handleFiles(event.target.files)}
           />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
-            title="Attach screenshot"
-            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border border-line/80 bg-panel2/80 text-frost2 transition hover:border-edge/50 hover:text-edge disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={toggleDictation}
-            disabled={streaming || !voiceSupported}
-            aria-pressed={listening}
-            aria-label={listening ? 'Stop voice dictation' : 'Start voice dictation'}
-            title={voiceSupported ? (listening ? 'Stop dictation' : 'Dictate with your microphone') : 'Voice dictation is not supported in this browser'}
-            className={`flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border transition disabled:cursor-not-allowed disabled:opacity-40 ${
-              listening
-                ? 'border-danger/70 bg-danger/15 text-danger shadow-[0_0_16px_rgba(248,113,113,0.2)]'
-                : 'border-line/80 bg-panel2/80 text-frost2 hover:border-edge/50 hover:text-edge'
-            }`}
-          >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z" />
-              <path d="M19 10v2a7 7 0 01-14 0v-2" />
-              <path d="M12 19v3M8 22h8" />
-            </svg>
-          </button>
+
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 pt-3 pb-2.5">
+              {attachments.map((src, index) => (
+                <div key={index} className="group relative">
+                  <img src={src} alt={`attachment ${index + 1}`} className="h-14 w-14 rounded-md border border-line object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                    title="Remove attachment"
+                    aria-label={`Remove attachment ${index + 1}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-line-strong bg-panel2 text-[10px] font-bold text-frost opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <span className="font-mono text-[9px] text-frost2">{attachments.length}/{MAX_ATTACHMENTS} attached</span>
+            </div>
+          )}
+
           <textarea
             value={input}
-            onChange={(e) => {
-              inputRef.current = e.target.value;
-              setInput(e.target.value);
+            onChange={(event) => {
+              inputRef.current = event.target.value;
+              setInput(event.target.value);
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
                 submit();
               }
             }}
             rows={1}
             disabled={streaming}
-            placeholder={
-              streaming
-                ? 'Analyst is working…'
-                : 'Ask about props, parlays, or attach a screenshot…'
-            }
-            className="max-h-40 min-h-[46px] w-full resize-none rounded-xl border border-line/80 bg-panel2/80 px-4 py-3 text-sm text-head placeholder:text-frost2/70 focus:border-edge/60 focus:outline-none focus:ring-1 focus:ring-edge/30 disabled:cursor-not-allowed disabled:opacity-60"
+            placeholder={streaming ? 'Analyst is checking live data…' : 'Ask about a prop, matchup, parlay, or paste a bet slip…'}
+            className="max-h-40 min-h-[58px] w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[13px] leading-5 text-head outline-none placeholder:text-frost2/65 disabled:cursor-not-allowed disabled:opacity-60"
           />
-          <button
-            type="submit"
-            disabled={!canSend}
-            title="Send"
-            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-edge to-edge2 text-ink shadow-[0_0_16px_rgba(21,255,194,0.3)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500 disabled:shadow-none"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+
+          <div className="flex min-h-11 items-center gap-1 border-t border-line px-2 py-1.5">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
+              title="Attach screenshot"
+              aria-label="Attach screenshot"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-frost2 hover:bg-panel2 hover:text-frost disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <path d="M22 2L11 13" />
-              <path d="M22 2l-7 20-4-9-9-4 20-7z" />
-            </svg>
-          </button>
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={toggleDictation}
+              disabled={streaming || !voiceSupported}
+              aria-pressed={listening}
+              aria-label={listening ? 'Stop voice dictation' : 'Start voice dictation'}
+              title={voiceSupported ? (listening ? 'Stop dictation' : 'Dictate with your microphone') : 'Voice dictation is not supported in this browser'}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md disabled:cursor-not-allowed disabled:opacity-40 ${listening ? 'bg-danger/10 text-danger' : 'text-frost2 hover:bg-panel2 hover:text-frost'}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z" />
+                <path d="M19 10v2a7 7 0 01-14 0v-2" />
+                <path d="M12 19v3M8 22h8" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={openCall}
+              disabled={!voiceSupported}
+              title={voiceSupported ? 'Start continuous Call mode' : 'Continuous voice is not supported in this browser'}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[10px] font-medium text-frost2 hover:bg-panel2 hover:text-frost disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.12.9.33 1.78.62 2.63a2 2 0 01-.45 2.11L8 9.73a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0122 16.92z" />
+              </svg>
+              <span className="hidden sm:inline">Call</span>
+            </button>
+
+            <span className="ml-auto hidden font-mono text-[9px] text-frost2/70 sm:inline">Enter to send</span>
+            <button
+              type="submit"
+              disabled={!canSend}
+              title="Send"
+              aria-label="Send message"
+              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-edge text-ink hover:brightness-105 disabled:cursor-not-allowed disabled:bg-panel2 disabled:text-frost2"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          </div>
         </div>
-        {attachError && (
-          <p className="mt-1.5 text-[11px] font-semibold text-red-400">{attachError}</p>
-        )}
-        {voiceError && (
-          <p role="alert" className="mt-1.5 text-[11px] font-semibold text-red-400">{voiceError}</p>
-        )}
+
+        {attachError && <p className="mt-1.5 text-[10px] font-medium text-danger">{attachError}</p>}
+        {voiceError && <p role="alert" className="mt-1.5 text-[10px] font-medium text-danger">{voiceError}</p>}
         {listening && (
-          <p aria-live="polite" className="mt-1.5 text-[11px] font-semibold text-edge">
-            Listening… tap the microphone again when you are finished. Your browser may use its speech service; SportsEdge receives only the text you send.
+          <p aria-live="polite" className="mt-1.5 flex items-center gap-1.5 text-[10px] font-medium text-frost2">
+            <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+            Listening - tap the microphone when you are finished.
           </p>
         )}
       </div>
+
       {callOpen && (
         <VoiceCall
           streaming={streaming}

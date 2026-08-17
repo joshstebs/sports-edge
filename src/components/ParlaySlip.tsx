@@ -26,19 +26,12 @@ export interface SlipSaveStatus {
 }
 
 const DOT: Record<Grade, string> = {
-  A: 'bg-edge shadow-[0_0_6px_rgba(21,255,194,0.8)]',
-  B: 'bg-sky2 shadow-[0_0_6px_rgba(72,231,254,0.8)]',
-  C: 'bg-warn shadow-[0_0_6px_rgba(240,192,64,0.8)]',
-  D: 'bg-danger shadow-[0_0_6px_rgba(255,21,82,0.8)]',
+  A: 'bg-edge',
+  B: 'bg-sky2',
+  C: 'bg-warn',
+  D: 'bg-danger',
 };
 
-/**
- * Sticky Parlay Slip side panel. Legs come from every SGP event in the
- * conversation (deduped by sport/game/selection/market/line, latest wins). The combined price is
- * real arithmetic on real odds only: decimal odds of legs WITH odds are
- * multiplied and converted back to American. If any leg is unpriced we show
- * '—' instead of pretending the full ticket has a price.
- */
 export default function ParlaySlip({
   legs,
   onRemove,
@@ -50,127 +43,61 @@ export default function ParlaySlip({
 }: ParlaySlipProps) {
   const combined = useMemo(() => {
     if (legs.length === 0) return null;
-    const allPriced = legs.every((l) => typeof l.odds === 'number' && Number.isFinite(l.odds));
+    const allPriced = legs.every((leg) => typeof leg.odds === 'number' && Number.isFinite(leg.odds));
     if (!allPriced) return null;
-    const product = combineDecimalOdds(legs.map((l) => americanToDecimal(l.odds as number)));
+    const product = combineDecimalOdds(legs.map((leg) => americanToDecimal(leg.odds as number)));
     return product == null ? null : decimalToAmerican(product);
   }, [legs]);
 
   return (
-    <aside
-      className={`flex flex-col overflow-hidden rounded-2xl border border-line/70 bg-panel/90 shadow-[0_8px_30px_rgba(0,0,0,0.35)] backdrop-blur ${className}`}
-    >
-      <div className="flex shrink-0 items-center justify-between border-b border-line/70 bg-panel2/60 px-4 py-3">
+    <aside className={`flex flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-[0_12px_34px_rgba(0,0,0,0.2)] ${className}`}>
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-line px-3">
         <div className="flex items-center gap-2">
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4 text-edge"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-frost2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M8 21h12M12 17v4M17 3H7a1 1 0 00-1 1v12a1 1 0 001 1h10a1 1 0 001-1V4a1 1 0 00-1-1z" />
             <path d="M9 7h6M9 11h6" />
           </svg>
-          <h2 className="font-display text-sm font-bold tracking-tight text-head">Parlay Slip</h2>
+          <h2 className="text-[12px] font-semibold text-head">Parlay slip</h2>
+          <span className="font-mono text-[9px] text-frost2">{legs.length} {legs.length === 1 ? 'leg' : 'legs'}</span>
         </div>
-        <div className="flex items-center gap-2">
-          {legs.length > 0 && onClear ? (
-            <button
-              type="button"
-              onClick={onClear}
-              className="rounded px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide text-frost2 transition hover:bg-danger/10 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
-            >
-              Clear
-            </button>
-          ) : null}
-          <span className="rounded-full bg-edge/10 px-2 py-0.5 text-[10px] font-bold tabular-nums text-edge ring-1 ring-edge/25">
-            {legs.length} {legs.length === 1 ? 'leg' : 'legs'}
-          </span>
-        </div>
+        {legs.length > 0 && onClear ? (
+          <button type="button" onClick={onClear} className="h-7 rounded-md px-2 text-[9px] font-medium text-frost2 hover:bg-panel2 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/30">Clear</button>
+        ) : null}
       </div>
 
       {legs.length === 0 ? (
-        <p className="px-4 py-5 text-center text-xs leading-relaxed text-frost2">
-          No picks yet — SGP legs from the analyst stack here.
-        </p>
+        <div className="px-4 py-5 text-center">
+          <p className="font-mono text-[9px] uppercase tracking-[0.1em] text-frost2">No picks</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-frost2">Verified structured legs will stack here.</p>
+        </div>
       ) : (
-        <ul className="min-h-0 flex-1 divide-y divide-line/50 overflow-y-auto">
+        <ul className="min-h-0 flex-1 divide-y divide-line overflow-y-auto">
           {legs.map((leg) => {
             const grade = typeof leg.confidence === 'number' ? gradeForConfidence(leg.confidence) : null;
             const line = leg.line != null && leg.line !== '' ? ` ${leg.line}` : '';
             return (
-              <li
-                key={legKey(leg)}
-                className="group relative px-4 py-2.5 transition hover:bg-panel2/40"
-              >
+              <li key={legKey(leg)} className="group relative px-3 py-2.5 hover:bg-panel2/55">
                 <div className="flex items-start gap-2 pr-6">
-                  <span
-                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${grade ? DOT[grade.grade] : 'bg-slate-600'}`}
-                    title={grade ? `AI Grade ${grade.grade} — ${grade.label}` : 'No confidence grade'}
-                  />
-                  <p className="line-clamp-3 min-w-0 flex-1 text-xs font-semibold leading-snug text-head">
-                    {leg.selection || '—'}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(legKey(leg))}
-                    title="Remove from slip"
-                    aria-label="Remove from slip"
-                    className="absolute right-3 top-2.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-frost2 transition hover:bg-danger/15 hover:text-danger"
-                  >
-                    <svg
-                      viewBox="0 0 20 20"
-                      className="h-3 w-3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M6 6l8 8M14 6l-8 8" />
-                    </svg>
+                  <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${grade ? DOT[grade.grade] : 'bg-frost2/50'}`} title={grade ? `AI Grade ${grade.grade} - ${grade.label}` : 'No confidence grade'} />
+                  <p className="line-clamp-3 min-w-0 flex-1 text-[11px] font-semibold leading-[1.45] text-head">{leg.selection || '-'}</p>
+                  <button type="button" onClick={() => onRemove(legKey(leg))} title="Remove from slip" aria-label="Remove from slip" className="absolute right-2.5 top-2 flex h-6 w-6 items-center justify-center rounded-md text-frost2 opacity-70 hover:bg-danger/10 hover:text-danger sm:opacity-0 sm:group-hover:opacity-100">
+                    <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
                   </button>
                 </div>
-                <p className="mt-0.5 line-clamp-2 pl-4 text-[10px] leading-snug text-frost2">
-                  {[leg.sport, leg.game].filter(Boolean).join(' · ') || '—'}
+                <p className="mt-1 line-clamp-2 pl-3.5 font-mono text-[8.5px] leading-relaxed text-frost2">
+                  {[leg.sport, leg.game].filter(Boolean).join(' · ') || '-'}
                   {leg.market ? ` · ${leg.market}${line}` : ''}
                 </p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-4">
-                  <span
-                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${
-                      leg.odds != null
-                        ? 'bg-edge/10 text-edge ring-edge/25'
-                        : 'bg-slate-700/30 text-frost2 ring-line'
-                    }`}
-                  >
+                <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-3.5">
+                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[8.5px] font-medium tabular-nums ${leg.odds != null ? 'border-edge/20 bg-edge/5 text-edge' : 'border-line bg-panel2 text-frost2'}`}>
                     {leg.odds != null ? formatAmerican(leg.odds) : 'Odds N/A'}
                   </span>
                   {leg.game_odds ? (
-                    <span
-                      title="Real game moneyline (ESPN → DraftKings); prop-level price unavailable"
-                      className="rounded-md bg-warn/10 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-warn ring-1 ring-warn/25"
-                    >
-                      Game ML {leg.game_odds}
-                    </span>
+                    <span title="Real game moneyline from the live odds source; prop-level price unavailable" className="rounded border border-warn/20 bg-warn/5 px-1.5 py-0.5 font-mono text-[8.5px] font-medium tabular-nums text-warn">ML {leg.game_odds}</span>
                   ) : null}
                   {grade ? (
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${
-                        grade.grade === 'A'
-                          ? 'bg-edge/10 text-edge ring-edge/25'
-                          : grade.grade === 'B'
-                            ? 'bg-sky2/10 text-sky2 ring-sky2/25'
-                            : grade.grade === 'C'
-                              ? 'bg-warn/10 text-warn ring-warn/25'
-                              : 'bg-danger/10 text-danger ring-danger/25'
-                      }`}
-                      title={grade.label}
-                    >
-                      Grade {grade.grade} · {leg.confidence}%
+                    <span className={`rounded border px-1.5 py-0.5 font-mono text-[8.5px] font-medium tabular-nums ${grade.grade === 'A' ? 'border-edge/20 bg-edge/5 text-edge' : grade.grade === 'B' ? 'border-sky2/20 bg-sky2/5 text-sky2' : grade.grade === 'C' ? 'border-warn/20 bg-warn/5 text-warn' : 'border-danger/20 bg-danger/5 text-danger'}`} title={grade.label}>
+                      {grade.grade} · {leg.confidence}%
                     </span>
                   ) : null}
                 </div>
@@ -180,53 +107,24 @@ export default function ParlaySlip({
         </ul>
       )}
 
-      <div className="shrink-0 border-t border-line/70 bg-panel2/50 px-4 py-3">
+      <div className="shrink-0 border-t border-line bg-panel2/35 px-3 py-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-frost2">
-            Combined (legs with odds only)
-          </span>
-          <span
-            className={`text-sm font-extrabold tabular-nums ${combined != null ? 'text-edge' : 'text-frost2'}`}
-            title={combined == null && legs.length > 0 ? 'not all legs priced' : undefined}
-          >
-            {combined != null ? formatAmerican(combined) : '—'}
+          <span className="font-mono text-[8.5px] uppercase tracking-[0.08em] text-frost2">Combined odds</span>
+          <span className={`font-mono text-[12px] font-semibold tabular-nums ${combined != null ? 'text-edge' : 'text-frost2'}`} title={combined == null && legs.length > 0 ? 'Not all legs are priced' : undefined}>
+            {combined != null ? formatAmerican(combined) : '-'}
           </span>
         </div>
         {legs.length > 0 && onSave ? (
           <>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={saveStatus.state === 'saving' || unsavedCount === 0}
-              className="mt-3 flex w-full items-center justify-center rounded-lg bg-edge px-3 py-2 text-xs font-extrabold text-ink shadow-[0_0_16px_rgba(21,255,194,0.16)] transition hover:bg-edge/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/70 disabled:cursor-not-allowed disabled:bg-line disabled:text-frost2 disabled:shadow-none"
-            >
-              {saveStatus.state === 'saving'
-                ? 'Saving…'
-                : unsavedCount === 0
-                  ? 'All Picks Tracked'
-                  : `Save & Track ${unsavedCount === 1 ? 'Bet' : `${unsavedCount} Picks`}`}
+            <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving' || unsavedCount === 0} className="mt-2.5 flex h-8 w-full items-center justify-center rounded-md bg-edge px-3 text-[10px] font-semibold text-ink hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/40 disabled:cursor-not-allowed disabled:bg-line disabled:text-frost2">
+              {saveStatus.state === 'saving' ? 'Saving…' : unsavedCount === 0 ? 'All picks tracked' : `Save & track ${unsavedCount === 1 ? 'bet' : `${unsavedCount} picks`}`}
             </button>
-            <p
-              aria-live="polite"
-              className={`mt-1.5 min-h-4 text-[10px] leading-snug ${
-                saveStatus.state === 'error'
-                  ? 'text-danger'
-                  : saveStatus.state === 'success'
-                    ? 'text-edge'
-                    : 'text-frost2/80'
-              }`}
-            >
-              {saveStatus.message ?? 'Saves picks to the results ledger; this does not place a wager.'}
-            </p>
-            <p className="mt-1 text-[10px] leading-snug text-frost2/80">
-              Parlays amplify variance — size in fractional units. Play responsibly.
+            <p aria-live="polite" className={`mt-1.5 min-h-3 text-[9px] leading-snug ${saveStatus.state === 'error' ? 'text-danger' : saveStatus.state === 'success' ? 'text-edge' : 'text-frost2/80'}`}>
+              {saveStatus.message ?? 'Saves to the results ledger. It does not place a wager.'}
             </p>
           </>
-        ) : (
-          <p className="mt-1.5 text-[10px] leading-snug text-frost2/80">
-            Parlays amplify variance — size in fractional units. Play responsibly.
-          </p>
-        )}
+        ) : null}
+        <p className="mt-1 text-[9px] leading-snug text-frost2/65">Parlays amplify variance. Size in fractional units.</p>
       </div>
     </aside>
   );
