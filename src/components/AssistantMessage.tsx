@@ -18,6 +18,7 @@ export default function AssistantMessage({ message, onRetry }: AssistantMessageP
   const [speaking, setSpeaking] = useState(false);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechSessionRef = useRef(0);
+  const announcedRef = useRef('');
 
   useEffect(() => {
     const onSpeechOwner = (event: Event) => {
@@ -38,7 +39,7 @@ export default function AssistantMessage({ message, onRetry }: AssistantMessageP
 
   // Strip internal protocol blocks from the user-facing markdown:
   // [PREDICTION_LOG] JSON and raw ```sgp fences are consumed by the backend
-  // (learning loop / slip) — users never need to see the raw payloads.
+  // (learning loop / slip), so users never need to see the raw payloads.
   const visible = content.replace(
     /```sgp[\s\S]*?```/g,
     '',
@@ -46,6 +47,19 @@ export default function AssistantMessage({ message, onRetry }: AssistantMessageP
     /\[PREDICTION_LOG\][\s\S]*?(```|$)/g,
     '',
   ).replace(/\n{3,}/g, '\n\n').trim();
+
+  // Call mode deliberately listens to the same validated user-facing response
+  // that the chat renders. It never speaks hidden SGP/prediction protocol JSON.
+  useEffect(() => {
+    if (streaming || !visible) return;
+    const speechText = speechFriendlyText(visible);
+    const key = `${id}:${speechText}`;
+    if (!speechText || announcedRef.current === key) return;
+    announcedRef.current = key;
+    window.dispatchEvent(new CustomEvent('sports-edge:assistant-complete', {
+      detail: { id, text: speechText },
+    }));
+  }, [id, streaming, visible]);
 
   const toggleSpeech = () => {
     if (!speechSynthesisSupported()) return;
