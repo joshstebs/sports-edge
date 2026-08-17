@@ -6,6 +6,7 @@ import {
   speechRecognitionSupported,
   type BrowserSpeechRecognition,
 } from '../lib/speech';
+import VoiceCall from './VoiceCall';
 
 interface ComposerProps {
   onSend: (text: string, images?: string[]) => void;
@@ -18,6 +19,7 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
   const [attachError, setAttachError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [callOpen, setCallOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const dictationTranscriptRef = useRef('');
@@ -153,6 +155,20 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
     }
   };
 
+  const openCall = () => {
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognitionRef.current = null;
+      try { recognition.abort(); } catch { /* already stopped */ }
+    }
+    setListening(false);
+    setVoiceError(null);
+    setCallOpen(true);
+  };
+
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setAttachError(null);
@@ -180,6 +196,20 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
       }}
     >
       <div className="mx-auto w-full max-w-3xl">
+        <div className="mb-2 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={openCall}
+            disabled={!voiceSupported}
+            title={voiceSupported ? 'Start a continuous voice conversation with SportsEdge' : 'Continuous voice is not supported in this browser'}
+            className="inline-flex items-center gap-1.5 rounded-full border border-edge/25 bg-edge/5 px-3 py-1.5 text-[10px] font-bold text-edge transition hover:border-edge/50 hover:bg-edge/10 disabled:cursor-not-allowed disabled:border-line/70 disabled:bg-panel2/60 disabled:text-frost2 disabled:opacity-60"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.12.9.33 1.78.62 2.63a2 2 0 01-.45 2.11L8 9.73a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0122 16.92z" />
+            </svg>
+            Call SportsEdge
+          </button>
+        </div>
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {attachments.map((src, i) => (
@@ -306,6 +336,13 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
           </p>
         )}
       </div>
+      {callOpen && (
+        <VoiceCall
+          streaming={streaming}
+          onSend={(text) => onSendRef.current(text)}
+          onClose={() => setCallOpen(false)}
+        />
+      )}
     </form>
   );
 }
