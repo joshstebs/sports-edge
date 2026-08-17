@@ -27,10 +27,10 @@ export function llmConfig(): LlmConfig {
   // Free-tier quota is per-model: flash lite models keep the generous daily
   // limits while the flagship flash aliases exhaust quickly — lead with lite.
   const geminiModels = [
-    process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+    process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
   ].filter((m, i, a) => a.indexOf(m) === i);
   // OpenRouter :free models share a throttled pool — chain several.
   // Verified tool-calling: gpt-oss-20b + nemotron-3.5-lightning (Aug 2026).

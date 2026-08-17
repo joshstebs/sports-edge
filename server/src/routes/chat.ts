@@ -167,23 +167,31 @@ async function filterRecommendationLegs(
 ): Promise<{ legs: any[]; blocked: string[] }> {
   const legs = Array.isArray(rawLegs) ? rawLegs : [];
   const blocked: string[] = [];
+  // RELAXED GATE (2026-08-17): legs we cannot fully verify (missing context)
+  // PASS with a note instead of being dropped - restores multi-leg slips.
+  // Verified-ineligible (injured/inactive) still blocks.
+  const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
+  const passUnverifiable = gateMode !== 'strict';
   const checked = await Promise.all(legs.map(async (leg: any) => {
     const selection = leg?.selection ?? leg?.leg_name;
     if (isClearlyNonPlayerLeg(leg)) return leg;
     const player = playerForLeg(leg);
     if (!player) {
+      if (passUnverifiable) { leg.__gateNote = 'unverifiable: no player parsed'; return leg; }
       blocked.push(legFingerprint(leg, context.sport));
       console.warn('Availability gate blocked an unparseable recommendation leg:', String(selection ?? '').slice(0, 120));
       return null;
     }
     const sport = parseSportKey(leg?.sport ?? context.sport);
     if (!sport) {
+      if (passUnverifiable) { leg.__gateNote = 'unverifiable: no sport parsed'; return leg; }
       blocked.push(legFingerprint(leg, context.sport));
       return null;
     }
     const date = typeof context.date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(context.date)
       ? context.date.slice(0, 10) : undefined;
     if (!date) {
+      if (passUnverifiable) { leg.__gateNote = 'unverifiable: no event date'; return leg; }
       blocked.push(legFingerprint(leg, context.sport));
       console.warn(`Availability gate blocked ${player}: exact event date missing`);
       return null;
