@@ -79,7 +79,7 @@ app.use(authenticatedNoStore);
 // Public billing surface (checkout / status / portal / webhook) — Stripe needs
 // to reach these without a session. Entitlement enforcement lives in
 // requireChatAccess on the chat/ledger routes below.
-app.use('/api', billingRouter);
+app.use('/api/billing', billingRouter);
 app.use('/api/chat', durableChatLimiter, chatLimiter);
 app.use('/api/ledger', durableWriteLimiter, writeLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
