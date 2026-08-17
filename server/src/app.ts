@@ -15,6 +15,7 @@ import {
   securityHeaders,
 } from './auth/index.js';
 import { chatRouter } from './routes/chat.js';
+import { billingRouter, customerIsEntitled } from './routes/billing.js';
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
@@ -65,17 +66,57 @@ const durableWriteLimiter = createUserRateLimiter({ scope: 'writes', windowMs: 1
 // Parse the public login body under a much smaller limit before the larger
 // screenshot-capable chat parser. Form bodies are intentionally unsupported.
 app.use('/api/auth/login', authLimiter, requireJsonRequest(), express.json({ limit: '8kb', type: 'application/json' }));
-app.use(express.json({ limit: '12mb', type: 'application/json' })); // attached screenshots (data URLs)
+app.use(express.json({
+  limit: '12mb',
+  type: 'application/json',
+  // Stash the raw body so the Stripe webhook can verify signatures over the
+  // exact bytes Stripe sent (json-parsed bodies are not byte-identical).
+  verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; },
+})); // attached screenshots (data URLs)
 app.use('/api', createAuthRouter(authConfig));
 app.use(authenticateRequest(authConfig));
 app.use(authenticatedNoStore);
+// Public billing surface (checkout / status / portal / webhook) — Stripe needs
+// to reach these without a session. Entitlement enforcement lives in
+// requireChatAccess on the chat/ledger routes below.
+app.use('/api', billingRouter);
 app.use('/api/chat', durableChatLimiter, chatLimiter);
 app.use('/api/ledger', durableWriteLimiter, writeLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
-app.use('/api', requireAuth, chatRouter);
-app.use('/api', requireAuth, ledgerRouter);
+// Chat/ledger access: a valid session (owner/configured users) passes, or an
+// entitled Stripe customer via the x-se-customer-id header. Everyone else gets
+// a 402 with the trial CTA.
+export function requireChatAccess(req: Request, res: Response, next: NextFunction): void {
+  if (req.auth) return next();
+  const customerId = req.get('x-se-customer-id') || '';
+  if (!customerId) {
+    res.status(402).json({
+      error: 'Start your free trial to unlock SportsEdge analysis.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    });
+    return;
+  }
+  customerIsEntitled(customerId)
+    .then((entitled) => {
+      if (!entitled) {
+        res.status(402).json({
+          error: 'An active subscription is required to use SportsEdge analysis.',
+          code: 'SUBSCRIPTION_REQUIRED',
+        });
+        return;
+      }
+      (req as { auth?: unknown }).auth = { role: 'customer', userId: `cus:${customerId}` };
+      next();
+    })
+    .catch(() => {
+      res.status(402).json({ error: 'Could not verify subscription. Please try again.', code: 'SUBSCRIPTION_REQUIRED' });
+    });
+}
+
+app.use('/api', requireChatAccess, chatRouter);
+app.use('/api', requireChatAccess, ledgerRouter);
 app.use('/api', requireAuth, predictionsRouter);
 
 app.get('/', (_req, res) => {

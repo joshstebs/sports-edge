@@ -1,4 +1,5 @@
 import type { ChatEvent } from '../types';
+import { getCustomerId } from './billing';
 
 export interface StreamChatBody {
   messages: { role: 'user' | 'assistant'; content: string }[];
@@ -43,12 +44,33 @@ export function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): 
  * trailing frame at stream end.
  */
 export async function streamChat(body: StreamChatBody, opts: StreamChatOptions): Promise<void> {
+  const customerId = getCustomerId();
   const res = await fetch(`${import.meta.env.BASE_URL}api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(customerId ? { 'x-se-customer-id': customerId } : {}),
+    },
     body: JSON.stringify(body),
     signal: opts.signal,
   });
+  if (res.status === 401 || res.status === 402) {
+    let code = 'AUTH_REQUIRED';
+    let message = res.status === 402
+      ? 'Start your free trial to unlock SportsEdge analysis.'
+      : 'Authentication required.';
+    try {
+      const payload = (await res.json()) as { code?: string; error?: string };
+      if (payload.code) code = payload.code;
+      if (payload.error) message = payload.error;
+    } catch {
+      /* keep defaults */
+    }
+    const err = new Error(message) as Error & { code?: string; status?: number };
+    err.code = code;
+    err.status = res.status;
+    throw err;
+  }
   if (!res.ok) {
     throw new Error(`Chat API returned HTTP ${res.status}`);
   }

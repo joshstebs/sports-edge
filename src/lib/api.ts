@@ -6,6 +6,16 @@ export interface HealthInfo {
   version?: string;
 }
 
+/** Attach the Stripe customer id when present (trial/subscriber access). */
+function customerHeaders(): Record<string, string> {
+  try {
+    const customerId = localStorage.getItem('sportsedge.customerId');
+    return customerId ? { 'x-se-customer-id': customerId } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** GET /api/health — drives the "Live data" dot in the header. */
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
@@ -44,7 +54,7 @@ export interface LedgerResponse {
 /** GET the signed-in user's durable ledger for local slip reconciliation. */
 export async function fetchLedger(): Promise<LedgerResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/ledger`, {
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...customerHeaders() },
   });
   const payload = (await res.json().catch(() => null)) as
     | (Partial<LedgerResponse> & { error?: string })
@@ -66,6 +76,7 @@ export async function saveLedgerTicket(
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'Idempotency-Key': idempotencyKey,
+      ...customerHeaders(),
     },
     body: JSON.stringify({ legs, idempotencyKey }),
   });

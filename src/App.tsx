@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Composer from './components/Composer';
 import Header from './components/Header';
 import LoginScreen from './components/LoginScreen';
+import UpgradeModal from './components/UpgradeModal';
 import MessageList from './components/MessageList';
 import ParlaySlip, { type SlipSaveStatus } from './components/ParlaySlip';
 import SportSelector from './components/SportSelector';
 import { fetchHealth, fetchLedger, saveLedgerTicket, type HealthInfo } from './lib/api';
 import { fetchSession, signOut, type AuthUser } from './lib/auth';
+import { clearCustomerId, getCustomerId, setCustomerId } from './lib/billing';
 import { legKey } from './lib/odds';
 import {
   collectMessageLegs,
@@ -84,16 +86,23 @@ type AuthState =
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: 'checking', user: null, error: null });
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
+  const customerUser = (): AuthUser => ({ id: 'customer', username: 'Trial member', role: 'customer' });
 
   useEffect(() => {
     let cancelled = false;
     fetchSession()
       .then((user) => {
         if (cancelled) return;
+        // No password session, but a Stripe customer id exists (trial/subscriber):
+        // enter as a customer — entitlement is verified server-side per request.
         setAuth(
           user
             ? { status: 'signed-in', user, error: null }
-            : { status: 'signed-out', user: null, error: null },
+            : getCustomerId()
+              ? { status: 'signed-in', user: customerUser(), error: null }
+              : { status: 'signed-out', user: null, error: null },
         );
       })
       .catch((error: unknown) => {
@@ -118,26 +127,55 @@ export default function App() {
   }
   if (!auth.user) {
     return (
-      <LoginScreen
-        serviceError={auth.error}
-        onAuthenticated={(user) => setAuth({ status: 'signed-in', user, error: null })}
-      />
+      <>
+        <LoginScreen
+          serviceError={auth.error}
+          onAuthenticated={(user) => setAuth({ status: 'signed-in', user, error: null })}
+          onTrialRequest={() => setShowUpgrade(true)}
+        />
+        {showUpgrade && (
+          <UpgradeModal
+            onClose={() => setShowUpgrade(false)}
+            onEntitled={(customerId) => {
+              setCustomerId(customerId);
+              setAuth({ status: 'signed-in', user: customerUser(), error: null });
+            }}
+          />
+        )}
+      </>
     );
   }
 
   return (
-    <Workspace
-      key={auth.user.id}
-      user={auth.user}
-      onSessionExpired={() => setAuth({ status: 'signed-out', user: null, error: 'Your session expired. Please sign in again.' })}
-      onLogout={async () => {
-        try {
-          await signOut();
-        } finally {
-          setAuth({ status: 'signed-out', user: null, error: null });
-        }
-      }}
-    />
+    <>
+      <Workspace
+        key={auth.user.id}
+        user={auth.user}
+        onSessionExpired={() => setAuth({ status: 'signed-out', user: null, error: 'Your session expired. Please sign in again.' })}
+        onUpgradeRequired={() => setShowUpgrade(true)}
+        onLogout={async () => {
+          try {
+            if (auth.user.role === 'customer') {
+              clearCustomerId();
+              setAuth({ status: 'signed-out', user: null, error: null });
+              return;
+            }
+            await signOut();
+          } finally {
+            setAuth({ status: 'signed-out', user: null, error: null });
+          }
+        }}
+      />
+      {showUpgrade && (
+        <UpgradeModal
+          onClose={() => setShowUpgrade(false)}
+          onEntitled={(customerId) => {
+            setCustomerId(customerId);
+            setAuth({ status: 'signed-in', user: customerUser(), error: null });
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -145,10 +183,12 @@ function Workspace({
   user,
   onLogout,
   onSessionExpired,
+  onUpgradeRequired,
 }: {
   user: AuthUser;
   onLogout: () => Promise<void>;
   onSessionExpired: () => void;
+  onUpgradeRequired: () => void;
 }) {
   const chatStorageKey = userStorageKey(CHAT_STORAGE_KEY, user.id);
   const slipStorageKey = userStorageKey(SLIP_STORAGE_KEY, user.id);
@@ -442,6 +482,10 @@ function Workspace({
             onSessionExpired();
             return;
           }
+          if (err instanceof Error && (err as Error & { code?: string }).code === 'SUBSCRIPTION_REQUIRED') {
+            onUpgradeRequired();
+            return;
+          }
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -464,7 +508,7 @@ function Workspace({
           );
         });
     },
-    [onSessionExpired, setStreamingState],
+    [onSessionExpired, onUpgradeRequired, setStreamingState],
   );
 
   const setSlipCollapsedPersisted = useCallback((v: boolean) => {

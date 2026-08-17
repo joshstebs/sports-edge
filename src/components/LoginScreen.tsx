@@ -3,10 +3,11 @@ import { signIn, type AuthUser } from '../lib/auth';
 
 interface LoginScreenProps {
   onAuthenticated: (user: AuthUser) => void;
+  onTrialRequest: () => void;
   serviceError?: string | null;
 }
 
-export default function LoginScreen({ onAuthenticated, serviceError }: LoginScreenProps) {
+export default function LoginScreen({ onAuthenticated, onTrialRequest, serviceError }: LoginScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -93,6 +94,20 @@ export default function LoginScreen({ onAuthenticated, serviceError }: LoginScre
             {submitting ? 'Signing in…' : 'Sign in securely'}
           </button>
         </form>
+
+        <div className="my-5 flex items-center gap-3">
+          <span className="h-px flex-1 bg-line/70" />
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-frost2/70">or</span>
+          <span className="h-px flex-1 bg-line/70" />
+        </div>
+
+        <button
+          type="button"
+          onClick={onTrialRequest}
+          className="flex w-full items-center justify-center rounded-xl border border-edge/40 bg-edge/10 px-4 py-3 text-sm font-extrabold text-edge transition hover:bg-edge/20 focus:outline-none focus:ring-2 focus:ring-edge/50 focus:ring-offset-2 focus:ring-offset-panel"
+        >
+          Start free 7-day trial
+        </button>
 
         <p className="mt-5 text-center text-[10px] leading-relaxed text-frost2/75">
           Sessions use encrypted transport and an HTTP-only secure cookie. Never share the administrator account.
