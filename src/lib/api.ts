@@ -89,3 +89,61 @@ export async function saveLedgerTicket(
   }
   return payload as SaveLedgerResponse;
 }
+
+export interface PerformanceBand {
+  band: string;
+  range: string;
+  n: number;
+  won: number;
+  lost: number;
+  pushes: number;
+  hitRate: number | null;
+  netUnits: number;
+  priced: number;
+}
+
+export interface PerformanceSummary {
+  storage: { backend: string; durable: boolean };
+  generatedAt: string;
+  overall: {
+    graded: number; wins: number; losses: number; pushes: number;
+    winRate: number | null; roiPct: number | null; units: number | null;
+    brierScore: number | null; priced: number;
+  };
+  last7: { graded: number; winRate: number | null; roiPct: number | null };
+  last30: { graded: number; winRate: number | null; roiPct: number | null };
+  bySport: Array<{ sport: string; graded: number; winRate: number | null; roiPct: number | null }>;
+  byMarket: Array<{ market: string; graded: number; winRate: number | null; roiPct: number | null }>;
+  byConfidence: PerformanceBand[];
+  models: Array<{ model: string; graded: number; winRate: number | null; roiPct: number | null }>;
+  recent: Array<{
+    predictionId: string; sport: string; matchup: string; betType: string;
+    gradedAt: string | null; outcome: string; selection: string;
+  }>;
+  learning: unknown | null;
+}
+
+export interface SportInfo {
+  code: string;
+  name: string;
+  status: 'live' | 'planned';
+  supportedMarkets: string[];
+  inputs: string[];
+  playerProps: boolean;
+}
+
+export async function fetchPerformance(): Promise<{ performance: PerformanceSummary; sports: SportInfo[] }> {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/performance`, {
+    headers: { Accept: 'application/json', ...customerHeaders() },
+  });
+  if (!res.ok) throw new Error(`Performance data unavailable (HTTP ${res.status})`);
+  const payload = (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
+  return payload;
+}
+
+export async function fetchSports(): Promise<SportInfo[]> {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/sports`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Sports registry unavailable (HTTP ${res.status})`);
+  const payload = (await res.json()) as { sports: SportInfo[] };
+  return payload.sports;
+}

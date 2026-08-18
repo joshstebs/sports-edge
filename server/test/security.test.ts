@@ -124,5 +124,6 @@ test('prediction history router exposes no client-write method', () => {
   const methods = predictionsRouter.stack.flatMap((layer: any) =>
     layer.route ? Object.keys(layer.route.methods).filter((method) => layer.route.methods[method]) : [],
   );
-  assert.deepEqual(methods, ['get']);
+  // Only read methods (GET) are allowed; no POST/PUT/DELETE client writes.
+  assert.deepEqual([...new Set(methods)], ['get']);
 });

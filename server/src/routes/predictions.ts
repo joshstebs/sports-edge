@@ -5,6 +5,8 @@ import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { listPredictions, StorageNotConfiguredError, storageStatus } from '../lib/predictionStore.js';
 import { runPredictionEvaluation } from '../lib/evaluator.js';
+import { computePerformance } from '../lib/performance.js';
+import { SPORTS } from '../providers/sportsConfig.js';
 
 export const predictionsRouter = Router();
 export const evaluationRouter = Router();
@@ -58,5 +60,20 @@ predictionsRouter.get('/predictions', async (_req, res) => {
   catch (error) {
     const unavailable = error instanceof StorageNotConfiguredError;
     res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'STORAGE_ERROR', error: (error as Error).message });
+  }
+});
+
+// /api/predictions/performance — model/accuracy dashboard (admin/signed-in).
+// Read-only aggregation; never mutates prediction logic.
+predictionsRouter.get('/predictions/performance', async (_req, res) => {
+  try {
+    const [performance, sports] = await Promise.all([computePerformance(), Promise.resolve(SPORTS.map((s) => ({
+      code: s.code, name: s.name, status: s.status, supportedMarkets: s.supportedMarkets,
+      inputs: s.inputs, playerProps: s.playerProps,
+    })))]);
+    res.json({ ok: true, generatedAt: performance.generatedAt, performance, sports });
+  } catch (error) {
+    const unavailable = error instanceof StorageNotConfiguredError;
+    res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'PERFORMANCE_ERROR', error: (error as Error).message });
   }
 });

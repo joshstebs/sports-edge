@@ -20,8 +20,10 @@ import {
 } from './lib/slip';
 import { streamChat } from './lib/sse';
 import type { ChatMessage, HealthState, Sport, SgpLeg, ToolEvent } from './types';
+import { SPORTS } from './types';
+import { getStoredTheme, toggleTheme, type ThemeMode } from './lib/theme';
+import PerformancePage from './components/Performance';
 
-export const SPORTS: readonly Sport[] = ['All', 'MLB', 'NFL', 'NBA', 'NHL'];
 const CHAT_STORAGE_KEY = 'sports-edge:chat:v2';
 const SLIP_STORAGE_KEY = 'sports-edge:betslip:v2';
 const TRACKED_STORAGE_KEY = 'sports-edge:tracked-legs:v2';
@@ -48,7 +50,7 @@ function loadPersisted(userId: string): { messages: ChatMessage[]; sport: Sport 
           ...(Array.isArray(m.sgp) ? { sgp: mergeSgpLegs([], m.sgp) } : {}),
         }))
       : [];
-    const sport = parsed.sport && SPORTS.includes(parsed.sport) ? parsed.sport : 'All';
+    const sport = parsed.sport && SPORTS.some((s) => s.code === parsed.sport) ? (parsed.sport as Sport) : 'All';
     return { messages, sport };
   } catch {
     return { messages: [], sport: 'All' };
@@ -206,6 +208,8 @@ function Workspace({
     }
   });
   const [model, setModel] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme());
+  const [view, setView] = useState<'chat' | 'performance'>('chat');
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -571,10 +575,18 @@ function Workspace({
         health={health}
         healthInfo={healthInfo}
         user={user}
+        theme={theme}
+        onToggleTheme={() => setTheme(toggleTheme())}
         onLogout={onLogout}
         onNewChat={newChat}
+        onOpenPerformance={() => setView((v) => (v === 'performance' ? 'chat' : 'performance'))}
       />
       <SportSelector sports={SPORTS} active={sport} onChange={setSport} />
+      {view === 'performance' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <PerformancePage onBack={() => setView('chat')} onSelectSport={(s) => { setSport(s); setView('chat'); }} />
+        </div>
+      ) : (
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <MessageList messages={messages} onSend={sendMessage} onRetry={retryMessage} />
@@ -638,6 +650,7 @@ function Workspace({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

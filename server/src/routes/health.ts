@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { llmConfig } from '../llm/chatClient.js';
 import { storageStatus } from '../lib/predictionStore.js';
 import { oddsConfigured } from '../providers/oddsApi.js';
+import { SPORTS } from '../providers/sportsConfig.js';
 
 export const VERSION = '0.2.0';
 
@@ -89,4 +90,9 @@ healthRouter.get('/sources', (_req, res) => {
     sources,
     version: VERSION,
   });
+});
+
+// Modular sport registry (public). Front-end league nav reads this.
+healthRouter.get('/sports', (_req, res) => {
+  res.json({ sports: SPORTS });
 });

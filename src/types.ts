@@ -1,6 +1,32 @@
 // Types mirror the backend API contract exactly (server on :3100).
 
-export type Sport = 'All' | 'MLB' | 'NFL' | 'NBA' | 'NHL';
+export type Sport = 'All' | 'MLB' | 'NFL' | 'NBA' | 'NHL' | 'NCAAF' | 'NCAAB' | 'WNBA' | 'UFC' | 'SOCCER';
+
+// League scope exposed in the nav. 'All' scopes the analyst to every sport.
+// Sports the engine can currently grade/predict are marked live (status).
+export interface SportMeta {
+  code: Sport;
+  label: string;
+  status: 'live' | 'planned';
+}
+
+export const SPORTS: readonly SportMeta[] = [
+  { code: 'All', label: 'All', status: 'live' },
+  { code: 'MLB', label: 'MLB', status: 'live' },
+  { code: 'NFL', label: 'NFL', status: 'live' },
+  { code: 'NBA', label: 'NBA', status: 'live' },
+  { code: 'NHL', label: 'NHL', status: 'live' },
+  { code: 'NCAAF', label: 'NCAAF', status: 'planned' },
+  { code: 'NCAAB', label: 'NCAAB', status: 'planned' },
+  { code: 'WNBA', label: 'WNBA', status: 'planned' },
+  { code: 'UFC', label: 'UFC', status: 'planned' },
+  { code: 'SOCCER', label: 'Soccer', status: 'planned' },
+];
+
+export function sportLabel(code: Sport): string {
+  return SPORTS.find((s) => s.code === code)?.label ?? code;
+}
+
 
 export type Role = 'user' | 'assistant';
 
