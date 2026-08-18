@@ -369,6 +369,15 @@ export async function runAgent(
   cb: AgentCallbacks = {}
 ): Promise<{ content: string; iterations: number; modelUsed: string | null }> {
   const msgs: ChatMessage[] = [...messages];
+  // RESEARCH cfg: tool-gathering rounds use the FAST lite chain (they just
+  // collect data); only the final synthesis round uses the full (flash-first)
+  // cfg. Keeps total loop time inside Vercel's 60s cap without losing quality
+  // on the actual recommendation. (2026-08-17)
+  const liteFirst = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+  const researchCfg: LlmConfig = {
+    ...cfg,
+    models: [...liteFirst, ...cfg.models.filter((m) => !liteFirst.includes(m))],
+  };
   let finalText = '';
   let iterations = 0;
   let modelUsed: string | null = null;
@@ -383,7 +392,8 @@ export async function runAgent(
     // re-answers fully. Only forward deltas for final text turns so the user
     // never sees duplicated fragments.
     let turnText = '';
-    const resp = await streamChatOnce(cfg, msgs, tools, {
+    const activeCfg = iterations < 2 ? researchCfg : cfg;
+    const resp = await streamChatOnce(activeCfg, msgs, tools, {
       onDelta: (d) => {
         turnText += d;
       },

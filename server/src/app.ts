@@ -28,7 +28,7 @@ const authConfig = loadAuthConfig();
 // Trust proxies so express-rate-limit accepts X-Forwarded-For (Tailscale
 // funnel locally, Vercel edge in prod). Without this, funnel requests crash
 // the limiter with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR and take the server down.
-app.set('trust proxy', true);
+app.set('trust proxy', process.env.VERCEL ? 1 : 2); // explicit hops: Vercel=1, local tailnet=2 (boolean true trips rate-limiter validation)
 app.disable('x-powered-by');
 app.use(securityHeaders(authConfig.production));
 app.use(enforceTrustedOrigin(authConfig.allowedOrigins));
