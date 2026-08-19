@@ -13,7 +13,7 @@ interface HeaderProps {
   onLogout: () => Promise<void>;
   onNewChat: () => void;
   onOpenPerformance: () => void;
-  onOpenExperience: () => void;
+  onOpenExperience?: () => void;
 }
 
 function liveTooltip(health: HealthState, info: HealthInfo | null): string {
@@ -47,6 +47,16 @@ export default function Header({
   onOpenExperience,
 }: HeaderProps) {
   const live = health === 'ok';
+  const openExperiences = () => {
+    if (onOpenExperience) {
+      onOpenExperience();
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('experiences', '1');
+    window.location.href = url.toString();
+  };
+
   return (
     <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line/70 bg-ink/90 px-3 backdrop-blur sm:px-4">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -66,7 +76,7 @@ export default function Header({
           <span className="hidden md:inline">{live ? 'Live' : health === 'checking' ? 'Checking' : 'Offline'}</span>
         </span>
 
-        <button type="button" onClick={onOpenExperience} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge/25 bg-edge/5 px-2.5 text-[11px] font-semibold text-edge hover:border-edge/50 hover:bg-edge/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30" title="Open the 10 new SportsEdge experiences">
+        <button type="button" onClick={openExperiences} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge/25 bg-edge/5 px-2.5 text-[11px] font-semibold text-edge hover:border-edge/50 hover:bg-edge/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30" title="Open the 10 new SportsEdge experiences">
           <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17.5 13.5v7"/></svg>
           <span className="hidden sm:inline">Experiences</span>
         </button>
