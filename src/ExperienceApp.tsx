@@ -125,6 +125,7 @@ export default function ExperienceApp() {
   }, [legs, tracked]);
 
   const unsavedCount = legs.filter((leg) => !tracked.has(ledgerLegKey(leg))).length;
+  const analyst = { prompt: lastPrompt, answer: lastAnswer, status: lastTool, streaming };
 
   return (
     <main className="relative flex h-full flex-col bg-ink text-head">
@@ -132,6 +133,7 @@ export default function ExperienceApp() {
         legs={legs}
         health={health}
         healthInfo={healthInfo}
+        analyst={analyst}
         onSend={(text) => void send(text)}
         onOpenChat={() => setShowAnswer(true)}
         onClose={() => { window.location.href = `${import.meta.env.BASE_URL}`; }}
