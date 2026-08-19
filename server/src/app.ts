@@ -20,6 +20,7 @@ import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
 import { playerProfileRouter } from './routes/playerProfile.js';
+import { playerResearchRouter } from './routes/playerResearch.js';
 
 const app = express();
 const authConfig = loadAuthConfig();
@@ -121,10 +122,11 @@ export function requireChatAccess(req: Request, res: Response, next: NextFunctio
 app.use('/api', requireChatAccess, chatRouter);
 app.use('/api', requireChatAccess, ledgerRouter);
 app.use('/api', requireChatAccess, playerProfileRouter);
+app.use('/api', requireChatAccess, playerResearchRouter);
 app.use('/api', requireAuth, predictionsRouter);
 
 app.get('/', (_req, res) => {
-  res.json({ name: 'sports-edge-server', version: '0.2.0', endpoints: ['/api/health', '/api/sources', '/api/auth/session', '/api/chat', '/api/ledger', '/api/player-profile', '/api/predictions'] });
+  res.json({ name: 'sports-edge-server', version: '0.2.0', endpoints: ['/api/health', '/api/sources', '/api/auth/session', '/api/chat', '/api/ledger', '/api/player-profile', '/api/player-research', '/api/predictions'] });
 });
 
 // Never crash on provider/LLM failures — log the full error server-side,
