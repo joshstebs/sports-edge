@@ -19,9 +19,7 @@ function customerHeaders(): Record<string, string> {
 /** GET /api/health — drives the "Live data" dot in the header. */
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    throw new Error(`Health check returned HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Health check returned HTTP ${res.status}`);
   return (await res.json()) as HealthInfo;
 }
 
@@ -56,9 +54,7 @@ export async function fetchLedger(): Promise<LedgerResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/ledger`, {
     headers: { Accept: 'application/json', ...customerHeaders() },
   });
-  const payload = (await res.json().catch(() => null)) as
-    | (Partial<LedgerResponse> & { error?: string })
-    | null;
+  const payload = (await res.json().catch(() => null)) as (Partial<LedgerResponse> & { error?: string }) | null;
   if (!res.ok || !Array.isArray(payload?.picks)) {
     throw new Error(payload?.error || `Could not load tracked bets (HTTP ${res.status})`);
   }
@@ -66,10 +62,7 @@ export async function fetchLedger(): Promise<LedgerResponse> {
 }
 
 /** POST a ticket to the tracked-picks ledger with retry-safe idempotency. */
-export async function saveLedgerTicket(
-  legs: readonly unknown[],
-  idempotencyKey: string,
-): Promise<SaveLedgerResponse> {
+export async function saveLedgerTicket(legs: readonly unknown[], idempotencyKey: string): Promise<SaveLedgerResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/ledger`, {
     method: 'POST',
     headers: {
@@ -80,13 +73,8 @@ export async function saveLedgerTicket(
     },
     body: JSON.stringify({ legs, idempotencyKey }),
   });
-
-  const payload = (await res.json().catch(() => null)) as
-    | (Partial<SaveLedgerResponse> & { error?: string })
-    | null;
-  if (!res.ok || !payload?.ok) {
-    throw new Error(payload?.error || `Could not track bet (HTTP ${res.status})`);
-  }
+  const payload = (await res.json().catch(() => null)) as (Partial<SaveLedgerResponse> & { error?: string }) | null;
+  if (!res.ok || !payload?.ok) throw new Error(payload?.error || `Could not track bet (HTTP ${res.status})`);
   return payload as SaveLedgerResponse;
 }
 
@@ -137,8 +125,7 @@ export async function fetchPerformance(): Promise<{ performance: PerformanceSumm
     headers: { Accept: 'application/json', ...customerHeaders() },
   });
   if (!res.ok) throw new Error(`Performance data unavailable (HTTP ${res.status})`);
-  const payload = (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
-  return payload;
+  return (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
 }
 
 export async function fetchSports(): Promise<SportInfo[]> {
@@ -173,8 +160,45 @@ export async function fetchPlayerProfile(sport: string, name: string): Promise<P
     headers: { Accept: 'application/json', ...customerHeaders() },
   });
   const payload = (await res.json().catch(() => null)) as PlayerProfileResponse | null;
-  if (!res.ok || !payload) {
-    throw new Error(payload?.reason || `Player profile unavailable (HTTP ${res.status})`);
-  }
+  if (!res.ok || !payload) throw new Error(payload?.reason || `Player profile unavailable (HTTP ${res.status})`);
+  return payload;
+}
+
+export interface PlayerResearchObservation {
+  date: string | null;
+  value: number;
+  opponent: string | null;
+  result: string | null;
+  gameId: string | null;
+}
+
+export interface PlayerResearchResponse {
+  available: boolean;
+  source?: string;
+  sport?: string;
+  player?: string;
+  playerId?: string;
+  team?: string;
+  position?: string;
+  market?: string;
+  season?: string | null;
+  observations?: PlayerResearchObservation[];
+  reason?: string;
+}
+
+/** Official market-specific recent game observations for the Prop Lab. */
+export async function fetchPlayerResearch(
+  sport: string,
+  name: string,
+  market: string,
+  limit = 10,
+): Promise<PlayerResearchResponse> {
+  const params = new URLSearchParams({ sport, name, market, limit: String(limit) });
+  const res = await fetch(`${import.meta.env.BASE_URL}api/player-research?${params.toString()}`, {
+    headers: { Accept: 'application/json', ...customerHeaders() },
+  });
+  const payload = (await res.json().catch(() => null)) as PlayerResearchResponse | null;
+  if (!payload) throw new Error(`Player research unavailable (HTTP ${res.status})`);
+  if (!res.ok && res.status !== 404) throw new Error(payload.reason || `Player research unavailable (HTTP ${res.status})`);
   return payload;
 }
