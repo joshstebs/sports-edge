@@ -7,6 +7,7 @@ import { listPredictions, StorageNotConfiguredError, storageStatus } from '../li
 import { runPredictionEvaluation } from '../lib/evaluator.js';
 import { computePerformance } from '../lib/performance.js';
 import { recordVerifiedClosingOdds } from '../lib/closingOdds.js';
+import { buildDiagnostics, predictionCsvForUser } from '../lib/diagnostics.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 
 export const predictionsRouter = Router();
@@ -103,6 +104,36 @@ predictionsRouter.get('/predictions', async (_req, res) => {
   catch (error) {
     const unavailable = error instanceof StorageNotConfiguredError;
     res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'STORAGE_ERROR', error: (error as Error).message });
+  }
+});
+
+predictionsRouter.get('/predictions/diagnostics', async (_req, res) => {
+  try {
+    res.json({ ok: true, diagnostics: await buildDiagnostics() });
+  } catch (error) {
+    const unavailable = error instanceof StorageNotConfiguredError;
+    res.status(unavailable ? 503 : 500).json({
+      ok: false,
+      code: unavailable ? error.code : 'DIAGNOSTICS_ERROR',
+      error: unavailable ? error.message : 'Could not build diagnostics.',
+    });
+  }
+});
+
+predictionsRouter.get('/predictions/export.csv', async (_req, res) => {
+  try {
+    const csv = await predictionCsvForUser(_req.auth!.userId);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="sportsedge-predictions-${stamp}.csv"`);
+    res.send(csv);
+  } catch (error) {
+    const unavailable = error instanceof StorageNotConfiguredError;
+    res.status(unavailable ? 503 : 500).json({
+      ok: false,
+      code: unavailable ? error.code : 'EXPORT_ERROR',
+      error: unavailable ? error.message : 'Could not export predictions.',
+    });
   }
 });
 
