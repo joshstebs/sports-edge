@@ -35,100 +35,79 @@ export default function Header({
   onOpenPerformance,
 }: HeaderProps) {
   const live = health === 'ok';
+
   return (
-    <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line/70 bg-ink/90 px-3 backdrop-blur sm:px-4">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge/30 bg-gradient-to-br from-edge/20 to-edge2/10 text-edge">
-          <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M3 17l5-5 4 3 6-8" />
-            <path d="M14 7h4v4" />
-          </svg>
-        </div>
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-[15px] font-bold tracking-[-0.02em] text-head">SportsEdge</h1>
-          <span className="hidden font-mono text-[10px] text-frost2 sm:inline">AI Sports Intelligence</span>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1.5">
-        {model && (
-          <span
-            className="hidden max-w-40 truncate rounded-md border border-line bg-panel px-2 py-1 font-mono text-[10px] text-frost2 lg:inline-block"
-            title="Model reported by the live meta event"
-          >
-            {model}
-          </span>
-        )}
-        <span
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[10px] font-medium text-frost2"
-          title={liveTooltip(health, healthInfo)}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-edge' : health === 'checking' ? 'bg-warn' : 'bg-danger'}`} />
-          <span className="hidden md:inline">{live ? 'Live' : health === 'checking' ? 'Checking' : 'Offline'}</span>
-        </span>
-
-        <button
-          type="button"
-          onClick={onOpenPerformance}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-[11px] font-medium text-frost hover:border-line-strong hover:bg-panel2 hover:text-head focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
-          title="Model performance dashboard"
-        >
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M3 3v18h18" />
-            <path d="M7 14l3-4 3 3 4-6" />
-          </svg>
-          <span className="hidden sm:inline">Performance</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onNewChat}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-[11px] font-medium text-frost hover:border-line-strong hover:bg-panel2 hover:text-head focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
-          title="Start a new chat"
-        >
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          <span className="hidden sm:inline">New</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-panel text-frost2 hover:border-line-strong hover:bg-panel2 hover:text-head focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          aria-label="Toggle theme"
-        >
-          {theme === 'dark' ? (
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
-            </svg>
-          )}
-        </button>
-
-        <div className="ml-0.5 flex h-8 items-center gap-2 border-l border-line pl-2">
-          <div className="hidden min-w-0 text-right md:block">
-            <p className="max-w-28 truncate text-[10px] font-semibold leading-none text-frost" title={user.username}>{user.username}</p>
-            <p className="mt-1 text-[9px] uppercase tracking-[0.08em] text-frost2">{user.role}</p>
+    <header className="z-30 shrink-0 border-b border-line/70 bg-ink/90 backdrop-blur-xl">
+      <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-3 px-3 py-2 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="se-logo-mark" aria-hidden="true"><span /></div>
+          <div className="min-w-0">
+            <h1 className="se-logo-word text-[15px] sm:text-[18px]">Sports<em>Edge</em></h1>
+            <p className="mt-0.5 hidden font-mono text-[8px] uppercase tracking-[0.13em] text-frost2 sm:block">AI sports intelligence</p>
           </div>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <span className={`se-live hidden sm:inline-flex ${live ? '' : 'opacity-60'}`} title={liveTooltip(health, healthInfo)}>
+            <span className={`se-live-dot ${live ? '' : health === 'checking' ? 'bg-warn' : 'bg-danger'}`} />
+            {live ? 'Live data' : health === 'checking' ? 'Checking' : 'Offline'}
+          </span>
+          <span className="se-verified hidden lg:inline-flex" title="Recommendations only display sportsbook prices when the app has a verified price source">
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-2.7 8.2-7 10-4.3-1.8-7-5.4-7-10V6l7-3z" /><path d="M9 12l2 2 4-5" /></svg>
+            Verified lines
+          </span>
+
+          {model && (
+            <span className="hidden max-w-36 truncate rounded-lg border border-line bg-panel/70 px-2.5 py-2 font-mono text-[9px] text-frost2 xl:inline-block" title="Model reported by the live meta event">
+              {model}
+            </span>
+          )}
+
           <button
             type="button"
-            onClick={() => void onLogout()}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-frost2 hover:bg-panel2 hover:text-head focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
-            title="Sign out"
-            aria-label="Sign out"
+            onClick={onOpenPerformance}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-panel/65 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-frost hover:border-edge/35 hover:text-edge focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
+            title="Model performance dashboard"
           >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M10 17l5-5-5-5" />
-              <path d="M15 12H3" />
-              <path d="M14 3h5a2 2 2 012 2v14a2 2 2 01-2 2h-5" />
-            </svg>
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 14l3-4 3 3 4-6" /></svg>
+            <span className="hidden md:inline">Analytics</span>
           </button>
+
+          <button
+            type="button"
+            onClick={onNewChat}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-panel/65 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-frost hover:border-edge/35 hover:text-edge focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
+            title="Start a new analysis"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            <span className="hidden sm:inline">New</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="hidden h-9 w-9 items-center justify-center rounded-lg border border-line bg-panel/65 text-frost2 hover:border-edge/35 hover:text-edge md:flex"
+            title={theme === 'dark' ? 'Theme control' : 'Theme control'}
+            aria-label="Toggle theme"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /><circle cx="12" cy="12" r="4" /></svg>
+          </button>
+
+          <div className="ml-0.5 flex items-center gap-2 border-l border-line/80 pl-2">
+            <div className="hidden min-w-0 text-right xl:block">
+              <p className="max-w-28 truncate text-[10px] font-semibold leading-none text-frost" title={user.username}>{user.username}</p>
+              <p className="mt-1 text-[8px] uppercase tracking-[0.1em] text-frost2">{user.role}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-panel/60 text-frost2 hover:border-edge/35 hover:text-edge focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20c.8-4 3-6 6.5-6s5.7 2 6.5 6" /></svg>
+            </button>
+          </div>
         </div>
       </div>
     </header>
