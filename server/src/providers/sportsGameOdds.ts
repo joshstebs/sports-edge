@@ -1,0 +1,261 @@
+// SportsGameOdds API v2 — multi-book odds + scores + results in one event object.
+// Auth via x-api-key header (apiKey query param also accepted; we use the header).
+// Key comes from SPORTSGAMEODDS_API_KEY in server/.env. Optional: returns
+// {available:false} unless the key is set. Zero fabrication — never invent markets.
+//
+// Notable vs The Odds API (oddsApi.ts):
+//  - Single /v2/events call returns ALL markets (h2h, spreads, totals, props)
+//    per event, each with consensus bookOdds + per-bookmaker odds under byBookmaker.
+//  - oddID = statID-statEntityID-periodID-betTypeID-sideID (e.g. points-home-game-sp-home).
+//  - Pagination via nextCursor; we follow up to 5 pages to find a matchup.
+//  - Free/limited keys may omit some bookmaker odds (API returns a "notice").
+
+import { normalizeName } from './http.js';
+
+const BASE = 'https://api.sportsgameodds.com/v2';
+const SOURCE = 'api.sportsgameodds.com';
+
+// SportsGameOdds leagueIDs (subset we use; full list is 67 leagues).
+const LEAGUE_IDS: Record<string, string> = {
+  mlb: 'MLB',
+  baseball: 'MLB',
+  nfl: 'NFL',
+  football: 'NFL',
+  nba: 'NBA',
+  basketball: 'NBA',
+  nhl: 'NHL',
+  hockey: 'NHL',
+  ufc: 'UFC',
+  mma: 'UFC',
+};
+
+let lastNotice: string | null = null;
+
+export function sgoConfigured(): boolean {
+  return Boolean(process.env.SPORTSGAMEODDS_API_KEY);
+}
+
+export function sgoNotice(): string | null {
+  return lastNotice;
+}
+
+function key(): string | null {
+  return process.env.SPORTSGAMEODDS_API_KEY ?? null;
+}
+
+function americanImplied(price: number): number {
+  if (price > 0) return Math.round((100 / (price + 100)) * 1000) / 10;
+  return Math.round((Math.abs(price) / (Math.abs(price) + 100)) * 1000) / 10;
+}
+
+function parseAmerican(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : parseInt(String(v).replace(/[^\d+-]/g, ''), 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+interface SgoEvent {
+  eventID: string;
+  leagueID: string;
+  status: { started: boolean; completed: boolean; live: boolean; startsAt?: string };
+  teams: { home: { names: { long: string; short: string } }; away: { names: { long: string; short: string } } };
+  odds?: Record<string, any>;
+}
+
+async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): Promise<{ events: SgoEvent[]; next: string | null; notice: string | null; rateLimited: boolean }> {
+  const k = key();
+  if (!k) return { events: [], next: null, notice: null, rateLimited: false };
+  const params = new URLSearchParams({ leagueID, apiKey: k });
+  if (oddsOnly) params.set('oddsAvailable', 'true');
+  if (cursor) params.set('cursor', cursor);
+  const url = `${BASE}/events?${params.toString()}`;
+  const res = await fetch(url, {
+    headers: { 'x-api-key': k, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (res.status === 429) {
+    lastNotice = 'Rate limit exceeded (free-tier quota)';
+    return { events: [], next: null, notice: lastNotice, rateLimited: true };
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body) {
+    lastNotice = body?.error ?? `HTTP ${res.status}`;
+    return { events: [], next: null, notice: lastNotice, rateLimited: false };
+  }
+  lastNotice = body.notice ?? null;
+  return {
+    events: (body.data ?? []) as SgoEvent[],
+    next: body.nextCursor ?? null,
+    notice: lastNotice,
+    rateLimited: false,
+  };
+}
+
+// Pull pages until we have a candidate match or run out (max 5 pages).
+async function collectEvents(leagueID: string, needTeams: boolean): Promise<{ events: SgoEvent[]; rateLimited: boolean }> {
+  const all: SgoEvent[] = [];
+  let cursor: string | undefined;
+  let rateLimited = false;
+  for (let i = 0; i < 5; i++) {
+    const { events, next, rateLimited: rl } = await fetchEvents(leagueID, needTeams, cursor);
+    if (rl) { rateLimited = true; break; }
+    all.push(...events);
+    if (needTeams && all.length > 0) break;
+    if (!next) break;
+    cursor = next;
+  }
+  return { events: all, rateLimited };
+}
+
+function teamNames(ev: SgoEvent): { home: string; away: string } {
+  return {
+    home: ev.teams?.home?.names?.long ?? 'Home',
+    away: ev.teams?.away?.names?.long ?? 'Away',
+  };
+}
+
+// Map an SGO event's odds object into the {h2h, spreads, totals} shape the tool uses.
+function mapMarkets(odds: Record<string, any> | undefined): Record<string, any> {
+  const out: Record<string, any> = { h2h: [], spreads: [], totals: [] };
+  if (!odds) return out;
+  for (const [oddID, o] of Object.entries(odds)) {
+    if (!o) continue;
+    const parts = oddID.split('-');
+    const betType = parts[3]; // ml | sp | ou
+    const side = parts[4]; // home | away | over | under
+    const bookOdds = parseAmerican(o.bookOdds ?? o.fairOdds);
+    const overUnder = o.bookOverUnder ?? o.fairOverUnder;
+    const rec: any = {
+      oddID,
+      bookOdds,
+      fairOdds: parseAmerican(o.fairOdds),
+      overUnder: overUnder != null ? Number(overUnder) : null,
+      impliedProbPct: bookOdds != null ? americanImplied(bookOdds) : null,
+      byBookmaker: o.byBookmaker ?? {},
+      naTeams: o.naTeams ?? undefined,
+    };
+    if (betType === 'ml') {
+      rec.name = side === 'home' ? 'Home' : 'Away';
+      rec.teamSide = side;
+      out.h2h.push(rec);
+    } else if (betType === 'sp') {
+      rec.name = side === 'home' ? 'Home' : 'Away';
+      rec.teamSide = side;
+      out.spreads.push(rec);
+    } else if (betType === 'ou') {
+      rec.name = side === 'over' ? 'Over' : 'Under';
+      out.totals.push(rec);
+    }
+  }
+  // strip empties
+  if (out.h2h.length === 0) delete out.h2h;
+  if (out.spreads.length === 0) delete out.spreads;
+  if (out.totals.length === 0) delete out.totals;
+  return out;
+}
+
+function matchEvent(events: SgoEvent[], na?: string | null, nb?: string | null): SgoEvent | undefined {
+  if (!events.length) return undefined;
+  if (!na && !nb) return events.find((e) => !e.status?.completed) ?? events[0];
+  const matches = events.filter((e) => {
+    const { home, away } = teamNames(e);
+    const h = normalizeName(home);
+    const a = normalizeName(away);
+    if (na && nb) return (h === na && a === nb) || (h === nb && a === na);
+    return na ? h === na || a === na : true;
+  });
+  return matches.find((e) => !e.status?.completed) ?? matches[0];
+}
+
+export interface SgoResult {
+  available: boolean;
+  reason?: string;
+  source: string;
+  sport?: string;
+  event?: { id: string; home: string; away: string; commenceTime: string };
+  markets?: Record<string, any>;
+  props?: { available: boolean; reason?: string; markets?: any[] };
+  notice?: string | null;
+}
+
+/** Featured odds for a sport (first available event). */
+export async function getSgoFeaturedOdds(sport: string): Promise<SgoResult> {
+  const k = key();
+  if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE };
+  const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
+  if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE };
+  try {
+    const { events, rateLimited } = await collectEvents(league, false);
+    if (!events.length) return { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no ${league} events with odds right now`, source: SOURCE, notice: lastNotice };
+    const ev = events[0];
+    const { home, away } = teamNames(ev);
+    return {
+      available: true,
+      source: SOURCE,
+      sport: league,
+      event: { id: ev.eventID, home, away, commenceTime: ev.status?.startsAt ?? '' },
+      markets: mapMarkets(ev.odds),
+      notice: lastNotice,
+    };
+  } catch (e) {
+    return { available: false, reason: `SportsGameOdds fetch failed: ${(e as Error).message}`, source: SOURCE };
+  }
+}
+
+/** Odds for a specific matchup. */
+export async function getSgoGameOdds(
+  teamA?: string,
+  teamB?: string,
+  sport?: string
+): Promise<SgoResult> {
+  const k = key();
+  if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE };
+  const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
+  if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE };
+  try {
+    const na = teamA ? normalizeName(teamA) : null;
+    const nb = teamB ? normalizeName(teamB) : null;
+    const { events, rateLimited } = await collectEvents(league, true);
+    const ev = matchEvent(events, na, nb);
+    if (!ev) {
+      return { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no SportsGameOdds event matching ${teamA ?? '?'} vs ${teamB ?? '?'}`, source: SOURCE, notice: lastNotice };
+    }
+    const { home, away } = teamNames(ev);
+    const props = extractProps(ev.odds);
+    return {
+      available: true,
+      source: SOURCE,
+      sport: league,
+      event: { id: ev.eventID, home, away, commenceTime: ev.status?.startsAt ?? '' },
+      markets: mapMarkets(ev.odds),
+      props,
+      notice: lastNotice,
+    };
+  } catch (e) {
+    return { available: false, reason: `SportsGameOdds fetch failed: ${(e as Error).message}`, source: SOURCE };
+  }
+}
+
+/** Player props = any oddID whose statEntityID is a player (not home/away/all). */
+function extractProps(odds: Record<string, any> | undefined): { available: boolean; reason?: string; markets?: any[] } {
+  if (!odds) return { available: false, reason: 'no odds object' };
+  const markets: any[] = [];
+  for (const [oddID, o] of Object.entries(odds)) {
+    const parts = oddID.split('-');
+    const entity = parts[1];
+    if (entity !== 'home' && entity !== 'away' && entity !== 'all') {
+      markets.push({
+        oddID,
+        name: parts[0],
+        player: entity,
+        side: parts[4],
+        bookOdds: parseAmerican(o.bookOdds),
+        overUnder: o.bookOverUnder != null ? Number(o.bookOverUnder) : null,
+        byBookmaker: o.byBookmaker ?? {},
+      });
+    }
+  }
+  return markets.length
+    ? { available: true, reason: `${markets.length} prop markets`, markets }
+    : { available: false, reason: 'no player props in this event' };
+}

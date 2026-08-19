@@ -7,6 +7,7 @@ import * as mlb from '../providers/mlbStatsApi.js';
 import * as savant from '../providers/savant.js';
 import * as espn from '../providers/espn.js';
 import * as odds from '../providers/oddsApi.js';
+import * as sgo from '../providers/sportsGameOdds.js';
 import * as weather from '../providers/weather.js';
 import * as news from '../providers/news.js';
 import * as espnOdds from '../providers/espnOdds.js';
@@ -447,6 +448,25 @@ const gameOdds = async (args: any): Promise<ToolOutcome> => {
       event: r.event ? `${r.event.away} @ ${r.event.home}` : null,
       h2h: payload.markets?.h2h ?? null,
       propsAvailable: r.props?.available ?? false,
+    });
+  }
+
+  // Secondary: SportsGameOdds (multi-book, keyless-style scoring/results bundled).
+  const s = await sgo.getSgoGameOdds(teamA, teamB, sport);
+  if (s.available) {
+    const payload = {
+      available: true,
+      source: 'api.sportsgameodds.com',
+      sport: s.sport,
+      event: s.event,
+      markets: s.markets,
+      props: s.props,
+      notice: s.notice ?? undefined,
+    };
+    return ok(`Odds for ${s.event?.away} @ ${s.event?.home} (SportsGameOdds)`, payload, {
+      event: s.event ? `${s.event.away} @ ${s.event.home}` : null,
+      h2h: payload.markets?.h2h ?? null,
+      propsAvailable: s.props?.available ?? false,
     });
   }
 
