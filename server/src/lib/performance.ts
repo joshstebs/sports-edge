@@ -13,7 +13,7 @@ import {
   type Prediction,
   type PredictionLeg,
 } from './predictionStore.js';
-import { getSportConfig } from '../providers/sportsConfig.js';
+import { buildMarketInsights, type MarketInsights } from './marketInsights.js';
 
 type Outcome = 'won' | 'lost' | 'push';
 
@@ -106,6 +106,7 @@ export interface PerformanceSummary {
     selection: string;
   }>;
   learning: LearningContext | null;
+  insights: MarketInsights;
 }
 
 function aggregate(rows: Row[]) {
@@ -178,6 +179,7 @@ export async function computePerformance(): Promise<PerformanceSummary> {
   const all = await getAllPredictions();
   const learning = await loadLearning();
   const rows = rowsForPredictions(all);
+  const insights = buildMarketInsights(all, now);
 
   const overall = aggregate(rows);
 
@@ -244,5 +246,6 @@ export async function computePerformance(): Promise<PerformanceSummary> {
     models: byModel,
     recent,
     learning,
+    insights,
   };
 }

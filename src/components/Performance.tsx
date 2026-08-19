@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchPerformance, type PerformanceSummary, type SportInfo } from '../lib/api';
+import { formatAmerican } from '../lib/odds';
 import type { Sport } from '../types';
 
 interface Props {
@@ -9,6 +10,11 @@ interface Props {
 
 function pct(value: number | null): string {
   return value == null ? '—' : `${value.toFixed(1)}%`;
+}
+function signedPct(value: number | null, places = 1): string {
+  if (value == null) return '—';
+  const prefix = value > 0 ? '+' : '';
+  return `${prefix}${value.toFixed(places)}%`;
 }
 function num(value: number | null): string {
   return value == null ? '—' : value.toFixed(2);
@@ -44,6 +50,16 @@ function BarRow({ label, value, max, tone }: { label: string; value: number | nu
       <span className="w-14 shrink-0 text-right font-mono text-[12px] text-head">{value == null ? '—' : value.toFixed(1)}%</span>
     </div>
   );
+}
+
+function CalibrationBadge({ status }: { status: PerformanceSummary['insights']['calibration']['status'] }) {
+  const label = status === 'well-calibrated' ? 'Well calibrated'
+    : status === 'overconfident' ? 'Overconfident'
+      : status === 'underconfident' ? 'Underconfident' : 'Building sample';
+  const tone = status === 'well-calibrated' ? 'bg-edge/10 text-edge'
+    : status === 'insufficient-data' ? 'bg-panel2 text-frost2'
+      : 'bg-warn/10 text-warn';
+  return <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${tone}`}>{label}</span>;
 }
 
 export default function PerformancePage({ onBack, onSelectSport }: Props) {
@@ -98,6 +114,71 @@ export default function PerformancePage({ onBack, onSelectSport }: Props) {
             <Stat label="Win Rate" value={pct(data.performance.overall.winRate)} sub={`Brier ${num(data.performance.overall.brierScore)}`} />
             <Stat label="ROI" value={pct(data.performance.overall.roiPct)} sub={`${num(data.performance.overall.units)} units`} />
             <Stat label="Priced Legs" value={String(data.performance.overall.priced)} sub="with verified odds" />
+          </div>
+
+          <Section title="Today's Top Edges">
+            <p className="mb-3 text-[11px] leading-relaxed text-muted">
+              Pending A/B recommendations for today's slate. Edge is shown only when SportsEdge stored a real sportsbook price; unpriced picks remain confidence-only.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-[12px]">
+                <thead className="text-[10px] uppercase tracking-wide text-frost2">
+                  <tr>
+                    <th className="py-1.5 pr-3 font-medium">Pick</th>
+                    <th className="py-1.5 pr-3 font-medium">Conf.</th>
+                    <th className="py-1.5 pr-3 font-medium">Price</th>
+                    <th className="py-1.5 pr-3 font-medium">Implied</th>
+                    <th className="py-1.5 font-medium">Model edge</th>
+                  </tr>
+                </thead>
+                <tbody className="text-frost">
+                  {data.performance.insights.topEdges.length === 0 && (
+                    <tr><td colSpan={5} className="py-4 text-muted">No qualifying pending edges are stored for today's slate yet. Ask SportsEdge for today's best bets to populate this list.</td></tr>
+                  )}
+                  {data.performance.insights.topEdges.map((pick) => (
+                    <tr key={`${pick.predictionId}-${pick.selection}`} className="border-t border-line/50 align-top">
+                      <td className="py-2.5 pr-3">
+                        <p className="max-w-[360px] font-semibold text-head">{pick.selection}</p>
+                        <p className="mt-0.5 max-w-[360px] truncate text-[10px] text-muted" title={pick.matchup}>{pick.sport} · {pick.matchup} · {pick.model}</p>
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono font-semibold text-edge">{pick.confidence.toFixed(1)}%</td>
+                      <td className="py-2.5 pr-3 font-mono">{pick.odds == null ? 'N/A' : formatAmerican(pick.odds)}</td>
+                      <td className="py-2.5 pr-3 font-mono text-frost2">{pct(pick.impliedProbability)}</td>
+                      <td className={`py-2.5 font-mono font-semibold ${pick.edgePct == null ? 'text-frost2' : 'text-edge'}`}>{pick.edgePct == null ? 'Unpriced' : signedPct(pick.edgePct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Section title="Calibration Check">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-[11px] text-muted">Does confidence match actual hit rate?</p>
+                <CalibrationBadge status={data.performance.insights.calibration.status} />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Stat label="Avg confidence" value={pct(data.performance.insights.calibration.averageConfidence)} />
+                <Stat label="Actual hit rate" value={pct(data.performance.insights.calibration.hitRate)} />
+                <Stat label="Calibration gap" value={signedPct(data.performance.insights.calibration.gapPct)} />
+              </div>
+              <p className="mt-3 text-[10px] leading-relaxed text-muted">
+                {data.performance.insights.calibration.graded < 20
+                  ? `${data.performance.insights.calibration.graded} graded confidence-bearing legs. SportsEdge waits for at least 20 before labeling over/under-confidence.`
+                  : 'Gap = actual hit rate minus average model confidence. A negative gap indicates overconfidence; positive indicates underconfidence.'}
+              </p>
+            </Section>
+
+            <Section title="Closing Line Value">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+                <Stat label="Coverage" value={pct(data.performance.insights.clv.coveragePct)} sub={`${data.performance.insights.clv.tracked}/${data.performance.insights.clv.eligiblePriced} priced`} />
+                <Stat label="Avg CLV" value={signedPct(data.performance.insights.clv.averagePriceEdgePct, 2)} sub="price edge" />
+                <Stat label="Implied move" value={signedPct(data.performance.insights.clv.averageImpliedMovePct, 2)} sub="close − entry" />
+                <Stat label="Positive closes" value={String(data.performance.insights.clv.positiveClv)} sub={`${data.performance.insights.clv.negativeClv} negative`} />
+              </div>
+              <p className="mt-3 text-[10px] leading-relaxed text-muted">{data.performance.insights.clv.note}</p>
+            </Section>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -239,7 +320,7 @@ export default function PerformancePage({ onBack, onSelectSport }: Props) {
           </Section>
 
           <p className="text-[11px] text-muted">
-            Calibration integrity: model probabilities are never overwritten by the language model. Adjustments use shrinkage on samples ≥20 and require historical validation (see adaptive rules in the evaluation log).
+            Calibration integrity: model probabilities are never overwritten by the language model. Adjustments use shrinkage on samples ≥20 and require historical validation. CLV is shown only when a verified closing-price snapshot exists.
           </p>
         </div>
       )}

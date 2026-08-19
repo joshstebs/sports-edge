@@ -6,6 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { listPredictions, StorageNotConfiguredError, storageStatus } from '../lib/predictionStore.js';
 import { runPredictionEvaluation } from '../lib/evaluator.js';
 import { computePerformance } from '../lib/performance.js';
+import { recordVerifiedClosingOdds } from '../lib/closingOdds.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 
 export const predictionsRouter = Router();
@@ -51,6 +52,48 @@ evaluationRouter.get('/evaluate', async (req, res) => {
   } catch (error) {
     const unavailable = error instanceof StorageNotConfiguredError;
     res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'EVALUATION_ERROR', error: (error as Error).message });
+  }
+});
+
+// Controlled write path for a verified closing-price snapshot. This is
+// intentionally protected by the same CRON_SECRET as evaluation so browser
+// clients cannot invent closing lines. Hermes/a scheduled odds collector can
+// submit a sourced price just before market close; the dashboard calculates
+// CLV automatically from the stored recommendation price vs this close.
+evaluationRouter.post('/closing-odds', async (req, res) => {
+  if (!process.env.CRON_SECRET) {
+    res.status(503).json({ ok: false, code: 'CRON_NOT_CONFIGURED', error: 'CRON_SECRET is required' });
+    return;
+  }
+  if (!cronAuthorized(req.header('authorization'))) {
+    res.status(401).json({ ok: false, code: 'UNAUTHORIZED', error: 'Invalid cron authorization' });
+    return;
+  }
+  try {
+    const result = await recordVerifiedClosingOdds({
+      predictionId: String(req.body?.predictionId ?? ''),
+      legIndex: Number(req.body?.legIndex),
+      odds: Number(req.body?.odds),
+      source: String(req.body?.source ?? ''),
+      capturedAt: typeof req.body?.capturedAt === 'string' ? req.body.capturedAt : undefined,
+    });
+    res.json({
+      ok: true,
+      predictionId: result.prediction.prediction_id,
+      legIndex: result.legIndex,
+      closingOdds: result.closingOdds,
+      source: result.source,
+      capturedAt: result.capturedAt,
+    });
+  } catch (error) {
+    const unavailable = error instanceof StorageNotConfiguredError;
+    const message = (error as Error).message;
+    const validation = /required|must be|out of range|not found|invalid/i.test(message);
+    res.status(unavailable ? 503 : validation ? 400 : 500).json({
+      ok: false,
+      code: unavailable ? error.code : validation ? 'INVALID_CLOSING_ODDS' : 'CLOSING_ODDS_ERROR',
+      error: message,
+    });
   }
 });
 

@@ -102,6 +102,41 @@ export interface PerformanceBand {
   priced: number;
 }
 
+export interface TopEdgePick {
+  predictionId: string;
+  sport: string;
+  matchup: string;
+  selection: string;
+  market: string;
+  eventDate: string | null;
+  recommendedAt: string;
+  confidence: number;
+  odds: number | null;
+  impliedProbability: number | null;
+  edgePct: number | null;
+  model: string;
+  source: string | null;
+}
+
+export interface CalibrationDiagnostic {
+  graded: number;
+  averageConfidence: number | null;
+  hitRate: number | null;
+  gapPct: number | null;
+  status: 'insufficient-data' | 'well-calibrated' | 'overconfident' | 'underconfident';
+}
+
+export interface ClvSummary {
+  eligiblePriced: number;
+  tracked: number;
+  coveragePct: number | null;
+  averagePriceEdgePct: number | null;
+  averageImpliedMovePct: number | null;
+  positiveClv: number;
+  negativeClv: number;
+  note: string;
+}
+
 export interface PerformanceSummary {
   storage: { backend: string; durable: boolean };
   generatedAt: string;
@@ -121,6 +156,11 @@ export interface PerformanceSummary {
     gradedAt: string | null; outcome: string; selection: string;
   }>;
   learning: unknown | null;
+  insights: {
+    topEdges: TopEdgePick[];
+    calibration: CalibrationDiagnostic;
+    clv: ClvSummary;
+  };
 }
 
 export interface SportInfo {
