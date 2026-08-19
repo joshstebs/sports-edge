@@ -48,15 +48,16 @@ test('missing player confidence fails closed', () => {
   assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['Unknown']);
 });
 
-test('team and game markets require attributable quality evidence', () => {
+test('team and game markets require both confidence and attributable quality evidence', () => {
   const policy = parseParlayQualityPolicy('Give me the best 3-leg parlay');
   const result = filterParlayQuality([
     { entity_type: 'team', selection: 'Toronto ML', confidence: 63 },
-    { entity_type: 'game', selection: 'Over 8.5', confidence: 61, quality_source: 'game-model-v1' },
+    { entity_type: 'game', selection: 'Over 8.5', quality_source: 'game-model-v1' },
+    { entity_type: 'game', selection: 'Under 7.5', confidence: 61, quality_source: 'game-model-v1' },
     { entity_type: 'team', selection: 'Boston ML', confidence: 60, model_source: 'team-model-v1' },
   ], policy);
-  assert.deepEqual(result.legs.map((leg) => leg.selection), ['Over 8.5', 'Boston ML']);
-  assert.deepEqual(result.blocked.map((leg) => leg.selection), ['Toronto ML']);
+  assert.deepEqual(result.legs.map((leg) => leg.selection), ['Under 7.5', 'Boston ML']);
+  assert.deepEqual(result.blocked.map((leg) => leg.selection), ['Toronto ML', 'Over 8.5']);
 });
 
 test('normal parlays reject explicitly negative correlation', () => {
