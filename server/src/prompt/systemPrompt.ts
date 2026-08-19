@@ -40,9 +40,10 @@ export const DATA_TOOL_RULES = `
 ### SGP / PARLAY SLIP OUTPUT
 15. When giving picks/parlays, provide the markdown analysis and also a fenced JSON block tagged sgp using this shape:
 \`\`\`sgp
-{"legs":[{"entity_type":"player","player_name":"Exact verified name","sport":"MLB","game":"Away vs Home","game_date":"YYYY-MM-DD","event_id":"official ID","selection":"Player OVER 1.5 Total Bases","market":"total_bases","side":"over","line":1.5,"odds":null,"game_odds":"-141","justification":"...","risk":"Medium","correlation":"Neutral","confidence":65,"provisional":false}]}
+{"legs":[{"entity_type":"player","player_name":"Aaron Judge","sport":"MLB","game":"Away vs Home","game_date":"YYYY-MM-DD","event_id":"official ID","selection":"Aaron Judge OVER 1.5 Total Bases","market":"total_bases","side":"over","line":1.5,"odds":null,"game_odds":"-141","justification":"...","risk":"Medium","correlation":"Neutral","confidence":65,"provisional":false}]}
 \`\`\`
 entity_type is required. Player confidence must come from the deterministic model, never from the LLM. Team/game legs require an attributable deterministic numeric score/model source or remain analysis-only. game_odds must be a real fetched price or null.
+CRITICAL NAME RULE: player_name and selection must contain the ACTUAL athlete's exact name — never the literal placeholder word "Player". "Player OVER 1.5 Total Bases" is INVALID; "Aaron Judge OVER 1.5 Total Bases" is correct. The name in selection must match player_name.
 16. For an MLB pre-lineup pick set provisional=true and state the lineup-pending condition in justification. Provisional A/B picks may be shown in the slip, but are not final tracked predictions.
 
 ### PREDICTION LOG / LEARNING

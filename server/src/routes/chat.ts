@@ -382,7 +382,24 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       // so both the chat panel and the slip render cleanly.
       const tidyLeg = (leg: any) => {
         if (!leg || typeof leg.selection !== 'string') return leg;
+        // Placeholder hygiene (2026-08-19): the model sometimes emits the
+        // literal word "Player" in selection/player_name instead of the real
+        // athlete's name (copied from an old template). Substitute the real
+        // name when we have one; drop the placeholder otherwise.
         const sel = leg.selection;
+        const realName = String(leg?.player_name ?? '').trim();
+        const realNameIsPlaceholder = /^Player\b/i.test(realName);
+        const hasPlaceholderName = /^Player\b/i.test(sel) || realNameIsPlaceholder;
+        if (hasPlaceholderName && realName && !realNameIsPlaceholder) {
+          leg.selection = sel.replace(/^Player\s+/i, `${realName} `).trim();
+        } else if (/^Player\s+/i.test(sel) && (!realName || realNameIsPlaceholder)) {
+          leg.selection = sel.replace(/^Player\s+/i, '');
+        }
+        if (realNameIsPlaceholder && !/^Player\b/i.test(leg.selection)) {
+          const parsed = playerFromSelection(leg.selection);
+          if (parsed) leg.player_name = parsed;
+          else delete leg.player_name;
+        }
         if (sel.length > 90 && !leg.justification) {
           const m = sel.match(/^(.{0,80}?[.!?:])\s+(.*)$/s);
           if (m) {
