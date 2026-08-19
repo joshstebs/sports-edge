@@ -19,6 +19,7 @@ export type LegOutcome = 'won' | 'lost' | 'push' | 'ungraded';
 export interface PredictionLeg {
   leg_name: string;
   target_line: string;
+  player_name?: string | null;
   model_probability?: string | number | null;
   implied_odds?: string | number | null;
   key_metric_used?: string | null;
@@ -220,7 +221,7 @@ class UnconfiguredProductionStorage implements StorageAdapter {
   // Chat can still answer when learning is unavailable, but all stateful APIs
   // and writes fail closed instead of pretending /tmp is durable.
   loadLearning(): Promise<LearningContext | null> { return Promise.resolve(null); }
-  saveLearning(): Promise<void> { return Promise.reject(this.fail()); }
+  saveLearning(context: LearningContext): Promise<void> { return Promise.reject(this.fail()); }
 }
 
 const storage: StorageAdapter = redisConfigured()
@@ -259,6 +260,7 @@ export function normalizePrediction(input: any): Prediction {
     .filter((leg: any) => leg && typeof leg.leg_name === 'string' && leg.leg_name.trim())
     .map((leg: any) => ({
       leg_name: leg.leg_name.trim().slice(0, 300), target_line: String(leg.target_line ?? '').trim().slice(0, 40),
+      player_name: leg.player_name != null ? String(leg.player_name).trim().slice(0, 160) : null,
       model_probability: leg.model_probability ?? null, implied_odds: leg.implied_odds ?? null,
       key_metric_used: leg.key_metric_used != null ? String(leg.key_metric_used).slice(0, 100) : null,
       market: leg.market != null ? String(leg.market).slice(0, 80) : null, player_id: leg.player_id ?? null,
@@ -366,6 +368,16 @@ function evidenceKey(sport: string, player: string, market: string, side: string
   return `${sport}|${player.toLowerCase().replace(/\s+/g, ' ').trim()}|${market.toLowerCase()}|${side}|${line ?? ''}`;
 }
 
+export function playerNameForEvidence(leg: Pick<PredictionLeg, 'player_name' | 'leg_name'>): string {
+  const explicit = String(leg.player_name ?? '').trim();
+  if (explicit) return explicit;
+  const selection = String(leg.leg_name ?? '').trim();
+  const directional = selection.match(/^(.+?)\s+(?:over|under)\b/i);
+  if (directional?.[1]) return directional[1].trim();
+  const threshold = selection.match(/^(.+?)\s+\d+(?:\.\d+)?\+?\s+/i);
+  return (threshold?.[1] ?? selection).trim();
+}
+
 function evidenceAmericanToDecimal(american: number | null): number | null {
   if (american == null || !Number.isFinite(american)) return null;
   return american > 0 ? american / 100 + 1 : 100 / Math.abs(american) + 1;
@@ -380,10 +392,10 @@ export async function loadModelEvidence(): Promise<ModelEvidence[]> {
       const sport = String(p.sport ?? '').toLowerCase();
       for (const leg of Array.isArray(p.legs) ? p.legs : []) {
         if (!leg || (leg.outcome !== 'won' && leg.outcome !== 'lost')) continue;
-        const player = String(leg.leg_name ?? '').trim();
+        const player = playerNameForEvidence(leg);
         if (!player) continue;
         const market = String(leg.market ?? '').trim().toLowerCase() || 'unknown';
-        const side = leg.side ?? (/\bunder\b/i.test(player) ? 'under' : 'over');
+        const side = leg.side ?? (/\bunder\b/i.test(leg.leg_name) ? 'under' : 'over');
         const line = leg.line != null
           ? Number(leg.line)
           : Number(String(leg.target_line ?? '').replace(/[^\d.]/g, ''));
