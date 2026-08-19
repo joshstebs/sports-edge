@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizePrediction, playerNameForEvidence } from '../src/lib/predictionStore.js';
+import {
+  learnedEvidenceGrade,
+  normalizePrediction,
+  playerNameForEvidence,
+} from '../src/lib/predictionStore.js';
 
 test('prediction normalization preserves explicit player_name for learning', () => {
   const prediction = normalizePrediction({
@@ -38,4 +42,13 @@ test('legacy threshold-style selections infer player name', () => {
     playerNameForEvidence({ leg_name: 'Auston Matthews 3.5+ Shots on Goal' }),
     'Auston Matthews',
   );
+});
+
+test('learned evidence grades use the same thresholds as the live model', () => {
+  assert.equal(learnedEvidenceGrade(0.65), 'A');
+  assert.equal(learnedEvidenceGrade(0.64), 'B');
+  assert.equal(learnedEvidenceGrade(0.58), 'B');
+  assert.equal(learnedEvidenceGrade(0.57), 'C');
+  assert.equal(learnedEvidenceGrade(0.50), 'C');
+  assert.equal(learnedEvidenceGrade(0.49), 'D');
 });
