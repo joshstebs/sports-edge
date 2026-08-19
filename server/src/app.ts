@@ -19,6 +19,7 @@ import { billingRouter, customerIsEntitled } from './routes/billing.js';
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
+import { statsRouter } from './routes/stats.js';
 
 const app = express();
 const authConfig = loadAuthConfig();
@@ -84,10 +85,11 @@ app.use('/api/billing', billingRouter);
 // by requireChatAccess for entitled customers) and 401 without it.
 app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
+app.use('/api/stats', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
-// Chat/ledger access: a valid session (owner/configured users) passes, or an
+// Chat/ledger/stats access: a valid session (owner/configured users) passes, or an
 // entitled Stripe customer via the x-se-customer-id header. Everyone else gets
 // a 402 with the trial CTA.
 export function requireChatAccess(req: Request, res: Response, next: NextFunction): void {
@@ -119,10 +121,11 @@ export function requireChatAccess(req: Request, res: Response, next: NextFunctio
 
 app.use('/api', requireChatAccess, chatRouter);
 app.use('/api', requireChatAccess, ledgerRouter);
+app.use('/api', requireChatAccess, statsRouter);
 app.use('/api', requireAuth, predictionsRouter);
 
 app.get('/', (_req, res) => {
-  res.json({ name: 'sports-edge-server', version: '0.2.0', endpoints: ['/api/health', '/api/sources', '/api/auth/session', '/api/chat', '/api/ledger', '/api/predictions'] });
+  res.json({ name: 'sports-edge-server', version: '0.2.0', endpoints: ['/api/health', '/api/sources', '/api/auth/session', '/api/chat', '/api/ledger', '/api/stats/player', '/api/stats/injuries', '/api/predictions'] });
 });
 
 // Never crash on provider/LLM failures — log the full error server-side,
