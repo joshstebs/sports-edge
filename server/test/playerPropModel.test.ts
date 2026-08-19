@@ -30,6 +30,20 @@ test('half-line model is deterministic, shrunk and computes edge only from suppl
   assert.equal(result.grade, 'C');
 });
 
+test('58-percent-plus mature estimates receive B grade consistently', () => {
+  const values = [30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 10, 9, 8, 7, 6, 5, 4, 3];
+  const result = buildPlayerPropModel({
+    sport: 'nba', market: 'points', side: 'over', line: 18.5,
+    observations: values.map((value) => ({ value })),
+    source: 'official test fixture',
+  });
+  assert.equal(result.available, true);
+  assert.equal(result.sampleSize, 20);
+  assert.equal(result.wins, 12);
+  assert.equal(result.probability, 0.583); // (12 + 2) / (20 + 4)
+  assert.equal(result.grade, 'B');
+});
+
 test('integer lines model pushes separately', () => {
   const result = buildPlayerPropModel({
     sport: 'nhl', market: 'shots_on_goal', side: 'over', line: 3,

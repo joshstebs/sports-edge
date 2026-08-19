@@ -67,10 +67,12 @@ function americanImplied(odds: number | null | undefined): number | null {
 }
 
 function grade(probability: number, sampleSize: number): 'A' | 'B' | 'C' | 'D' {
-  // Sample gates prevent five-game streaks from receiving an elite label.
+  // Keep the displayed/tool grade aligned with the same thresholds used by
+  // the prompt, parlay gate, and frontend. Sample gates still prevent a short
+  // hot streak from receiving an A/B recommendation label.
   if (sampleSize >= 15 && probability >= 0.65) return 'A';
-  if (sampleSize >= 10 && probability >= 0.6) return 'B';
-  if (probability >= 0.53) return 'C';
+  if (sampleSize >= 10 && probability >= 0.58) return 'B';
+  if (probability >= 0.5) return 'C';
   return 'D';
 }
 

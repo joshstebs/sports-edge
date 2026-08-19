@@ -13,6 +13,7 @@ import {
 } from '../providers/playerAvailability.js';
 import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
+import { parseParlayQualityPolicy, filterParlayQuality, requestedParlayShortfall } from '../lib/parlayQuality.js';
 
 export const chatRouter = Router();
 
@@ -357,7 +358,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         });
       }
     }
-    const filteredLogs: any[] = [];
+    let filteredLogs: any[] = [];
     const availabilityBlocked = new Set<string>();
     const modelBlocked = new Set<string>();
     for (const log of rawLogs) {
@@ -473,6 +474,41 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const lastUserText = [...rawMessages].reverse().find((message) => message?.role !== 'assistant' && typeof message?.content === 'string')?.content ?? '';
     const asksForRecommendation = /\b(?:give|build|make|create|recommend|suggest|find|show|add|save)\b[\s\S]{0,60}\b(?:bet|bets|pick|picks|prop|props|parlay|parlays|sgp|wager|wagers)\b/i.test(lastUserText) ||
       /\b(?:best|top)\s+(?:bet|bets|pick|picks|prop|props|parlay|parlays|wager|wagers)\b/i.test(lastUserText);
+
+    // --- Server-side parlay quality enforcement ---
+    // Apply the quality floor to both displayed picks (SGP blocks) and stored
+    // prediction learning history so D-grade legs and sub-threshold picks are
+    // never recommended or learned from. Normal requests require B (>=58%),
+    // aggressive requests may include C (>=50%) but never D (<50%).
+    const parlayPolicy = parseParlayQualityPolicy(lastUserText);
+    const qualityBlocked = new Set<string>();
+    const applyQualityFilter = (legs: any[]): any[] => {
+      const result = filterParlayQuality(legs, parlayPolicy);
+      for (const blocked of result.blocked) {
+        qualityBlocked.add(legFingerprint(blocked, ''));
+      }
+      return result.legs;
+    };
+
+    // Filter accepted SGP blocks (displayed picks)
+    acceptedSgpBlocks.forEach((block) => {
+      if (Array.isArray(block?.legs)) {
+        block.legs = applyQualityFilter(block.legs);
+      }
+    });
+    const hadQualitySgpLegs = acceptedSgpBlocks.some((b) => Array.isArray(b?.legs) && b.legs.length > 0);
+    if (!hadQualitySgpLegs) acceptedSgpBlocks.length = 0;
+
+    // Apply the identical quality filter to prediction learning history
+    const preQualityLogCount = filteredLogs.length;
+    for (const log of filteredLogs) {
+      if (Array.isArray(log?.legs)) {
+        log.legs = applyQualityFilter(log.legs);
+      }
+    }
+    filteredLogs = filteredLogs.filter((log) => Array.isArray(log?.legs) && log.legs.length > 0);
+    const qualityRemovedLogs = preQualityLogCount - filteredLogs.length;
+
     const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
     if (gateMode === 'strict' && !hadStructuredCandidates && (looksLikeUnstructuredProp || asksForRecommendation)) {
       modelBlocked.add('unstructured-player-prop');
@@ -480,10 +516,12 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
 
     const blockedLegs = availabilityBlocked.size;
     const modelBlockedLegs = modelBlocked.size;
-    if (blockedLegs || modelBlockedLegs) {
+    const qualityBlockedLegs = qualityBlocked.size;
+    if (blockedLegs || modelBlockedLegs || qualityBlockedLegs) {
       const notes = [
         blockedLegs ? `${blockedLegs} leg${blockedLegs === 1 ? '' : 's'} failed current roster, injury, or game-day verification` : '',
         modelBlockedLegs ? `${modelBlockedLegs} leg${modelBlockedLegs === 1 ? '' : 's'} lacked an exact non-D evidence model with verified positive edge` : '',
+        qualityBlockedLegs ? `${qualityBlockedLegs} leg${qualityBlockedLegs === 1 ? '' : 's'} did not meet the parlay quality threshold` : '',
       ].filter(Boolean).join('; ');
       sse(res, 'delta', {
         text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. ${acceptedSgpBlocks.length ? 'Only the verified structured picks are shown below.' : 'No bet was added to the slip.'}`,
@@ -492,8 +530,13 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       // Never display model-authored recommendation prose. It can mention
       // extra picks that were not represented in the machine-readable blocks
       // and therefore never passed availability/model verification.
+      const totalLegs = acceptedSgpBlocks.reduce((sum, block) => sum + (Array.isArray(block?.legs) ? block.legs.length : 0), 0);
+      const requestedLegs = requestedParlayShortfall(parlayPolicy, totalLegs);
+      const shortfallNote = requestedLegs > 0
+        ? ` Only ${totalLegs} of ${parlayPolicy.requestedMin ?? totalLegs} requested legs meet the quality threshold; I won't pad the parlay with weaker bets.`
+        : '';
       sse(res, 'delta', {
-        text: `**Verified recommendation:** ${acceptedSgpBlocks.reduce((sum, block) => sum + (Array.isArray(block?.legs) ? block.legs.length : 0), 0)} structured ${acceptedSgpBlocks.length === 1 && acceptedSgpBlocks[0]?.legs?.length === 1 ? 'leg passed' : 'legs passed'} current availability and evidence checks. Details are shown below.`,
+        text: `**Verified recommendation:** ${totalLegs} structured ${acceptedSgpBlocks.length === 1 && totalLegs === 1 ? 'leg passed' : 'legs passed'} current availability, evidence, and quality checks. Details are shown below.${shortfallNote}`,
       });
     } else {
       sse(res, 'delta', { text: finalText });
@@ -516,6 +559,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       stored, failed,
       blocked: blockedLegs,
       modelBlocked: modelBlockedLegs,
+      qualityBlocked: qualityBlockedLegs,
+      qualityRemovedLogs,
       ...(failed ? { error: 'Prediction history could not be saved; durable storage may not be configured.' } : {}),
     });
     sse(res, 'done', { modelUsed });
