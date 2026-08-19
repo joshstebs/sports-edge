@@ -19,23 +19,15 @@ import { billingRouter, customerIsEntitled } from './routes/billing.js';
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
+import { playerProfileRouter } from './routes/playerProfile.js';
 
 const app = express();
 const authConfig = loadAuthConfig();
-// Vercel terminates TLS and forwards the real client IP. Trust exactly that
-// first proxy hop so per-IP rate limiting does not collapse every visitor into
-// the same bucket (or reject X-Forwarded-For as an unexpected header).
-// Trust proxies so express-rate-limit accepts X-Forwarded-For (Tailscale
-// funnel locally, Vercel edge in prod). Without this, funnel requests crash
-// the limiter with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR and take the server down.
-app.set('trust proxy', process.env.VERCEL ? 1 : 2); // explicit hops: Vercel=1, local tailnet=2 (boolean true trips rate-limiter validation)
+app.set('trust proxy', process.env.VERCEL ? 1 : 2);
 app.disable('x-powered-by');
 app.use(securityHeaders(authConfig.production));
 app.use(enforceTrustedOrigin(authConfig.allowedOrigins));
 
-// Public deployment guard: cap per-IP abuse (LLM quota burn, ledger spam).
-// This is best-effort per instance; use Vercel Firewall rate limits as the
-// distributed production boundary when the project receives public traffic.
 const chatLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   limit: 30,
@@ -63,33 +55,22 @@ const authLimiter = rateLimit({
 const durableChatLimiter = createUserRateLimiter({ scope: 'chat', windowMs: 10 * 60 * 1000, limit: 30 });
 const durableWriteLimiter = createUserRateLimiter({ scope: 'writes', windowMs: 10 * 60 * 1000, limit: 60 });
 
-// Parse the public login body under a much smaller limit before the larger
-// screenshot-capable chat parser. Form bodies are intentionally unsupported.
 app.use('/api/auth/login', authLimiter, requireJsonRequest(), express.json({ limit: '8kb', type: 'application/json' }));
 app.use(express.json({
   limit: '12mb',
   type: 'application/json',
-  // Stash the raw body so the Stripe webhook can verify signatures over the
-  // exact bytes Stripe sent (json-parsed bodies are not byte-identical).
   verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; },
-})); // attached screenshots (data URLs)
+}));
 app.use('/api', createAuthRouter(authConfig));
 app.use(authenticateRequest(authConfig));
 app.use(authenticatedNoStore);
-// Public billing surface (checkout / status / portal / webhook) — Stripe needs
-// to reach these without a session. Entitlement enforcement lives in
-// requireChatAccess on the chat/ledger routes below.
 app.use('/api/billing', billingRouter);
-// Gate BEFORE the durable limiters: they key on req.auth (set by a session or
-// by requireChatAccess for entitled customers) and 401 without it.
 app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
-// Chat/ledger access: a valid session (owner/configured users) passes, or an
-// entitled Stripe customer via the x-se-customer-id header. Everyone else gets
-// a 402 with the trial CTA.
+
 export function requireChatAccess(req: Request, res: Response, next: NextFunction): void {
   if (req.auth) return next();
   const customerId = req.get('x-se-customer-id') || '';
@@ -119,14 +100,25 @@ export function requireChatAccess(req: Request, res: Response, next: NextFunctio
 
 app.use('/api', requireChatAccess, chatRouter);
 app.use('/api', requireChatAccess, ledgerRouter);
+app.use('/api', requireChatAccess, playerProfileRouter);
 app.use('/api', requireAuth, predictionsRouter);
 
 app.get('/', (_req, res) => {
-  res.json({ name: 'sports-edge-server', version: '0.2.0', endpoints: ['/api/health', '/api/sources', '/api/auth/session', '/api/chat', '/api/ledger', '/api/predictions'] });
+  res.json({
+    name: 'sports-edge-server',
+    version: '0.2.0',
+    endpoints: [
+      '/api/health',
+      '/api/sources',
+      '/api/auth/session',
+      '/api/chat',
+      '/api/ledger',
+      '/api/player-profile',
+      '/api/predictions',
+    ],
+  });
 });
 
-// Never crash on provider/LLM failures — log the full error server-side,
-// return a generic message to the client (no internal path/stack leakage).
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[server error]', err.message);
   if (res.headersSent) {
