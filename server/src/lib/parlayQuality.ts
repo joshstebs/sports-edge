@@ -43,7 +43,8 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
   const sameGameIntent = /\b(?:same[- ]?game|sgp)\b/i.test(normalized);
 
   const range = normalized.match(/\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s*(?:leg|legs|game|games|pick|picks)?\b/i);
-  const single = normalized.match(/\b(\d{1,2})\s*(?:leg|legs|game|games|pick|picks)\b/i);
+  // Accept both "6 leg" and the very common hyphenated form "6-leg".
+  const single = normalized.match(/\b(\d{1,2})\s*(?:-|–|—)?\s*(?:leg|legs|game|games|pick|picks)\b/i);
   let requestedMin: number | null = null;
   let requestedMax: number | null = null;
   if (range) {
