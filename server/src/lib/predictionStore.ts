@@ -101,8 +101,8 @@ async function atomicWrite(file: string, value: unknown): Promise<void> {
 }
 
 async function loadJson<T>(file: string, fallback: T): Promise<T> {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')) as T; }
-  catch { return fallback; }
+  try { return JSON.parse(await fs.readFile(file, 'utf8')) as T;
+  } catch { return fallback; }
 }
 
 let localPredictionMutationTail = Promise.resolve();
@@ -378,6 +378,10 @@ export function playerNameForEvidence(leg: Pick<PredictionLeg, 'player_name' | '
   return (threshold?.[1] ?? selection).trim();
 }
 
+export function learnedEvidenceGrade(hitRate: number): string {
+  return hitRate >= 0.65 ? 'A' : hitRate >= 0.58 ? 'B' : hitRate >= 0.5 ? 'C' : 'D';
+}
+
 function evidenceAmericanToDecimal(american: number | null): number | null {
   if (american == null || !Number.isFinite(american)) return null;
   return american > 0 ? american / 100 + 1 : 100 / Math.abs(american) + 1;
@@ -386,7 +390,7 @@ function evidenceAmericanToDecimal(american: number | null): number | null {
 export async function loadModelEvidence(): Promise<ModelEvidence[]> {
   try {
     const predictions = await getAllPredictions();
-    const buckets = new Map<string, { won: number; n: number; oddsSum: number }>();
+    const buckets = new Map<string, { won: number; n: number; oddsSum: number; priced: number }>();
     for (const p of predictions) {
       if (!p || p.status !== 'evaluated') continue;
       const sport = String(p.sport ?? '').toLowerCase();
@@ -400,11 +404,14 @@ export async function loadModelEvidence(): Promise<ModelEvidence[]> {
           ? Number(leg.line)
           : Number(String(leg.target_line ?? '').replace(/[^\d.]/g, ''));
         const key = evidenceKey(sport, player, market, side, Number.isFinite(line) ? line : null);
-        const bucket = buckets.get(key) ?? { won: 0, n: 0, oddsSum: 0 };
+        const bucket = buckets.get(key) ?? { won: 0, n: 0, oddsSum: 0, priced: 0 };
         bucket.n += 1;
         if (leg.outcome === 'won') bucket.won += 1;
         const decimal = evidenceAmericanToDecimal(parseInt(String(leg.implied_odds ?? '').replace(/[^\d-]/g, ''), 10));
-        if (decimal != null) bucket.oddsSum += decimal;
+        if (decimal != null) {
+          bucket.oddsSum += decimal;
+          bucket.priced += 1;
+        }
         buckets.set(key, bucket);
       }
     }
@@ -412,9 +419,9 @@ export async function loadModelEvidence(): Promise<ModelEvidence[]> {
     for (const [key, bucket] of buckets) {
       if (bucket.n < EVIDENCE_MIN_SAMPLES) continue; // no verified edge on tiny samples
       const hitRate = bucket.won / bucket.n;
-      const grade = hitRate >= 0.7 ? 'A' : hitRate >= 0.6 ? 'B' : hitRate >= 0.5 ? 'C' : 'D';
-      const avgDecimal = bucket.oddsSum / bucket.n || 1;
-      const edge = hitRate * avgDecimal - 1;
+      const grade = learnedEvidenceGrade(hitRate);
+      const avgDecimal = bucket.priced ? bucket.oddsSum / bucket.priced : null;
+      const edge = avgDecimal != null ? hitRate * avgDecimal - 1 : null;
       const [sport, player, market, side, line] = key.split('|');
       rows.push({
         player,
@@ -424,7 +431,7 @@ export async function loadModelEvidence(): Promise<ModelEvidence[]> {
         line: line ? Number(line) : null,
         probability: hitRate,
         grade,
-        estimatedEdge: Number.isFinite(edge) ? edge : null,
+        estimatedEdge: edge != null && Number.isFinite(edge) ? edge : null,
         modelVersion: 'learned-v0.2',
         sampleSize: bucket.n,
         source: 'evaluated-predictions',
