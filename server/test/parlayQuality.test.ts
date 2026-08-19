@@ -25,6 +25,12 @@ test('normal 5-6 leg parlay requires B grade or better', () => {
   assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['C', 'D']);
 });
 
+test('hyphenated single leg counts are parsed and capped', () => {
+  const policy = parseParlayQualityPolicy('Give me the best 3-leg parlay');
+  assert.equal(policy.requestedMin, 3);
+  assert.equal(policy.requestedMax, 3);
+});
+
 test('aggressive request may include C but never D', () => {
   const policy = parseParlayQualityPolicy('Build an aggressive high-risk 6-leg parlay');
   const result = filterParlayQuality([
@@ -34,6 +40,8 @@ test('aggressive request may include C but never D', () => {
   ], policy);
 
   assert.equal(policy.minConfidence, 50);
+  assert.equal(policy.requestedMin, 6);
+  assert.equal(policy.requestedMax, 6);
   assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A', 'C']);
   assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['D']);
 });
@@ -84,6 +92,7 @@ test('cross-slate parlays prefer event diversity before duplicate-game legs', ()
 test('same-game intent keeps confidence ranking without diversity penalty', () => {
   const policy = parseParlayQualityPolicy('Build a 3-leg SGP');
   assert.equal(policy.sameGameIntent, true);
+  assert.equal(policy.requestedMax, 3);
   const result = filterParlayQuality([
     { player_name: 'A1', confidence: 72, event_id: 'game-a' },
     { player_name: 'A2', confidence: 70, event_id: 'game-a' },
