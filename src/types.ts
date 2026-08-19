@@ -27,7 +27,6 @@ export function sportLabel(code: Sport): string {
   return SPORTS.find((s) => s.code === code)?.label ?? code;
 }
 
-
 export type Role = 'user' | 'assistant';
 
 export interface ToolEvent {
@@ -41,8 +40,13 @@ export interface SgpLeg {
   game?: string;
   eventDate?: string;
   eventId?: string;
+  entity_type?: string;
+  player_name?: string;
+  player_id?: string;
+  team?: string;
   selection?: string;
   market?: string;
+  side?: string;
   line?: string | number | null;
   odds?: number | null;
   justification?: string;
@@ -50,6 +54,11 @@ export interface SgpLeg {
   correlation?: string;
   confidence?: number;
   game_odds?: string | null; // real game moneyline (ESPN → DraftKings), e.g. "-141"
+  model_probability?: string | number;
+  model_version?: string;
+  model_sample_size?: number;
+  model_source?: string;
+  __gateNote?: string;
 }
 
 export interface ChatMessage {
