@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
+import * as espn from '../providers/espn.js';
 import { parseSportKey } from '../providers/playerAvailability.js';
 
 export const playerProfileRouter = Router();
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
-const SPORT_PATH: Record<string, string> = {
+const SPORT_PATH: Record<string, espn.EspnSport> = {
   mlb: 'baseball/mlb',
   nfl: 'football/nfl',
   nba: 'basketball/nba',
@@ -30,13 +31,7 @@ interface PlayerProfileResponse {
 }
 
 function normalize(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function flattenAthletes(raw: any[]): any[] {
@@ -48,91 +43,68 @@ function flattenAthletes(raw: any[]): any[] {
   return out;
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'SportsEdge/0.2 (+verified-player-profile)',
-    },
-  });
-  if (!response.ok) throw new Error(`ESPN HTTP ${response.status}`);
-  return response.json();
-}
-
 playerProfileRouter.get('/player-profile', async (req: Request, res: Response) => {
   const requestedName = String(req.query.name ?? '').trim();
   const sport = parseSportKey(String(req.query.sport ?? ''));
-  if (!requestedName || !sport || !SPORT_PATH[sport]) {
-    res.status(400).json({
-      available: false,
-      source: 'site.web.api.espn.com',
-      checkedAt: new Date().toISOString(),
-      reason: 'name and a supported sport (MLB/NFL/NBA/NHL) are required',
-    } satisfies PlayerProfileResponse);
+  const path = sport ? SPORT_PATH[sport] : null;
+  if (!requestedName || !sport || !path) {
+    res.status(400).json({ available: false, source: 'site.web.api.espn.com', checkedAt: new Date().toISOString(), reason: 'name and a supported sport (MLB/NFL/NBA/NHL) are required' } satisfies PlayerProfileResponse);
     return;
   }
 
   const cacheKey = `${sport}:${normalize(requestedName)}`;
-  const hit = cache.get(cacheKey);
-  if (hit && hit.expires > Date.now()) {
-    res.json(hit.payload);
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    res.json(cached.payload);
     return;
   }
 
   const checkedAt = new Date().toISOString();
   try {
-    const path = SPORT_PATH[sport];
-    const teamsJson = await fetchJson(`${ESPN_BASE}/${path}/teams`);
-    const teams: any[] = teamsJson?.sports?.[0]?.leagues?.[0]?.teams ?? [];
-    const target = normalize(requestedName);
-    let resolved: PlayerProfileResponse['player'] | undefined;
-
-    // Sequential on purpose: this endpoint is a display enhancement, and the
-    // provider already caches the actual recommendation-eligibility checks.
-    // Avoid blasting every league roster in parallel from one UI render.
-    for (const wrapped of teams) {
-      const team = wrapped?.team ?? wrapped;
-      if (!team?.id) continue;
-      try {
-        const rosterJson = await fetchJson(`${ESPN_BASE}/${path}/teams/${team.id}/roster`);
-        const athletes = flattenAthletes(rosterJson?.athletes ?? []);
-        const athlete = athletes.find((candidate) => {
-          const candidateName = normalize(String(candidate?.displayName ?? candidate?.fullName ?? ''));
-          return candidateName === target;
-        });
-        if (!athlete) continue;
-        resolved = {
-          id: String(athlete.id),
-          name: String(athlete.displayName ?? athlete.fullName ?? requestedName),
-          teamId: String(team.id),
-          teamName: String(team.displayName ?? team.name ?? ''),
-          teamAbbreviation: String(team.abbreviation ?? ''),
-          position: athlete?.position?.abbreviation ?? athlete?.position?.displayName ?? null,
-          headshotUrl: typeof athlete?.headshot?.href === 'string' ? athlete.headshot.href : null,
-        };
-        break;
-      } catch {
-        // One team feed failing should not turn a cosmetic profile lookup into
-        // a server error. Continue and report unavailable if nobody resolves.
-      }
+    // Reuse SportsEdge's league-wide cached roster resolver. Availability and
+    // player research already call this provider, so profile rendering normally
+    // adds only one team-roster request rather than another league-wide crawl.
+    const found = await espn.findPlayer(requestedName, path);
+    if (!found.available || !found.player) {
+      const payload: PlayerProfileResponse = { available: false, source: 'site.web.api.espn.com', checkedAt, reason: found.reason ?? `No current-roster match for ${requestedName}` };
+      cache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, payload });
+      res.json(payload);
+      return;
     }
 
-    const payload: PlayerProfileResponse = resolved
-      ? { available: true, source: 'site.web.api.espn.com', checkedAt, player: resolved }
-      : {
-          available: false,
-          source: 'site.web.api.espn.com',
-          checkedAt,
-          reason: `No exact current-roster match for ${requestedName}`,
-        };
+    const teams = await espn.getTeams(path);
+    const team = teams.find((candidate) => candidate.id === found.player!.teamId);
+    let headshotUrl: string | null = null;
+    try {
+      const rosterResponse = await fetch(`${ESPN_BASE}/${path}/teams/${encodeURIComponent(found.player.teamId)}/roster`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'SportsEdge/0.2 (+player-profile)' },
+      });
+      if (rosterResponse.ok) {
+        const roster = await rosterResponse.json();
+        const athlete = flattenAthletes(roster?.athletes ?? []).find((candidate) => String(candidate?.id ?? '') === found.player!.id);
+        headshotUrl = typeof athlete?.headshot?.href === 'string' ? athlete.headshot.href : null;
+      }
+    } catch {
+      // Headshot is optional. Identity still comes from the verified roster.
+    }
+
+    const payload: PlayerProfileResponse = {
+      available: true,
+      source: 'site.web.api.espn.com',
+      checkedAt,
+      player: {
+        id: found.player.id,
+        name: found.player.displayName,
+        teamId: found.player.teamId,
+        teamName: found.player.teamName,
+        teamAbbreviation: team?.abbr ?? '',
+        position: found.player.position || null,
+        headshotUrl,
+      },
+    };
     cache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, payload });
     res.json(payload);
   } catch (error) {
-    res.status(502).json({
-      available: false,
-      source: 'site.web.api.espn.com',
-      checkedAt,
-      reason: error instanceof Error ? error.message : 'ESPN profile lookup failed',
-    } satisfies PlayerProfileResponse);
+    res.status(502).json({ available: false, source: 'site.web.api.espn.com', checkedAt, reason: error instanceof Error ? error.message : 'ESPN profile lookup failed' } satisfies PlayerProfileResponse);
   }
 });
