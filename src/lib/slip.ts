@@ -27,6 +27,10 @@ export function normalizeSgpLeg(value: unknown): SgpLeg | null {
       : undefined;
   const odds = optionalNumber(raw.odds);
   const confidence = optionalNumber(raw.confidence);
+  const modelProbability =
+    typeof raw.model_probability === 'string' || typeof raw.model_probability === 'number'
+      ? raw.model_probability
+      : undefined;
   const gameOdds =
     typeof raw.game_odds === 'string' || typeof raw.game_odds === 'number'
       ? String(raw.game_odds).trim() || undefined
@@ -37,8 +41,13 @@ export function normalizeSgpLeg(value: unknown): SgpLeg | null {
     game: optionalText(raw.game),
     eventDate: optionalText(raw.eventDate ?? raw.game_date)?.slice(0, 10),
     eventId: optionalText(raw.eventId ?? raw.event_id ?? raw.gamePk),
+    entity_type: optionalText(raw.entity_type),
+    player_name: optionalText(raw.player_name),
+    player_id: optionalText(raw.player_id),
+    team: optionalText(raw.team),
     selection,
     market: optionalText(raw.market),
+    side: optionalText(raw.side),
     line,
     odds: odds === undefined ? null : odds,
     justification: optionalText(raw.justification),
@@ -47,6 +56,11 @@ export function normalizeSgpLeg(value: unknown): SgpLeg | null {
     confidence:
       confidence === undefined ? undefined : Math.max(0, Math.min(100, confidence)),
     game_odds: gameOdds ?? null,
+    model_probability: modelProbability,
+    model_version: optionalText(raw.model_version),
+    model_sample_size: optionalNumber(raw.model_sample_size),
+    model_source: optionalText(raw.model_source),
+    __gateNote: optionalText(raw.__gateNote),
   };
 }
 
