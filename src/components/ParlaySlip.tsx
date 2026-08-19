@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   americanToDecimal,
   combineDecimalOdds,
@@ -8,6 +8,7 @@ import {
   legKey,
   type Grade,
 } from '../lib/odds';
+import { analyzeSlipHealth, formatParlayForClipboard } from '../lib/slipHealth';
 import type { SgpLeg } from '../types';
 
 interface ParlaySlipProps {
@@ -32,6 +33,13 @@ const DOT: Record<Grade, string> = {
   D: 'bg-danger',
 };
 
+const HEALTH_TONE = {
+  strong: 'border-edge/20 bg-edge/5 text-edge',
+  good: 'border-sky2/20 bg-sky2/5 text-sky2',
+  aggressive: 'border-warn/20 bg-warn/5 text-warn',
+  unscored: 'border-line bg-panel2 text-frost2',
+} as const;
+
 export default function ParlaySlip({
   legs,
   onRemove,
@@ -41,6 +49,7 @@ export default function ParlaySlip({
   saveStatus = { state: 'idle' },
   className = '',
 }: ParlaySlipProps) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const combined = useMemo(() => {
     if (legs.length === 0) return null;
     const allPriced = legs.every((leg) => typeof leg.odds === 'number' && Number.isFinite(leg.odds));
@@ -48,20 +57,40 @@ export default function ParlaySlip({
     const product = combineDecimalOdds(legs.map((leg) => americanToDecimal(leg.odds as number)));
     return product == null ? null : decimalToAmerican(product);
   }, [legs]);
+  const health = useMemo(() => analyzeSlipHealth(legs), [legs]);
+
+  async function copyParlay() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(formatParlayForClipboard(legs));
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1800);
+    } catch {
+      setCopyState('error');
+      window.setTimeout(() => setCopyState('idle'), 2200);
+    }
+  }
 
   return (
     <aside className={`flex flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-[0_12px_34px_rgba(0,0,0,0.2)] ${className}`}>
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-line px-3">
-        <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-frost2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <div className="flex min-h-10 shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-frost2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M8 21h12M12 17v4M17 3H7a1 1 0 00-1 1v12a1 1 0 001 1h10a1 1 0 001-1V4a1 1 0 00-1-1z" />
             <path d="M9 7h6M9 11h6" />
           </svg>
           <h2 className="text-[12px] font-semibold text-head">Parlay slip</h2>
           <span className="font-mono text-[9px] text-frost2">{legs.length} {legs.length === 1 ? 'leg' : 'legs'}</span>
         </div>
-        {legs.length > 0 && onClear ? (
-          <button type="button" onClick={onClear} className="h-7 rounded-md px-2 text-[9px] font-medium text-frost2 hover:bg-panel2 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/30">Clear</button>
+        {legs.length > 0 ? (
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" onClick={copyParlay} className="h-7 rounded-md px-2 text-[9px] font-medium text-frost2 hover:bg-panel2 hover:text-head focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/30" aria-label="Copy parlay to clipboard">
+              {copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Copy failed' : 'Copy'}
+            </button>
+            {onClear ? (
+              <button type="button" onClick={onClear} className="h-7 rounded-md px-2 text-[9px] font-medium text-frost2 hover:bg-panel2 hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/30">Clear</button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -106,6 +135,23 @@ export default function ParlaySlip({
           })}
         </ul>
       )}
+
+      {legs.length > 0 ? (
+        <div className="shrink-0 border-t border-line px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[8.5px] uppercase tracking-[0.08em] text-frost2">Slip health</span>
+              <span className={`rounded border px-1.5 py-0.5 font-mono text-[8px] font-semibold ${HEALTH_TONE[health.level]}`}>{health.label}</span>
+            </div>
+            <div className="flex items-center gap-2 font-mono text-[8.5px] text-frost2">
+              <span title="Average confidence across scored legs">Avg {health.averageConfidence != null ? `${health.averageConfidence}%` : '-'}</span>
+              <span title="Weakest scored leg">Low {health.weakestConfidence != null ? `${health.weakestConfidence}%` : '-'}</span>
+              <span title="Unique games represented">Games {health.uniqueEvents || '-'}</span>
+            </div>
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-frost2/80">{health.summary}</p>
+        </div>
+      ) : null}
 
       <div className="shrink-0 border-t border-line bg-panel2/35 px-3 py-3">
         <div className="flex items-center justify-between gap-3">
