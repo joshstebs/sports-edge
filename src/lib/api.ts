@@ -147,3 +147,34 @@ export async function fetchSports(): Promise<SportInfo[]> {
   const payload = (await res.json()) as { sports: SportInfo[] };
   return payload.sports;
 }
+
+export interface PlayerProfile {
+  id: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+  teamAbbreviation: string;
+  position: string | null;
+  headshotUrl: string | null;
+}
+
+export interface PlayerProfileResponse {
+  available: boolean;
+  source: string;
+  checkedAt: string;
+  player?: PlayerProfile;
+  reason?: string;
+}
+
+/** Resolve a current-roster ESPN player profile for legitimate headshots/team metadata. */
+export async function fetchPlayerProfile(sport: string, name: string): Promise<PlayerProfileResponse> {
+  const params = new URLSearchParams({ sport, name });
+  const res = await fetch(`${import.meta.env.BASE_URL}api/player-profile?${params.toString()}`, {
+    headers: { Accept: 'application/json', ...customerHeaders() },
+  });
+  const payload = (await res.json().catch(() => null)) as PlayerProfileResponse | null;
+  if (!res.ok || !payload) {
+    throw new Error(payload?.reason || `Player profile unavailable (HTTP ${res.status})`);
+  }
+  return payload;
+}
