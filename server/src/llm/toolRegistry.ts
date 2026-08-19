@@ -2,14 +2,16 @@
 // returns a JSON string the LLM can consume as the tool result.
 
 import { TOOL_DEFS, ToolDef, ToolOutcome } from './tools.js';
+import { MLB_PROVISIONAL_TOOL } from './mlbProvisionalTool.js';
 import type { ToolSchema } from './chatClient.js';
 
+const ALL_TOOL_DEFS: ToolDef[] = [...TOOL_DEFS, MLB_PROVISIONAL_TOOL];
 const registry = new Map<string, ToolDef>();
-for (const def of TOOL_DEFS) registry.set(def.name, def);
+for (const def of ALL_TOOL_DEFS) registry.set(def.name, def);
 
 /** OpenAI-style tools array for the chat completions API. */
 export function getToolSchemas(): ToolSchema[] {
-  return TOOL_DEFS.map((d) => ({
+  return ALL_TOOL_DEFS.map((d) => ({
     type: 'function',
     function: { name: d.name, description: d.description, parameters: d.parameters },
   }));
