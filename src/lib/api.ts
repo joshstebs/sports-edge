@@ -6,7 +6,6 @@ export interface HealthInfo {
   version?: string;
 }
 
-/** Attach the Stripe customer id when present (trial/subscriber access). */
 function customerHeaders(): Record<string, string> {
   try {
     const customerId = localStorage.getItem('sportsedge.customerId');
@@ -16,12 +15,9 @@ function customerHeaders(): Record<string, string> {
   }
 }
 
-/** GET /api/health — drives the "Live data" dot in the header. */
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    throw new Error(`Health check returned HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Health check returned HTTP ${res.status}`);
   return (await res.json()) as HealthInfo;
 }
 
@@ -51,7 +47,6 @@ export interface LedgerResponse {
   summary?: unknown;
 }
 
-/** GET the signed-in user's durable ledger for local slip reconciliation. */
 export async function fetchLedger(): Promise<LedgerResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/ledger`, {
     headers: { Accept: 'application/json', ...customerHeaders() },
@@ -65,7 +60,6 @@ export async function fetchLedger(): Promise<LedgerResponse> {
   return payload as LedgerResponse;
 }
 
-/** POST a ticket to the tracked-picks ledger with retry-safe idempotency. */
 export async function saveLedgerTicket(
   legs: readonly unknown[],
   idempotencyKey: string,
@@ -80,7 +74,6 @@ export async function saveLedgerTicket(
     },
     body: JSON.stringify({ legs, idempotencyKey }),
   });
-
   const payload = (await res.json().catch(() => null)) as
     | (Partial<SaveLedgerResponse> & { error?: string })
     | null;
@@ -177,8 +170,7 @@ export async function fetchPerformance(): Promise<{ performance: PerformanceSumm
     headers: { Accept: 'application/json', ...customerHeaders() },
   });
   if (!res.ok) throw new Error(`Performance data unavailable (HTTP ${res.status})`);
-  const payload = (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
-  return payload;
+  return (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
 }
 
 export async function fetchSports(): Promise<SportInfo[]> {
@@ -186,4 +178,62 @@ export async function fetchSports(): Promise<SportInfo[]> {
   if (!res.ok) throw new Error(`Sports registry unavailable (HTTP ${res.status})`);
   const payload = (await res.json()) as { sports: SportInfo[] };
   return payload.sports;
+}
+
+export interface ProviderDiagnostic {
+  id: string;
+  label: string;
+  status: 'ready' | 'fallback' | 'unavailable';
+  configured: boolean;
+  primaryFor: string[];
+  fallback?: string | null;
+  quota?: unknown;
+  cacheTtl: string;
+  source: string;
+  note: string;
+}
+
+export interface DriftAlert {
+  severity: 'info' | 'warning' | 'critical';
+  scope: string;
+  message: string;
+  sampleSize?: number;
+}
+
+export interface DiagnosticsSnapshot {
+  generatedAt: string;
+  storage: { backend: string; durable: boolean };
+  llm: { configured: boolean; provider: string | null; model: string | null };
+  cron: { configured: boolean; schedule: string; timezone: string };
+  providers: ProviderDiagnostic[];
+  cachePolicy: Array<{ data: string; ttl: string; rationale: string }>;
+  sourcePolicy: Record<string, string[]>;
+  driftAlerts: DriftAlert[];
+}
+
+export async function fetchDiagnostics(): Promise<DiagnosticsSnapshot> {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/diagnostics`, {
+    headers: { Accept: 'application/json', ...customerHeaders() },
+  });
+  const payload = (await res.json().catch(() => null)) as { diagnostics?: DiagnosticsSnapshot; error?: string } | null;
+  if (!res.ok || !payload?.diagnostics) {
+    throw new Error(payload?.error || `Diagnostics unavailable (HTTP ${res.status})`);
+  }
+  return payload.diagnostics;
+}
+
+export async function downloadPredictionCsv(): Promise<void> {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/export.csv`, {
+    headers: { Accept: 'text/csv', ...customerHeaders() },
+  });
+  if (!res.ok) throw new Error(`Prediction export unavailable (HTTP ${res.status})`);
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = href;
+  anchor.download = `sportsedge-predictions-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
 }
