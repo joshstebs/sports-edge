@@ -147,3 +147,54 @@ export async function fetchSports(): Promise<SportInfo[]> {
   const payload = (await res.json()) as { sports: SportInfo[] };
   return payload.sports;
 }
+
+export interface CalibrationBucket {
+  bucket: string;
+  predictedProbMin: number;
+  predictedProbMax: number;
+  sampleSize: number;
+  winRate: number;
+  avgModelProb: number;
+  calibrationError: number;
+  brierScore: number;
+  roi: number;
+  clvBeatRate: number;
+  avgClvPercent: number;
+}
+
+/** Mirrors server/src/lib/clvTracker.ts SportMarketCalibration (GET /api/calibration rows). */
+export interface SportMarketCalibration {
+  sport: string;
+  market: string;
+  buckets: CalibrationBucket[];
+  overall: {
+    totalSample: number;
+    overallWinRate: number;
+    overallBrier: number;
+    overallRoi: number;
+    overallClvBeatRate: number;
+    avgCalibrationError: number;
+    /** Not currently emitted by the server; the dashboard renders an em-dash when absent. */
+    overallAvgClvPercent?: number | null;
+  };
+}
+
+export interface CalibrationResponse {
+  success: boolean;
+  calibration: SportMarketCalibration[];
+}
+
+/** GET /api/calibration — model calibration report, optionally filtered by sport. */
+export async function fetchCalibration(sport?: string): Promise<CalibrationResponse> {
+  const params = sport ? `?sport=${encodeURIComponent(sport)}` : '';
+  const res = await fetch(`${import.meta.env.BASE_URL}api/calibration${params}`, {
+    headers: { Accept: 'application/json', ...customerHeaders() },
+  });
+  const payload = (await res.json().catch(() => null)) as
+    | (Partial<CalibrationResponse> & { error?: string })
+    | null;
+  if (!res.ok || !payload || !Array.isArray(payload.calibration)) {
+    throw new Error(payload?.error || `Calibration data unavailable (HTTP ${res.status})`);
+  }
+  return payload as CalibrationResponse;
+}

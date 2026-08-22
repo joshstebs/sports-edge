@@ -92,13 +92,20 @@ export async function runMonitoringCycle(config: MonitorConfig = DEFAULT_MONITOR
     await sendAlerts(criticalAlerts);
   }
   
-  // Mark predictions as invalidated if critical
+  // Mark predictions as invalidated if critical (one increment per prediction
+  // per cycle — multiple invalidated legs on the same ticket share the bump)
+  const invalidated = new Set<string>();
   for (const alert of alerts.filter(a => a.action === 'invalidated')) {
+    if (invalidated.has(alert.predictionId)) continue;
+    invalidated.add(alert.predictionId);
+    const prediction = predictions.find(p => p.prediction_id === alert.predictionId);
+    const attemptAt = new Date().toISOString();
     await updatePrediction(alert.predictionId, {
       status: 'needs_review',
       evaluationNote: `Leg invalidated by monitoring: ${alert.message}`,
-      evaluatedAt: new Date().toISOString(),
-      evaluationAttempts: (0 + 1), // Increment
+      evaluatedAt: attemptAt,
+      evaluationAttempts: (prediction?.evaluationAttempts ?? 0) + 1,
+      lastEvaluationAttemptAt: attemptAt,
     });
   }
   

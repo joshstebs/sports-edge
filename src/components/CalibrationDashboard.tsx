@@ -16,7 +16,10 @@ function calDir(calError: number): { label: string; color: string } {
 
 function CalibrationBucketRow({ bucket }: { bucket: CalibrationBucket }) {
   const { label, color } = calDir(bucket.calibrationError);
-  const grade = bucket.grade;
+  // Grade is derived from win rate, matching the server's grading rule
+  // (server/src/routes/calibration.ts): A >= 70%, B >= 60%, C >= 50%, else D.
+  const grade: 'A' | 'B' | 'C' | 'D' =
+    bucket.winRate >= 0.7 ? 'A' : bucket.winRate >= 0.6 ? 'B' : bucket.winRate >= 0.5 ? 'C' : 'D';
   const style = GRADE_STYLES[grade];
 
   return (

@@ -187,19 +187,21 @@ function findClosingMarket(
     );
     if (exact) return { odds: exact.odds, book: exact.book };
     
-    // Find closest line
-    const best = prop.markets
-      .filter((m: any) => m.market === market && m.side === side)
-      .reduce((best: any, current: any) => {
-        if (side === 'over') {
-          if (current.line > best.line) return current;
-          if (current.line === best.line && current.odds > best.odds) return current;
-        } else {
-          if (current.line < best.line) return current;
-          if (current.line === best.line && current.odds > best.odds) return current;
-        }
-        return best;
-      }, null);
+    // Find closest line (seed with the first candidate so best is never null mid-reduce)
+    const candidates = prop.markets
+      .filter((m: any) => m.market === market && m.side === side);
+    if (!candidates.length) continue;
+    const best = candidates.reduce((best: any, current: any) => {
+      if (!best) return current;
+      if (side === 'over') {
+        if (current.line > best.line) return current;
+        if (current.line === best.line && current.odds > best.odds) return current;
+      } else {
+        if (current.line < best.line) return current;
+        if (current.line === best.line && current.odds > best.odds) return current;
+      }
+      return best;
+    }, null as any);
     
     if (best) return { odds: best.odds, book: best.book };
   }
@@ -296,11 +298,16 @@ export async function computeCalibration(config: ClvConfig = DEFAULT_CLV_CONFIG)
         return sum + Math.pow(r.modelProb - actual, 2);
       }, 0) / records.length;
       
-      // ROI assuming flat 1 unit bets at closing odds
-      const roi = records.reduce((sum: number, r: { outcome: 'won' | 'lost' | 'push'; decimalOdds: number }) => {
-        if (r.outcome === 'won') return sum + (r.decimalOdds - 1);
-        return sum - 1;
-      }, 0) / records.length * 100;
+      // ROI assuming flat 1 unit bets at closing odds.
+      // Legs without captured closing odds have no price — exclude them from
+      // ROI instead of booking wins as -1 unit (decimalOdds would be 0).
+      const pricedRecords = records.filter((r: { decimalOdds: number }) => r.decimalOdds > 0);
+      const roi = pricedRecords.length
+        ? pricedRecords.reduce((sum: number, r: { outcome: 'won' | 'lost' | 'push'; decimalOdds: number }) => {
+            if (r.outcome === 'won') return sum + (r.decimalOdds - 1);
+            return sum - 1;
+          }, 0) / pricedRecords.length * 100
+        : 0;
       
       const clvBeats = records.filter((r: { beatClosing: boolean }) => r.beatClosing).length;
       const clvBeatRate = clvBeats / records.length * 100;
@@ -329,10 +336,15 @@ export async function computeCalibration(config: ClvConfig = DEFAULT_CLV_CONFIG)
       const actual = r.outcome === 'won' ? 1 : 0;
       return sum + Math.pow(r.modelProb - actual, 2);
     }, 0) / data.records.length;
-    const overallRoi = data.records.reduce((sum: number, r: { outcome: 'won' | 'lost' | 'push'; decimalOdds: number }) => {
-      if (r.outcome === 'won') return sum + (r.decimalOdds - 1);
-      return sum - 1;
-    }, 0) / data.records.length * 100;
+    // Same pricing rule as bucket ROI: only legs with captured closing odds
+    // count toward overall ROI (decimalOdds=0 legs would corrupt the math).
+    const pricedRecords = data.records.filter((r: { decimalOdds: number }) => r.decimalOdds > 0);
+    const overallRoi = pricedRecords.length
+      ? pricedRecords.reduce((sum: number, r: { outcome: 'won' | 'lost' | 'push'; decimalOdds: number }) => {
+          if (r.outcome === 'won') return sum + (r.decimalOdds - 1);
+          return sum - 1;
+        }, 0) / pricedRecords.length * 100
+      : 0;
     const overallClvBeats = data.records.filter((r: { beatClosing: boolean }) => r.beatClosing).length;
     const overallClvBeatRate = overallClvBeats / data.records.length * 100;
     const avgCalError = bucketsList.reduce((sum, b) => sum + Math.abs(b.calibrationError), 0) / bucketsList.length;
