@@ -101,8 +101,12 @@ async function atomicWrite(file: string, value: unknown): Promise<void> {
 }
 
 async function loadJson<T>(file: string, fallback: T): Promise<T> {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')) as T;
-  } catch { return fallback; }
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8')) as T;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return fallback;
+    throw error;
+  }
 }
 
 let localPredictionMutationTail = Promise.resolve();

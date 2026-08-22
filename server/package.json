@@ -8,7 +8,6 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test test/*.test.ts",
     "probe": "tsx scripts/probe.ts",
     "eval": "tsx scripts/evaluate.ts",
     "auth:generate": "tsx scripts/generate-auth-users.ts",

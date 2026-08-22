@@ -8,7 +8,7 @@ import ParlaySlip, { type SlipSaveStatus } from './components/ParlaySlip';
 import SportSelector from './components/SportSelector';
 import { fetchHealth, fetchLedger, saveLedgerTicket, type HealthInfo } from './lib/api';
 import { fetchSession, signOut, type AuthUser } from './lib/auth';
-import { clearCustomerId, getCustomerId, setCustomerId } from './lib/billing';
+import { clearBillingSession, completeCheckout, fetchBillingStatus } from './lib/billing';
 import { legKey } from './lib/odds';
 import {
   collectMessageLegs,
@@ -90,20 +90,27 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: 'checking', user: null, error: null });
   const [showUpgrade, setShowUpgrade] = useState(false);
 
-  const customerUser = (): AuthUser => ({ id: 'customer', username: 'Trial member', role: 'customer' });
+  const customerUser = (subject: string): AuthUser => ({ id: `customer:${subject}`, username: 'Trial member', role: 'customer' });
 
   useEffect(() => {
     let cancelled = false;
-    fetchSession()
-      .then((user) => {
+    const initialize = async () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('checkout') === 'success' && params.get('session_id')) {
+        await completeCheckout(params.get('session_id') as string);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+      const [user, billing] = await Promise.all([fetchSession(), fetchBillingStatus()]);
+      return { user, billing };
+    };
+    initialize()
+      .then(({ user, billing }) => {
         if (cancelled) return;
-        // No password session, but a Stripe customer id exists (trial/subscriber):
-        // enter as a customer — entitlement is verified server-side per request.
         setAuth(
           user
             ? { status: 'signed-in', user, error: null }
-            : getCustomerId()
-              ? { status: 'signed-in', user: customerUser(), error: null }
+            : billing.entitled && billing.subject
+              ? { status: 'signed-in', user: customerUser(billing.subject), error: null }
               : { status: 'signed-out', user: null, error: null },
         );
       })
@@ -138,10 +145,6 @@ export default function App() {
         {showUpgrade && (
           <UpgradeModal
             onClose={() => setShowUpgrade(false)}
-            onEntitled={(customerId) => {
-              setCustomerId(customerId);
-              setAuth({ status: 'signed-in', user: customerUser(), error: null });
-            }}
           />
         )}
       </>
@@ -158,7 +161,7 @@ export default function App() {
         onLogout={async () => {
           try {
             if (auth.user.role === 'customer') {
-              clearCustomerId();
+              await clearBillingSession();
               setAuth({ status: 'signed-out', user: null, error: null });
               return;
             }
@@ -171,10 +174,7 @@ export default function App() {
       {showUpgrade && (
         <UpgradeModal
           onClose={() => setShowUpgrade(false)}
-          onEntitled={(customerId) => {
-            setCustomerId(customerId);
-            setAuth({ status: 'signed-in', user: customerUser(), error: null });
-          }}
+          canManage={auth.user.role === 'customer'}
         />
       )}
     </>

@@ -1,5 +1,4 @@
 import type { ChatEvent } from '../types';
-import { getCustomerId } from './billing';
 
 export interface StreamChatBody {
   messages: { role: 'user' | 'assistant'; content: string }[];
@@ -44,12 +43,11 @@ export function parseFrame(frame: string, onEvent: (event: ChatEvent) => void): 
  * trailing frame at stream end.
  */
 export async function streamChat(body: StreamChatBody, opts: StreamChatOptions): Promise<void> {
-  const customerId = getCustomerId();
   const res = await fetch(`${import.meta.env.BASE_URL}api/chat`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      ...(customerId ? { 'x-se-customer-id': customerId } : {}),
     },
     body: JSON.stringify(body),
     signal: opts.signal,

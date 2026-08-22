@@ -14,6 +14,7 @@ import {
 import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
 import { parseParlayQualityPolicy, filterParlayQuality, requestedParlayShortfall } from '../lib/parlayQuality.js';
+import { SPORTS } from '../providers/sportsConfig.js';
 
 export const chatRouter = Router();
 
@@ -246,7 +247,32 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   const body = req.body ?? {};
   const userId = req.auth!.userId;
   const rawMessages: any[] = Array.isArray(body.messages) ? body.messages : [];
-  const sport: string | null = typeof body.sport === 'string' && body.sport ? body.sport : null;
+  if (!Array.isArray(body.messages) || rawMessages.length < 1 || rawMessages.length > 40) {
+    res.status(400).json({ ok: false, error: 'Chat history must contain 1–40 messages.' });
+    return;
+  }
+  let totalCharacters = 0;
+  for (const message of rawMessages) {
+    if (!message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || message.content.length > 20_000) {
+      res.status(400).json({ ok: false, error: 'Every chat message requires a valid role and at most 20,000 characters.' });
+      return;
+    }
+    if (Array.isArray(message.images) && message.images.length > 4) {
+      res.status(400).json({ ok: false, error: 'Too many images (max 4 per message, 8 per request).' });
+      return;
+    }
+    totalCharacters += message.content.length;
+  }
+  if (totalCharacters > 100_000) {
+    res.status(400).json({ ok: false, error: 'Combined chat history exceeds 100,000 characters.' });
+    return;
+  }
+  const requestedSport = typeof body.sport === 'string' ? body.sport.trim().toUpperCase() : '';
+  const sport: string | null = requestedSport && SPORTS.some((candidate) => candidate.code === requestedSport) ? requestedSport : null;
+  if (requestedSport && !sport) {
+    res.status(400).json({ ok: false, error: 'Unsupported sport selection.' });
+    return;
+  }
 
   // Server-side attachment validation (client checks are trivially bypassed):
   // only data:image/* base64 payloads — no http(s) URLs (which would make the
@@ -283,13 +309,16 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   }
 
   const controller = new AbortController();
+  const requestDeadline = setTimeout(() => controller.abort(), 52_000);
   // Node 18+: req 'close' fires when the request BODY is consumed, not on
   // disconnect — that would abort every request instantly. Detect real client
   // disconnects via 'aborted' + res 'close' while the response is unfinished.
   req.on('aborted', () => controller.abort());
   res.on('close', () => {
+    clearTimeout(requestDeadline);
     if (!res.writableEnded) controller.abort();
   });
+  res.on('finish', () => clearTimeout(requestDeadline));
 
   try {
     sse(res, 'meta', { model: cfg.model, sport, llmConfigured: true, provider: cfg.provider });

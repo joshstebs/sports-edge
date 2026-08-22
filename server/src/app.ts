@@ -15,7 +15,7 @@ import {
   securityHeaders,
 } from './auth/index.js';
 import { chatRouter } from './routes/chat.js';
-import { billingRouter, customerIsEntitled } from './routes/billing.js';
+import { createBillingRouter, customerIdFromRequest, customerIsEntitled } from './routes/billing.js';
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
@@ -61,6 +61,13 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true,
   message: { ok: false, error: 'Too many sign-in attempts. Try again later.' },
 });
+const billingLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many billing requests. Try again later.' },
+});
 const durableChatLimiter = createUserRateLimiter({ scope: 'chat', windowMs: 10 * 60 * 1000, limit: 30 });
 const durableWriteLimiter = createUserRateLimiter({ scope: 'writes', windowMs: 10 * 60 * 1000, limit: 60 });
 
@@ -80,7 +87,10 @@ app.use(authenticatedNoStore);
 // Public billing surface (checkout / status / portal / webhook) — Stripe needs
 // to reach these without a session. Entitlement enforcement lives in
 // requireChatAccess on the chat/ledger routes below.
-app.use('/api/billing', billingRouter);
+app.use('/api/billing/checkout', billingLimiter);
+app.use('/api/billing/complete', billingLimiter);
+app.use('/api/billing/portal', billingLimiter);
+app.use('/api/billing', createBillingRouter(authConfig.sessionSecret));
 // Gate BEFORE the durable limiters: they key on req.auth (set by a session or
 // by requireChatAccess for entitled customers) and 401 without it.
 app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
@@ -90,11 +100,11 @@ app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
 // Chat/ledger/stats access: a valid session (owner/configured users) passes, or an
-// entitled Stripe customer via the x-se-customer-id header. Everyone else gets
+// entitled Stripe customer via a signed HttpOnly browser credential. Everyone else gets
 // a 402 with the trial CTA.
 export function requireChatAccess(req: Request, res: Response, next: NextFunction): void {
   if (req.auth) return next();
-  const customerId = req.get('x-se-customer-id') || '';
+  const customerId = customerIdFromRequest(req, authConfig.sessionSecret) || '';
   if (!customerId) {
     res.status(402).json({
       error: 'Start your free trial to unlock SportsEdge analysis.',

@@ -1,49 +1,64 @@
-// Live integration test for SportsGameOdds provider (uses SPORTSGAMEODDS_API_KEY).
-// Run: node --import tsx --test server/test/sportsGameOdds.test.ts
-import { config } from 'dotenv';
-config({ path: new URL('../.env', import.meta.url) });
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sgoConfigured, getSgoFeaturedOdds, getSgoGameOdds, sgoNotice } from '../src/providers/sportsGameOdds.js';
+import test from 'node:test';
+import { getSgoFeaturedOdds, getSgoGameOdds } from '../src/providers/sportsGameOdds.js';
 
-test('provider is configured from env', () => {
-  assert.equal(sgoConfigured(), true, 'SPORTSGAMEODDS_API_KEY must be set in server/.env');
-});
+function event(id: string, away: string, home: string) {
+  return {
+    eventID: id,
+    leagueID: 'NBA',
+    status: { started: false, completed: false, live: false, startsAt: '2026-08-23T00:00:00Z' },
+    teams: { home: { names: { long: home, short: home } }, away: { names: { long: away, short: away } } },
+    odds: {
+      'points-home-game-ml-home': { bookOdds: -110, fairOdds: -108 },
+      'points-away-game-ml-away': { bookOdds: '+105', fairOdds: 103 },
+    },
+  };
+}
 
-test('featured odds call returns a well-formed result (live or rate-limited, never throws)', async () => {
-  const r = await getSgoFeaturedOdds('nba');
-  assert.equal(r.source, 'api.sportsgameodds.com');
-  // Either we got live data, or it honestly reports unavailable (off-season / quota).
-  if (r.available) {
-    assert.ok(r.event?.home && r.event?.away, 'team names present');
-    assert.ok(Object.keys(r.markets ?? {}).length > 0, 'has mapped markets');
-    console.log(`  LIVE: ${r.event!.away} @ ${r.event!.home} | markets: ${Object.keys(r.markets ?? {}).join(',')}`);
-  } else {
-    assert.ok(r.reason, 'has a reason when unavailable');
-    console.log(`  UNAVAILABLE (expected if free-tier/quota): ${r.reason} | notice: ${sgoNotice()}`);
+test('SportsGameOdds keeps credentials in headers and searches bounded later pages', async () => {
+  const previousKey = process.env.SPORTSGAMEODDS_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.SPORTSGAMEODDS_API_KEY = 'test-server-only-key';
+  const requests: Array<{ url: URL; key: string | null }> = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(String(input));
+    requests.push({ url, key: new Headers(init?.headers).get('x-api-key') });
+    const cursor = url.searchParams.get('cursor');
+    const body = cursor
+      ? { data: [event('target', 'Lakers', 'Celtics')], nextCursor: null }
+      : { data: [event('first', 'Toronto Raptors', 'New York Knicks')], nextCursor: 'page-2' };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  try {
+    const featured = await getSgoFeaturedOdds('nba');
+    assert.equal(featured.available, true);
+    assert.equal(featured.event?.id, 'first');
+    assert.equal(typeof featured.markets?.h2h?.[0]?.bookOdds, 'number');
+
+    const matchup = await getSgoGameOdds('Lakers', 'Celtics', 'nba');
+    assert.equal(matchup.available, true);
+    assert.equal(matchup.event?.id, 'target');
+    assert.equal(requests.some(({ url }) => url.searchParams.get('cursor') === 'page-2'), true);
+    for (const request of requests) {
+      assert.equal(request.url.searchParams.has('apiKey'), false, 'credentials must not appear in provider URLs');
+      assert.equal(request.key, 'test-server-only-key');
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.SPORTSGAMEODDS_API_KEY;
+    else process.env.SPORTSGAMEODDS_API_KEY = previousKey;
   }
 });
 
-test('game odds call returns a well-formed result (live or rate-limited, never throws)', async () => {
-  const r = await getSgoGameOdds('Lakers', 'Celtics', 'nba');
-  assert.equal(r.source, 'api.sportsgameodds.com');
-  if (r.available) {
-    assert.ok(r.markets?.h2h || r.markets?.spreads || r.markets?.totals, 'mapped at least one market');
-    console.log(`  LIVE h2h: ${(r.markets?.h2h ?? []).map((m: any) => `${m.teamSide}:${m.bookOdds}`).join(', ')}`);
-    console.log(`  props: ${r.props?.available} (${r.props?.reason ?? ''})`);
-  } else {
-    assert.ok(r.reason, 'has a reason when unavailable');
-    console.log(`  UNAVAILABLE: ${r.reason}`);
-  }
-});
-
-test('market mapping produces parseable american odds when data present', async () => {
-  // Re-run featured; if live, confirm bookOdds parses to a number and implied prob computes.
-  const r = await getSgoFeaturedOdds('nba');
-  if (!r.available) return; // nothing to assert when rate-limited
-  const h2h: any[] = r.markets?.h2h ?? [];
-  for (const m of h2h) {
-    assert.ok(typeof m.bookOdds === 'number', 'bookOdds is numeric');
-    assert.ok(m.impliedProbPct >= 0 && m.impliedProbPct <= 100, 'implied prob in range');
+test('SportsGameOdds fails closed when its optional key is absent', async () => {
+  const previousKey = process.env.SPORTSGAMEODDS_API_KEY;
+  delete process.env.SPORTSGAMEODDS_API_KEY;
+  try {
+    const result = await getSgoFeaturedOdds('nba');
+    assert.equal(result.available, false);
+    assert.match(result.reason ?? '', /not configured/i);
+  } finally {
+    if (previousKey !== undefined) process.env.SPORTSGAMEODDS_API_KEY = previousKey;
   }
 });

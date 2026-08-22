@@ -6,15 +6,6 @@ export interface HealthInfo {
   version?: string;
 }
 
-function customerHeaders(): Record<string, string> {
-  try {
-    const customerId = localStorage.getItem('sportsedge.customerId');
-    return customerId ? { 'x-se-customer-id': customerId } : {};
-  } catch {
-    return {};
-  }
-}
-
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`Health check returned HTTP ${res.status}`);
@@ -49,7 +40,8 @@ export interface LedgerResponse {
 
 export async function fetchLedger(): Promise<LedgerResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/ledger`, {
-    headers: { Accept: 'application/json', ...customerHeaders() },
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
   });
   const payload = (await res.json().catch(() => null)) as
     | (Partial<LedgerResponse> & { error?: string })
@@ -70,7 +62,6 @@ export async function saveLedgerTicket(
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'Idempotency-Key': idempotencyKey,
-      ...customerHeaders(),
     },
     body: JSON.stringify({ legs, idempotencyKey }),
   });
@@ -167,7 +158,8 @@ export interface SportInfo {
 
 export async function fetchPerformance(): Promise<{ performance: PerformanceSummary; sports: SportInfo[] }> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/performance`, {
-    headers: { Accept: 'application/json', ...customerHeaders() },
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
   });
   if (!res.ok) throw new Error(`Performance data unavailable (HTTP ${res.status})`);
   return (await res.json()) as { performance: PerformanceSummary; sports: SportInfo[] };
@@ -213,7 +205,8 @@ export interface DiagnosticsSnapshot {
 
 export async function fetchDiagnostics(): Promise<DiagnosticsSnapshot> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/diagnostics`, {
-    headers: { Accept: 'application/json', ...customerHeaders() },
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
   });
   const payload = (await res.json().catch(() => null)) as { diagnostics?: DiagnosticsSnapshot; error?: string } | null;
   if (!res.ok || !payload?.diagnostics) {
@@ -224,7 +217,8 @@ export async function fetchDiagnostics(): Promise<DiagnosticsSnapshot> {
 
 export async function downloadPredictionCsv(): Promise<void> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/predictions/export.csv`, {
-    headers: { Accept: 'text/csv', ...customerHeaders() },
+    credentials: 'same-origin',
+    headers: { Accept: 'text/csv' },
   });
   if (!res.ok) throw new Error(`Prediction export unavailable (HTTP ${res.status})`);
   const blob = await res.blob();

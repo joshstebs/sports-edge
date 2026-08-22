@@ -25,6 +25,9 @@ export async function pacedFetch(
   try {
     const wait = lastFetchAt + gapMs - Date.now();
     if (wait > 0) await sleep(wait);
+    // Reserve this start slot before waking the next waiter. Updating only
+    // after fetch() returns lets every concurrent waiter start together.
+    lastFetchAt = Date.now();
   } finally {
     release();
   }
@@ -46,14 +49,12 @@ export async function pacedFetch(
     }
     try {
       const res = await fetch(url, { ...opts, headers, signal: controller.signal });
-      lastFetchAt = Date.now();
       if ((res.status === 429 || res.status >= 500) && attempt === 0) {
         await sleep(1200);
         continue;
       }
       return res;
     } catch (e) {
-      lastFetchAt = Date.now();
       lastErr = e;
       if (attempt === 0 && !controller.signal.aborted) {
         await sleep(1200);

@@ -6,8 +6,6 @@
 // turn execute concurrently, then the model receives results in original order.
 
 import { executeToolBatch } from './toolBatch.js';
-import fs from 'node:fs';
-import path from 'node:path';
 
 export interface LlmConfig {
   configured: boolean;
@@ -41,37 +39,9 @@ export function llmConfig(): LlmConfig {
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
-  const fallbacks: LlmConfig[] = [];
-  if (openrouterKey) {
-    fallbacks.push({
-      configured: true,
-      provider: 'openrouter',
-      model: openrouterModels[0],
-      models: openrouterModels,
-      baseUrl: 'https://openrouter.ai/api/v1',
-    });
-  }
-  if (openaiKey) {
-    fallbacks.push({
-      configured: true,
-      provider: 'openai',
-      model: openaiModels[0],
-      models: openaiModels,
-      baseUrl: 'https://api.openai.com/v1',
-    });
-  }
-  const withFallback = (cfg: LlmConfig): LlmConfig => {
-    if (fallbacks.length) cfg.fallback = fallbacks[0];
-    for (let i = 1; i < fallbacks.length; i++) {
-      let cur = cfg.fallback;
-      while (cur?.fallback) cur = cur.fallback;
-      if (cur) cur.fallback = fallbacks[i];
-    }
-    return cfg;
-  };
-
+  const providers: LlmConfig[] = [];
   if (geminiKey) {
-    return withFallback({
+    providers.push({
       configured: true,
       provider: 'gemini',
       model: geminiModels[0],
@@ -80,7 +50,7 @@ export function llmConfig(): LlmConfig {
     });
   }
   if (openrouterKey) {
-    return withFallback({
+    providers.push({
       configured: true,
       provider: 'openrouter',
       model: openrouterModels[0],
@@ -89,7 +59,7 @@ export function llmConfig(): LlmConfig {
     });
   }
   if (openaiKey) {
-    return withFallback({
+    providers.push({
       configured: true,
       provider: 'openai',
       model: openaiModels[0],
@@ -97,6 +67,10 @@ export function llmConfig(): LlmConfig {
       baseUrl: 'https://api.openai.com/v1',
     });
   }
+  for (let index = 0; index < providers.length - 1; index++) {
+    providers[index].fallback = providers[index + 1];
+  }
+  if (providers.length) return providers[0];
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
 
@@ -151,7 +125,12 @@ export async function streamChatOnce(
   tools: ToolSchema[],
   cb: StreamCallbacks = {}
 ): Promise<OneShotResult> {
-  const providers = [cfg, ...(cfg.fallback ? [cfg.fallback] : [])];
+  const providers: LlmConfig[] = [];
+  const seen = new Set<LlmConfig>();
+  for (let current: LlmConfig | undefined = cfg; current && !seen.has(current); current = current.fallback) {
+    seen.add(current);
+    providers.push(current);
+  }
   const errors: string[] = [];
 
   for (const pc of providers) {
@@ -214,15 +193,6 @@ async function tryModel(
       }
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => '');
-        if (res.status === 400) {
-          try {
-            fs.writeFileSync(
-              path.join(process.cwd(), 'data', `debug-400-${Date.now()}.json`),
-              JSON.stringify({ model, status: res.status, error: errText.slice(0, 500), messages }, null, 1),
-              'utf8'
-            );
-          } catch { /* debug dump is best-effort */ }
-        }
         return { ok: false, error: `HTTP ${res.status}: ${errText.slice(0, 300)}` };
       }
       const result = await readStream(res, cb);
