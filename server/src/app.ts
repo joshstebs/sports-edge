@@ -20,6 +20,8 @@ import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
 import { statsRouter } from './routes/stats.js';
+import { calibrationRouter } from './routes/calibration.js';
+import { monitorRouter } from './routes/monitor.js';
 
 const app = express();
 const authConfig = loadAuthConfig();
@@ -87,6 +89,8 @@ app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
 app.use('/api/stats', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
+app.use('/api/calibration', calibrationRouter);
+app.use('/api/monitor', monitorRouter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
 // Chat/ledger/stats access: a valid session (owner/configured users) passes, or an
