@@ -1,5 +1,8 @@
 // SportsEdge analyst system prompt. Keep this operational and enforceable:
 // live data first, transparent models, no invented numbers, and explicit gates.
+// System prompt for the SportsEdge analyst LLM.
+// = user spec (quantitative analyst v2) + research knowledge base + tool rules.
+
 
 export const RESEARCH_KNOWLEDGE = `
 ### ANALYTICAL PRIORITIES
