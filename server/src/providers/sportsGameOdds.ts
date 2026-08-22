@@ -1,5 +1,6 @@
 // SportsGameOdds API v2 — multi-book odds + scores + results in one event object.
-// Auth via x-api-key header (apiKey query param also accepted; we use the header).
+// Auth via x-api-key header. Never put the credential in the URL because URLs
+// are routinely retained by proxies, observability tools, and access logs.
 // Key comes from SPORTSGAMEODDS_API_KEY in server/.env. Optional: returns
 // {available:false} unless the key is set. Zero fabrication — never invent markets.
 //
@@ -65,7 +66,7 @@ interface SgoEvent {
 async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): Promise<{ events: SgoEvent[]; next: string | null; notice: string | null; rateLimited: boolean }> {
   const k = key();
   if (!k) return { events: [], next: null, notice: null, rateLimited: false };
-  const params = new URLSearchParams({ leagueID, apiKey: k });
+  const params = new URLSearchParams({ leagueID });
   if (oddsOnly) params.set('oddsAvailable', 'true');
   if (cursor) params.set('cursor', cursor);
   const url = `${BASE}/events?${params.toString()}`;
@@ -92,15 +93,15 @@ async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): 
 }
 
 // Pull pages until we have a candidate match or run out (max 5 pages).
-async function collectEvents(leagueID: string, needTeams: boolean): Promise<{ events: SgoEvent[]; rateLimited: boolean }> {
+async function collectEvents(leagueID: string, firstPageOnly: boolean): Promise<{ events: SgoEvent[]; rateLimited: boolean }> {
   const all: SgoEvent[] = [];
   let cursor: string | undefined;
   let rateLimited = false;
   for (let i = 0; i < 5; i++) {
-    const { events, next, rateLimited: rl } = await fetchEvents(leagueID, needTeams, cursor);
+    const { events, next, rateLimited: rl } = await fetchEvents(leagueID, true, cursor);
     if (rl) { rateLimited = true; break; }
     all.push(...events);
-    if (needTeams && all.length > 0) break;
+    if (firstPageOnly) break;
     if (!next) break;
     cursor = next;
   }
@@ -185,7 +186,7 @@ export async function getSgoFeaturedOdds(sport: string): Promise<SgoResult> {
   const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
   if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE };
   try {
-    const { events, rateLimited } = await collectEvents(league, false);
+    const { events, rateLimited } = await collectEvents(league, true);
     if (!events.length) return { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no ${league} events with odds right now`, source: SOURCE, notice: lastNotice };
     const ev = events[0];
     const { home, away } = teamNames(ev);
@@ -215,7 +216,9 @@ export async function getSgoGameOdds(
   try {
     const na = teamA ? normalizeName(teamA) : null;
     const nb = teamB ? normalizeName(teamB) : null;
-    const { events, rateLimited } = await collectEvents(league, true);
+    // A requested matchup may be on a later provider page. Walk the bounded
+    // cursor window instead of stopping as soon as page one is non-empty.
+    const { events, rateLimited } = await collectEvents(league, false);
     const ev = matchEvent(events, na, nb);
     if (!ev) {
       return { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no SportsGameOdds event matching ${teamA ?? '?'} vs ${teamB ?? '?'}`, source: SOURCE, notice: lastNotice };

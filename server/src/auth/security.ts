@@ -20,6 +20,12 @@ export function enforceTrustedOrigin(allowedOrigins: readonly string[]): Request
       next();
       return;
     }
+    // Stripe authenticates the exact raw request body with its signature, so
+    // its server-to-server webhook has no browser Origin header by design.
+    if (req.path === '/api/billing/webhook' && req.header('stripe-signature')) {
+      next();
+      return;
+    }
     // The cron currently uses GET. Keep a narrow bearer exception if its
     // transport changes; the evaluation route still validates CRON_SECRET.
     if (req.path === '/api/evaluate' && req.header('authorization')?.startsWith('Bearer ')) {

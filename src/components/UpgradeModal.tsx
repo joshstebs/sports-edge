@@ -1,16 +1,15 @@
 import { useState, type FormEvent } from 'react';
-import { startCheckout, setCustomerId, openPortal, getCustomerId } from '../lib/billing';
+import { startCheckout, openPortal } from '../lib/billing';
 
 interface UpgradeModalProps {
   onClose: () => void;
-  onEntitled: (customerId: string) => void;
+  canManage?: boolean;
 }
 
-export default function UpgradeModal({ onClose, onEntitled }: UpgradeModalProps) {
+export default function UpgradeModal({ onClose, canManage = false }: UpgradeModalProps) {
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [manageUrl, setManageUrl] = useState<string | null>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -18,9 +17,7 @@ export default function UpgradeModal({ onClose, onEntitled }: UpgradeModalProps)
     setSubmitting(true);
     setError(null);
     try {
-      const { url, customerId } = await startCheckout(email.trim());
-      setCustomerId(customerId);
-      onEntitled(customerId);
+      const { url } = await startCheckout(email.trim());
       window.location.assign(url);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not start checkout. Please retry.');
@@ -29,12 +26,11 @@ export default function UpgradeModal({ onClose, onEntitled }: UpgradeModalProps)
   };
 
   const manage = async () => {
-    const customerId = getCustomerId();
-    if (!customerId) return;
+    if (!canManage) return;
     setError(null);
     try {
-      setManageUrl(await openPortal(customerId));
-      window.location.assign(manageUrl!);
+      const url = await openPortal();
+      window.location.assign(url);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not open the billing portal.');
     }
@@ -98,7 +94,7 @@ export default function UpgradeModal({ onClose, onEntitled }: UpgradeModalProps)
         </form>
 
         <div className="mt-4 flex items-center justify-between gap-3 text-[11px]">
-          {getCustomerId() ? (
+          {canManage ? (
             <button onClick={manage} className="font-bold text-edge transition hover:text-edge2">
               Manage subscription
             </button>

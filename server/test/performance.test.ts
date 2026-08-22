@@ -43,17 +43,34 @@ test('computePerformance aggregates graded predictions by record, ROI and confid
       legs: [{ ...p2.legs[0], outcome: 'lost', actual: 24, evaluated_at: now }] as any,
     });
 
+    const p3 = await store.addPrediction({
+      userId: 'admin',
+      timestamp: now,
+      sport: 'NHL',
+      matchup: 'E vs F',
+      bet_type: 'Player Prop',
+      legs: [{ leg_name: 'Player Over 2.0 SOG', target_line: '2.0', model_probability: 0.65, implied_odds: '-105', market: 'playerProps', model_version: 'empirical-beta-v1' }],
+      status: 'evaluated',
+      evaluatedAt: now,
+    });
+    await store.updatePrediction(p3.prediction_id, {
+      legs: [{ ...p3.legs[0], outcome: 'push', actual: 2, evaluated_at: now }] as any,
+    });
+
     const perf = await computePerformance();
 
     assert.equal(perf.overall.graded, 2);
     assert.equal(perf.overall.wins, 1);
     assert.equal(perf.overall.losses, 1);
-    // Won +120 => +1.2 units; lost -110 => -0.909 units => ~+0.291.
-    assert.ok(Math.abs((perf.overall.units ?? 0) - 0.291) < 1e-2, `units=${perf.overall.units}`);
+    assert.equal(perf.overall.pushes, 1);
+    assert.equal(perf.overall.priced, 2, 'pushes return the stake and are excluded from priced ROI');
+    // Flat one-unit stakes: won +120 => +1.2; any loss => -1.0.
+    assert.ok(Math.abs((perf.overall.units ?? 0) - 0.2) < 1e-2, `units=${perf.overall.units}`);
     assert.ok(Math.abs((perf.overall.winRate ?? 0) - 50) < 1e-6, `winRate=${perf.overall.winRate}`);
-    assert.deepEqual(perf.bySport.map((s) => s.sport).sort(), ['MLB', 'NBA']);
-    assert.deepEqual(perf.byConfidence.map((b) => b.band).sort(), ['High', 'Low']);
-    assert.equal(perf.recent.length, 2);
+    assert.deepEqual(perf.bySport.map((s) => s.sport).sort(), ['MLB', 'NBA', 'NHL']);
+    assert.deepEqual(perf.byConfidence.map((b) => b.band).sort(), ['High', 'Low', 'Medium']);
+    assert.equal(perf.byConfidence.find((band) => band.band === 'Medium')?.hitRate, null);
+    assert.equal(perf.recent.length, 3);
     assert.equal(store.storageStatus().backend, 'local-json');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

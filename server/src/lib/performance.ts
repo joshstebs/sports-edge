@@ -22,7 +22,7 @@ interface Row {
   market: string;
   model: string;
   p: number | null;
-  y: 0 | 1; // 1 = win, 0 = loss; pushes excluded from win-rate
+  y: 0 | 1 | null; // 1 = win, 0 = loss; pushes have no binary outcome
   odds: number | null;
   prediction: Prediction;
   leg: PredictionLeg;
@@ -117,15 +117,17 @@ function aggregate(rows: Row[]) {
   let net = 0;
   let priced = 0;
   for (const r of rows) {
-    if (r.y === 0 || r.y === 1) {
+    if (r.y !== null) {
       graded++;
       if (r.y === 1) won++;
       else lost++;
     }
     if (r.leg.outcome === 'push') pushes++;
-    if (r.odds != null) {
+    if (r.odds != null && r.y !== null) {
       priced++;
-      net += (r.y === 1 ? 1 : -1) * americanToUnits(r.odds);
+      // Flat one-unit stake: a loss is always -1 unit; the American price
+      // determines only the profit on a win. Pushes return the stake.
+      net += r.y === 1 ? americanToUnits(r.odds) : -1;
     }
   }
   return {
@@ -163,7 +165,7 @@ function rowsForPredictions(predictions: Prediction[]): Row[] {
         market: String(leg.market ?? 'unknown').trim() || 'unknown',
         model: String(leg.model_version ?? 'unknown').trim() || 'unknown',
         p: parseProbability(leg.model_probability),
-        y: leg.outcome === 'won' ? 1 : 0,
+        y: leg.outcome === 'won' ? 1 : leg.outcome === 'lost' ? 0 : null,
         odds: legAmerican(leg),
         prediction,
         leg,
@@ -206,16 +208,16 @@ export async function computePerformance(): Promise<PerformanceSummary> {
     if (r.leg.outcome === 'won') bucket.won++;
     else if (r.leg.outcome === 'lost') bucket.lost++;
     else if (r.leg.outcome === 'push') bucket.pushes++;
-    if (r.odds != null) {
+    if (r.odds != null && r.y !== null) {
       bucket.priced++;
-      bucket.netUnits += (r.y === 1 ? 1 : -1) * americanToUnits(r.odds);
+      bucket.netUnits += r.y === 1 ? americanToUnits(r.odds) : -1;
     }
   }
   const byConfidence = BANDS.map((b) => {
     const bucket = bandBuckets[b.band];
     return {
       ...bucket,
-      hitRate: bucket.n ? (bucket.won / bucket.n) * 100 : null,
+      hitRate: bucket.won + bucket.lost ? (bucket.won / (bucket.won + bucket.lost)) * 100 : null,
       netUnits: Number(bucket.netUnits.toFixed(2)),
     };
   }).filter((b) => b.n > 0);

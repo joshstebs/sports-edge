@@ -8,7 +8,6 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test test/*.test.ts",
     "probe": "tsx scripts/probe.ts",
     "eval": "tsx scripts/evaluate.ts",
     "auth:generate": "tsx scripts/generate-auth-users.ts",
@@ -20,7 +19,8 @@
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "express-rate-limit": "^8.6.2",
-    "stripe": "^22.5.0"
+    "stripe": "^22.5.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

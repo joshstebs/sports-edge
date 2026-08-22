@@ -5,6 +5,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { createUserRateLimiter } from '../src/auth/rateLimit.js';
 import { authenticatedNoStore, enforceTrustedOrigin, requireJsonRequest, securityHeaders } from '../src/auth/security.js';
 import { predictionsRouter } from '../src/routes/predictions.js';
+import { checkoutStateReference, createCustomerToken, verifyCustomerToken } from '../src/routes/billing.js';
 
 interface RecordedResponse {
   status?: number;
@@ -58,6 +59,37 @@ test('origin guard preserves the narrow bearer cron exception', () => {
   let nextCalls = 0;
   enforceTrustedOrigin(['https://sports.example'])(req, responseRecorder().response, (() => { nextCalls++; }) as NextFunction);
   assert.equal(nextCalls, 1);
+});
+
+test('origin guard permits only signed Stripe webhook traffic without a browser origin', () => {
+  const req = request('POST');
+  req.path = '/api/billing/webhook';
+  req.headers['stripe-signature'] = 't=123,v1=test';
+  let nextCalls = 0;
+  enforceTrustedOrigin(['https://sports.example'])(req, responseRecorder().response, (() => { nextCalls++; }) as NextFunction);
+  assert.equal(nextCalls, 1);
+
+  const unsigned = request('POST');
+  unsigned.path = '/api/billing/webhook';
+  const recorded = responseRecorder();
+  enforceTrustedOrigin(['https://sports.example'])(unsigned, recorded.response, (() => { nextCalls++; }) as NextFunction);
+  assert.equal(recorded.state.status, 403);
+});
+
+test('customer entitlement tokens reject tampering and expiration', () => {
+  const secret = 'a'.repeat(32);
+  const now = Date.UTC(2026, 7, 22);
+  const token = createCustomerToken('cus_Test123', secret, now);
+  assert.equal(verifyCustomerToken(token, secret, now), 'cus_Test123');
+  assert.equal(verifyCustomerToken(`${token.slice(0, -1)}x`, secret, now), null);
+  assert.equal(verifyCustomerToken(token, 'b'.repeat(32), now), null);
+  assert.equal(verifyCustomerToken(token, secret, now + 31 * 24 * 60 * 60 * 1_000), null);
+});
+
+test('checkout state references bind completion to the initiating browser', () => {
+  const secret = 'a'.repeat(32);
+  assert.equal(checkoutStateReference('browser-a', secret), checkoutStateReference('browser-a', secret));
+  assert.notEqual(checkoutStateReference('browser-a', secret), checkoutStateReference('browser-b', secret));
 });
 
 test('login content-type guard accepts JSON only', () => {
