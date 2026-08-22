@@ -21,6 +21,11 @@ export function createAuthRouter(config: AuthConfig = loadAuthConfig()): Router 
       const user = config.users.get(username);
       const valid = user ? await verifyPassword(password, user.passwordHash) : (await burnPasswordCheck(password), false);
       if (!valid || !user) {
+        console.warn('[auth] login rejected', {
+          username: username || '<empty>',
+          configuredUser: Boolean(user),
+          role: user?.role ?? null,
+        });
         res.status(401).json({ ok: false, error: 'Invalid username or password.' });
         return;
       }
@@ -31,6 +36,7 @@ export function createAuthRouter(config: AuthConfig = loadAuthConfig()): Router 
         config.sessionTtlSeconds,
       );
       res.setHeader('Set-Cookie', sessionCookie(token, config.sessionTtlSeconds));
+      console.info('[auth] login accepted', { username: user.username, role: user.role });
       res.json({ ok: true, user: { id: user.id, username: user.username, role: user.role } });
     } catch (error) {
       next(error);
