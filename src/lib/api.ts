@@ -272,7 +272,8 @@ export interface CalibrationResponse {
 export async function fetchCalibration(sport?: string): Promise<CalibrationResponse> {
   const params = sport ? `?sport=${encodeURIComponent(sport)}` : '';
   const res = await fetch(`${import.meta.env.BASE_URL}api/calibration${params}`, {
-    headers: { Accept: 'application/json', ...customerHeaders() },
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
   });
   const payload = (await res.json().catch(() => null)) as
     | (Partial<CalibrationResponse> & { error?: string })
