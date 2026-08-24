@@ -6,29 +6,49 @@ import {
   requestedParlayShortfall,
 } from '../src/lib/parlayQuality.js';
 
-test('normal 5-6 leg parlay requires B grade or better', () => {
+test('explicit 5-6 leg request fills shortfall with strongest C+ supplemental picks', () => {
   const policy = parseParlayQualityPolicy('Give me the best 5-6 game parlay');
   assert.equal(policy.aggressive, false);
   assert.equal(policy.sameGameIntent, false);
   assert.equal(policy.minConfidence, 58);
+  assert.equal(policy.supplementalMinConfidence, 54);
+  assert.equal(policy.targetFill, true);
   assert.equal(policy.requestedMin, 5);
   assert.equal(policy.requestedMax, 6);
 
   const result = filterParlayQuality([
-    { player_name: 'A', confidence: 70 },
-    { player_name: 'B', confidence: 61 },
-    { player_name: 'C', confidence: 57 },
-    { player_name: 'D', confidence: 44 },
+    { player_name: 'A', confidence: 70, event_id: 'a' },
+    { player_name: 'B', confidence: 61, event_id: 'b' },
+    { player_name: 'C1', confidence: 57, event_id: 'c' },
+    { player_name: 'C2', confidence: 56, event_id: 'd' },
+    { player_name: 'C3', confidence: 54, event_id: 'e' },
+    { player_name: 'TooWeak', confidence: 53, event_id: 'f' },
+    { player_name: 'D', confidence: 44, event_id: 'g' },
   ], policy);
 
-  assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A', 'B']);
-  assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['C', 'D']);
+  assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A', 'B', 'C1', 'C2', 'C3']);
+  assert.equal(result.coreCount, 2);
+  assert.equal(result.supplementalCount, 3);
+  assert.deepEqual(result.legs.slice(2).map((leg: any) => leg.quality_tier), ['supplemental', 'supplemental', 'supplemental']);
+  assert.deepEqual(result.blocked.map((leg) => leg.player_name).sort(), ['D', 'TooWeak'].sort());
+});
+
+test('no explicit multi-pick count keeps normal B-grade floor', () => {
+  const policy = parseParlayQualityPolicy('Give me the best MLB props');
+  assert.equal(policy.targetFill, false);
+  const result = filterParlayQuality([
+    { player_name: 'A', confidence: 62 },
+    { player_name: 'C', confidence: 57 },
+  ], policy);
+  assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A']);
+  assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['C']);
 });
 
 test('hyphenated single leg counts are parsed and capped', () => {
   const policy = parseParlayQualityPolicy('Give me the best 3-leg parlay');
   assert.equal(policy.requestedMin, 3);
   assert.equal(policy.requestedMax, 3);
+  assert.equal(policy.targetFill, true);
 });
 
 test('aggressive request may include C but never D', () => {
@@ -40,6 +60,7 @@ test('aggressive request may include C but never D', () => {
   ], policy);
 
   assert.equal(policy.minConfidence, 50);
+  assert.equal(policy.targetFill, false);
   assert.equal(policy.requestedMin, 6);
   assert.equal(policy.requestedMax, 6);
   assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A', 'C']);
@@ -68,13 +89,14 @@ test('team and game markets require both confidence and attributable quality evi
   assert.deepEqual(result.blocked.map((leg) => leg.selection), ['Toronto ML', 'Over 8.5']);
 });
 
-test('normal parlays reject explicitly negative correlation', () => {
+test('normal parlays reject explicitly negative correlation even in target-fill mode', () => {
   const policy = parseParlayQualityPolicy('Give me the best 3-leg parlay');
   const result = filterParlayQuality([
     { player_name: 'A', confidence: 68, correlation: 'Positive - same game script' },
-    { player_name: 'B', confidence: 64, correlation: 'Negative - conflicts with leg A' },
+    { player_name: 'B', confidence: 57, correlation: 'Negative - conflicts with leg A' },
+    { player_name: 'C', confidence: 56, correlation: 'Neutral' },
   ], policy);
-  assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A']);
+  assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A', 'C']);
   assert.deepEqual(result.blocked.map((leg) => leg.player_name), ['B']);
 });
 
@@ -101,7 +123,7 @@ test('same-game intent keeps confidence ranking without diversity penalty', () =
   assert.deepEqual(result.legs.map((leg) => leg.player_name), ['A1', 'A2', 'B1']);
 });
 
-test('reports requested-count shortfall instead of padding', () => {
+test('reports requested-count shortfall after target-fill candidates are exhausted', () => {
   const policy = parseParlayQualityPolicy('Give me 6 picks');
   assert.equal(requestedParlayShortfall(policy, 4), 2);
   assert.equal(requestedParlayShortfall(policy, 6), 0);
