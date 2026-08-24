@@ -14,6 +14,10 @@ export interface TopEdgePick {
   edgePct: number | null;
   model: string;
   source: string | null;
+  /** Sample size behind the model probability, when the model reported one. */
+  modelSampleSize?: number | null;
+  /** Availability-gate note persisted at logging time (null = fully verified at log time). */
+  lineupStatus?: string | null;
 }
 
 export interface CalibrationDiagnostic {
@@ -121,6 +125,8 @@ function buildTopEdges(predictions: Prediction[], now: Date): TopEdgePick[] {
         edgePct: edgePct == null ? null : Number(edgePct.toFixed(1)),
         model: String(leg.model_version ?? 'unknown'),
         source: leg.model_source ? String(leg.model_source) : null,
+        modelSampleSize: leg.model_sample_size ?? null,
+        lineupStatus: (leg as PredictionLeg & { gate_note?: string | null }).gate_note ?? null,
       });
     }
   }

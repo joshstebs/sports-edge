@@ -22,7 +22,15 @@ import { streamChat } from './lib/sse';
 import type { ChatMessage, HealthState, Sport, SgpLeg, ToolEvent } from './types';
 import { SPORTS } from './types';
 import { getStoredTheme, toggleTheme, type ThemeMode } from './lib/theme';
-import PerformancePage from './components/Performance';
+import type { View } from './lib/nav';
+import Sidebar from './components/Sidebar';
+import MobileNav from './components/MobileNav';
+import Today from './components/Today';
+import BestBetsPage from './components/BestBets';
+import ParlayBuilder from './components/ParlayBuilder';
+import MyPicks from './components/MyPicks';
+import Results from './components/Results';
+import ModelLab from './components/ModelLab';
 
 const CHAT_STORAGE_KEY = 'sports-edge:chat:v2';
 const SLIP_STORAGE_KEY = 'sports-edge:betslip:v2';
@@ -209,7 +217,7 @@ function Workspace({
   });
   const [model, setModel] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme());
-  const [view, setView] = useState<'chat' | 'performance'>('chat');
+  const [view, setView] = useState<View>('today');
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -495,7 +503,7 @@ function Workspace({
               m.id === assistantId
                 ? {
                     ...m,
-                    error: "Can't reach the analyst server. Is it running on port 3100?",
+                    error: 'SportsEdge is temporarily unreachable. Your picks are saved locally — try again in a moment.',
                     streaming: false,
                   }
                 : m,
@@ -568,8 +576,81 @@ function Workspace({
     }
   }, [chatStorageKey, setStreamingState]);
 
+  const goAsk = useCallback(
+    (text?: string) => {
+      setView('chat');
+      if (typeof text === 'string' && text.trim()) {
+        // Give the view a tick to mount the composer, then send.
+        window.setTimeout(() => sendMessage(text), 30);
+      }
+    },
+    [sendMessage],
+  );
+
+  const addTopEdgeToSlip = useCallback((pick: {
+    sport?: string; matchup?: string; selection?: string; market?: string;
+    odds?: number | null; confidence?: number;
+  }) => {
+    const leg: SgpLeg = {
+      sport: pick.sport,
+      game: pick.matchup,
+      selection: pick.selection,
+      market: pick.market,
+      odds: typeof pick.odds === 'number' ? pick.odds : null,
+      confidence: typeof pick.confidence === 'number' ? pick.confidence : undefined,
+    };
+    setSlipLegs((prev) => mergeSgpLegs(prev, [leg]));
+  }, []);
+
+  const renderView = () => {
+    switch (view) {
+      case 'today':
+        return <Today onAsk={goAsk} onAddLegText={addTopEdgeToSlip} slipCount={slipLegs.length} />;
+      case 'best-bets':
+        return (
+          <BestBetsPage
+            performance={null}
+            loading={false}
+            error={null}
+            onAddLeg={addTopEdgeToSlip}
+            addedKeys={new Set()}
+          />
+        );
+      case 'parlays':
+        return (
+          <ParlayBuilder
+            onAsk={goAsk}
+            slipCount={slipLegs.length}
+            slipSlot={
+              <ParlaySlip
+                legs={slipLegs}
+                onRemove={removeLeg}
+                onClear={clearSlip}
+                onSave={saveSlip}
+                unsavedCount={unsavedSlipLegs.length}
+                saveStatus={slipSaveStatus}
+              />
+            }
+          />
+        );
+      case 'my-picks':
+        return <MyPicks />;
+      case 'results':
+        return <Results />;
+      case 'model-lab':
+        return user.role === 'admin' ? <ModelLab /> : null;
+      case 'chat':
+      default:
+        return null;
+    }
+  };
+
+  const chatActive = view === 'chat';
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full">
+      <Sidebar user={user} view={view} onNavigate={setView} slipCount={slipLegs.length} />
+      <div className="flex min-w-0 flex-1 flex-col">
       <Header
         model={model}
         health={health}
@@ -579,14 +660,10 @@ function Workspace({
         onToggleTheme={() => setTheme(toggleTheme())}
         onLogout={onLogout}
         onNewChat={newChat}
-        onOpenPerformance={() => setView((v) => (v === 'performance' ? 'chat' : 'performance'))}
+        onOpenPerformance={() => setView((v) => (v === 'results' ? 'chat' : 'results'))}
       />
-      <SportSelector sports={SPORTS} active={sport} onChange={setSport} />
-      {view === 'performance' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <PerformancePage onBack={() => setView('chat')} onSelectSport={(s) => { setSport(s); setView('chat'); }} />
-        </div>
-      ) : (
+      {chatActive && <SportSelector sports={SPORTS} active={sport} onChange={setSport} />}
+      {chatActive ? (
       <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <MessageList messages={messages} onSend={sendMessage} onRetry={retryMessage} />
@@ -650,6 +727,14 @@ function Workspace({
           </div>
         </div>
       </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto md:pb-0 pb-[env(safe-area-inset-bottom)]">
+          {renderView()}
+        </div>
+      )}
+      </div>
+      {!chatActive && (
+        <MobileNav user={user} view={view} onNavigate={setView} slipCount={slipLegs.length} />
       )}
     </div>
   );

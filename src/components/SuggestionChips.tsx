@@ -1,11 +1,16 @@
 const SUGGESTIONS = [
-  "Grade today's best MLB props",
-  '4-leg SGP: Blue Jays vs Astros',
-  'Compare book odds for Blue Jays vs Astros',
-  'Vlad Guerrero Jr. HR prop - full breakdown',
-  'Which starters have the best K props?',
+  'Best bets today',
+  'Build a 5-leg parlay',
+  'Best MLB props',
+  'Best NFL bets',
+  'Best NBA props',
+  'Best NHL bets',
 ];
 
+/**
+ * One-tap quick actions for the empty/chat state. Selecting one composes and
+ * sends a sensible analyst request automatically.
+ */
 export default function SuggestionChips({ onPick }: { onPick: (text: string) => void }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2">
@@ -23,6 +28,9 @@ export default function SuggestionChips({ onPick }: { onPick: (text: string) => 
           </svg>
         </button>
       ))}
+      <p className="text-[10px] leading-relaxed text-frost2/70 sm:col-span-2">
+        You can also attach a bet screenshot, ask about injuries, review yesterday’s picks, or ask why a pick was withheld — SportsEdge explains its reasoning on request.
+      </p>
     </div>
   );
 }
