@@ -50,6 +50,12 @@ async function getJson(url: string): Promise<{ ok: boolean; status: number; body
     const body = await res.json().catch(() => null);
     if (body?.error_code === 'REQUEST_LIMIT_REACHED') remaining = 0;
   }
+  // 401 "Usage quota reached" also means exhausted — some plans emit 401
+  // instead of 429 when credits hit zero. Treat it the same so callers fall
+  // back to the next provider instead of surfacing a raw auth error.
+  if (res.status === 401) {
+    remaining = 0;
+  }
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   return { ok: res.ok, status: res.status, body, headers: res.headers };
 }
