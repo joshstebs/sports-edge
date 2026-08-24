@@ -30,6 +30,10 @@ export interface PredictionLeg {
   model_version?: string | null;
   model_sample_size?: number | null;
   model_source?: string | null;
+  /** Real sportsbook moneyline captured at recommendation time (e.g. "-141"). */
+  game_odds?: string | null;
+  /** Availability-gate note persisted at logging time ("lineup not yet confirmed…"). */
+  gate_note?: string | null;
   outcome?: LegOutcome | null;
   actual?: number | null;
   evaluation_note?: string | null;
@@ -273,6 +277,10 @@ export function normalizePrediction(input: any): Prediction {
       model_version: leg.model_version != null ? String(leg.model_version).slice(0, 80) : null,
       model_sample_size: optionalNumber(leg.model_sample_size),
       model_source: leg.model_source != null ? String(leg.model_source).slice(0, 200) : null,
+      game_odds: leg.game_odds != null && String(leg.game_odds).trim() !== '' ? String(leg.game_odds).trim().slice(0, 20) : null,
+      gate_note: leg.__gateNote != null && String(leg.__gateNote).trim() !== ''
+        ? String(leg.__gateNote).trim().slice(0, 160)
+        : (leg.gate_note != null && String(leg.gate_note).trim() !== '' ? String(leg.gate_note).trim().slice(0, 160) : null),
     }));
   const base: Omit<Prediction, 'prediction_id'> = {
     source_prediction_id: sourceId, timestamp,

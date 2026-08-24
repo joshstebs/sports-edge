@@ -30,7 +30,15 @@ export interface LedgerPick {
   selection: string;
   market?: string | null;
   line?: string | number | null;
+  /** American odds captured at save time. */
+  odds?: number | null;
+  justification?: string | null;
+  risk?: string | null;
+  correlation?: string | null;
+  confidence?: number | null;
   status: 'pending' | 'won' | 'lost' | 'push';
+  settledAt?: string | null;
+  settlementSource?: 'manual' | 'prediction-evaluator' | null;
 }
 
 export interface LedgerResponse {
@@ -100,6 +108,10 @@ export interface TopEdgePick {
   edgePct: number | null;
   model: string;
   source: string | null;
+  /** Sample size behind the model probability, when the model reported one. */
+  modelSampleSize?: number | null;
+  /** Availability-gate note persisted at logging time (null = fully verified). */
+  lineupStatus?: string | null;
 }
 
 export interface CalibrationDiagnostic {
