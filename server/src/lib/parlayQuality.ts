@@ -2,13 +2,17 @@ export interface ParlayQualityPolicy {
   aggressive: boolean;
   sameGameIntent: boolean;
   minConfidence: number;
+  supplementalMinConfidence: number;
   requestedMin: number | null;
   requestedMax: number | null;
+  targetFill: boolean;
 }
 
 export interface QualityFilterResult<T = any> {
   legs: T[];
   blocked: T[];
+  coreCount: number;
+  supplementalCount: number;
 }
 
 function toConfidence(value: unknown): number | null {
@@ -43,7 +47,6 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
   const sameGameIntent = /\b(?:same[- ]?game|sgp)\b/i.test(normalized);
 
   const range = normalized.match(/\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s*(?:leg|legs|game|games|pick|picks)?\b/i);
-  // Accept both "6 leg" and the very common hyphenated form "6-leg".
   const single = normalized.match(/\b(\d{1,2})\s*(?:-|–|—)?\s*(?:leg|legs|game|games|pick|picks)\b/i);
   let requestedMin: number | null = null;
   let requestedMax: number | null = null;
@@ -56,12 +59,21 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
     requestedMin = requestedMax = Number(single[1]);
   }
 
+  // When the user explicitly asks for a multi-pick construction, treat that
+  // count as a real target. We still rank >=58% A/B candidates first, but may
+  // use the strongest 54-57.9% C+ candidates to fill a remaining shortfall.
+  // This restores useful 4-6 leg outputs without reopening the old low-quality
+  // padding behavior. D-grade and sub-54% picks remain hard blocked.
+  const targetFill = !aggressive && requestedMin != null && requestedMin >= 3;
+
   return {
     aggressive,
     sameGameIntent,
     minConfidence: aggressive ? 50 : 58,
+    supplementalMinConfidence: aggressive ? 50 : 54,
     requestedMin,
     requestedMax,
+    targetFill,
   };
 }
 
@@ -76,9 +88,6 @@ function rankParlayCandidates<T extends Record<string, any>>(legs: T[], policy: 
     return policy.requestedMax != null ? ranked.slice(0, policy.requestedMax) : ranked;
   }
 
-  // For normal cross-slate parlays, prefer one high-quality leg per event before
-  // adding a second leg from the same game. This reduces accidental dependency
-  // and concentration without blocking an intentional SGP request.
   const diverse: T[] = [];
   const deferred: T[] = [];
   const seenEvents = new Set<string>();
@@ -94,48 +103,81 @@ function rankParlayCandidates<T extends Record<string, any>>(legs: T[], policy: 
   return policy.requestedMax != null ? output.slice(0, policy.requestedMax) : output;
 }
 
+function passesNonConfidenceRules(leg: Record<string, any>, policy: ParlayQualityPolicy): boolean {
+  const entityType = String(leg?.entity_type ?? '').toLowerCase();
+  if ((entityType === 'team' || entityType === 'game') && !qualitySource(leg)) return false;
+  if (!policy.aggressive && isExplicitlyNegativeCorrelation(leg)) return false;
+  return true;
+}
+
 /**
  * Final server-side recommendation gate.
  * - D-grade / <50% legs are always rejected.
- * - Normal parlays require B-or-better (>=58%).
- * - Explicit aggressive requests may include C (>=50%).
- * - Missing confidence fails closed on recommendation paths.
- * - Team/game markets must have both a numeric confidence and an attributable
- *   model/quality source; unscored markets remain analysis-only.
+ * - Normal default recommendations require B-or-better (>=58%).
+ * - If the user explicitly requests >=3 picks/legs, >=58% picks are selected
+ *   first, then 54-57.9% C+ candidates may fill only the remaining shortfall.
+ * - Supplemental C+ picks are tagged `quality_tier=supplemental` and are never
+ *   promoted above core A/B picks.
+ * - Aggressive requests may include C (>=50%) but never D (<50%).
+ * - Missing confidence fails closed.
+ * - Team/game markets still require attributable model/quality evidence.
  * - Explicit negative-correlation legs are rejected for normal parlays.
- * - Passing legs are ranked by confidence and, unless SGP was requested,
- *   diversified across events before duplicate-game legs are considered.
  */
 export function filterParlayQuality<T extends Record<string, any>>(
   rawLegs: T[],
   policy: ParlayQualityPolicy,
 ): QualityFilterResult<T> {
-  const accepted: T[] = [];
+  const core: T[] = [];
+  const supplemental: T[] = [];
   const blocked: T[] = [];
 
   for (const leg of Array.isArray(rawLegs) ? rawLegs : []) {
-    const entityType = String(leg?.entity_type ?? '').toLowerCase();
     const confidence = toConfidence(leg?.confidence ?? leg?.model_probability);
 
-    if (confidence == null || confidence < 50 || confidence < policy.minConfidence) {
+    if (confidence == null || confidence < 50 || !passesNonConfidenceRules(leg, policy)) {
       blocked.push(leg);
       continue;
     }
 
-    if ((entityType === 'team' || entityType === 'game') && !qualitySource(leg)) {
-      blocked.push(leg);
+    if (policy.aggressive || confidence >= policy.minConfidence) {
+      core.push({ ...leg, quality_tier: policy.aggressive && confidence < 58 ? 'aggressive' : 'core' } as T);
       continue;
     }
 
-    if (!policy.aggressive && isExplicitlyNegativeCorrelation(leg)) {
-      blocked.push(leg);
+    if (policy.targetFill && confidence >= policy.supplementalMinConfidence) {
+      supplemental.push({
+        ...leg,
+        quality_tier: 'supplemental',
+        quality_note: 'Supplemental target-fill pick: modeled below the normal 58% core threshold; lower-confidence than core selections.',
+      } as T);
       continue;
     }
 
-    accepted.push(leg);
+    blocked.push(leg);
   }
 
-  return { legs: rankParlayCandidates(accepted, policy), blocked };
+  const rankedCore = rankParlayCandidates(core, policy);
+  if (policy.aggressive || !policy.targetFill || policy.requestedMin == null) {
+    return { legs: rankedCore, blocked: [...blocked, ...supplemental], coreCount: rankedCore.length, supplementalCount: 0 };
+  }
+
+  const need = Math.max(0, policy.requestedMin - rankedCore.length);
+  const rankedSupplemental = rankParlayCandidates(supplemental, {
+    ...policy,
+    requestedMax: need > 0 ? need : 0,
+  });
+  const selectedSupplemental = need > 0 ? rankedSupplemental.slice(0, need) : [];
+  const selected = [...rankedCore, ...selectedSupplemental];
+  const capped = policy.requestedMax != null ? selected.slice(0, policy.requestedMax) : selected;
+  const selectedSupplementalKeys = new Set(selectedSupplemental.map((leg) => JSON.stringify(leg)));
+  const unusedSupplemental = supplemental.filter((leg) => !selectedSupplementalKeys.has(JSON.stringify(leg)));
+
+  return {
+    legs: capped,
+    blocked: [...blocked, ...unusedSupplemental],
+    coreCount: capped.filter((leg: any) => leg?.quality_tier !== 'supplemental').length,
+    supplementalCount: capped.filter((leg: any) => leg?.quality_tier === 'supplemental').length,
+  };
 }
 
 export function requestedParlayShortfall(policy: ParlayQualityPolicy, actualCount: number): number {
