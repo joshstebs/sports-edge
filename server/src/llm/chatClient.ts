@@ -74,8 +74,8 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-const MODEL_TURN_TIMEOUT_MS = 25_000;
-const CLOSER_TIMEOUT_MS = 20_000;
+const MODEL_TURN_TIMEOUT_MS = 18_000;
+const CLOSER_TIMEOUT_MS = 16_000;
 const MAX_TOOL_ROUNDS = 1;
 
 function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
