@@ -27,8 +27,8 @@ export function llmConfig(): LlmConfig {
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openrouterModels = [
     process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
-    'nvidia/nemotron-3.5-lightning:free',
-    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'openai/gpt-oss-120b:free',
+    'meta-llama/llama-3.1-8b-instruct:free',
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
@@ -269,6 +269,23 @@ export async function runAgent(
       if (turnText) cb.onDelta?.(turnText);
       break;
     }
+
+    // Safety net: if the user asked for 3+ picks/legs and the model did not call
+    // the slate screener (it sometimes calls mlb_schedule or nothing useful),
+    // force a screener call so we always return real, ranked candidates instead
+    // of an empty "0 qualify" answer.
+    const userAskedMultiPick = msgs.some(
+      (m) => m.role === 'user' && typeof m.content === 'string' && /(\d+)\s*(?:leg|pick|player|parlay|prop)/i.test(m.content),
+    );
+    const calledScreener = resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener');
+    if (userAskedMultiPick && !calledScreener) {
+      const firstUser = msgs.find((m) => m.role === 'user' && typeof m.content === 'string');
+      const countMatch = (typeof firstUser?.content === 'string' ? firstUser.content : '').match(/(\d+)\s*(?:leg|pick|player|parlay|prop)/i);
+      const requested = countMatch ? Number(countMatch[1]) : 5;
+      msgs.push({ role: 'user', content: `Call slate_candidate_screener with requestedPicks=${requested} and date=${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())} now.` });
+      continue;
+    }
+
     endedWithTools = true;
     msgs.push({
       role: 'assistant',
