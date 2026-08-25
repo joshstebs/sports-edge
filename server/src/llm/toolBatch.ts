@@ -61,12 +61,7 @@ function collectSources(value: unknown, output: Set<string>, depth = 0): void {
 export function evidenceForExecution(outcome: ToolExecution, latencyMs: number, now = new Date()): ToolEvidence {
   const sources = new Set<string>();
   collectSources(outcome.data, sources);
-  try {
-    collectSources(JSON.parse(outcome.json), sources);
-  } catch {
-    // The registry normally returns JSON. Evidence extraction must never make a
-    // successful provider result fail if an adapter returns plain text.
-  }
+  try { collectSources(JSON.parse(outcome.json), sources); } catch {}
   return {
     sources: [...sources].sort(),
     fetchedAt: now.toISOString(),
@@ -76,19 +71,13 @@ export function evidenceForExecution(outcome: ToolExecution, latencyMs: number, 
 }
 
 function addEvidence(value: unknown, evidence: ToolEvidence): unknown {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return { ...(value as Record<string, unknown>), _evidence: evidence };
-  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) return { ...(value as Record<string, unknown>), _evidence: evidence };
   return { value, _evidence: evidence };
 }
 
 function enrichExecution(outcome: ToolExecution, evidence: ToolEvidence): ToolExecution {
   let payload: unknown;
-  try {
-    payload = JSON.parse(outcome.json);
-  } catch {
-    payload = outcome.json;
-  }
+  try { payload = JSON.parse(outcome.json); } catch { payload = outcome.json; }
   const sourceLabel = evidence.sources.length ? evidence.sources.join(', ') : 'source unlabeled';
   return {
     ...outcome,
@@ -98,30 +87,39 @@ function enrichExecution(outcome: ToolExecution, evidence: ToolEvidence): ToolEx
   };
 }
 
-/**
- * Execute every tool call emitted in one model turn concurrently.
- *
- * Calls in a single tool-call turn are independent by definition: a call that
- * depends on another call's output can only be emitted by the model in the next
- * turn. Promise.all therefore removes avoidable provider latency without
- * changing the agent's reasoning semantics. Results are returned in the model's
- * original call order so tool_call_id history remains deterministic.
- */
+function timeoutExecution(name: string, timeoutMs: number): ToolExecution {
+  const seconds = Math.round(timeoutMs / 1000);
+  return {
+    ok: false,
+    summary: `${name} timed out after ${seconds}s; continuing with remaining data`,
+    data: { available: false, reason: `tool timeout after ${seconds}s` },
+    json: JSON.stringify({ available: false, reason: `tool timeout after ${seconds}s` }),
+  };
+}
+
 export async function executeToolBatch(
   calls: BatchToolCall[],
   options: {
     execute?: ToolExecutor;
     onEvent?: (event: BatchToolEvent) => void;
+    timeoutMs?: number;
   } = {},
 ): Promise<BatchToolResult[]> {
   const executor = options.execute ?? executeTool;
+  const timeoutMs = Math.max(1_000, options.timeoutMs ?? 15_000);
   for (const call of calls) options.onEvent?.({ name: call.name, status: 'running' });
 
   return Promise.all(calls.map(async (call) => {
     const started = Date.now();
     let outcome: ToolExecution;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      outcome = await executor(call.name, call.parsed ?? {});
+      outcome = await Promise.race([
+        executor(call.name, call.parsed ?? {}),
+        new Promise<ToolExecution>((resolve) => {
+          timer = setTimeout(() => resolve(timeoutExecution(call.name, timeoutMs)), timeoutMs);
+        }),
+      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       outcome = {
@@ -130,16 +128,13 @@ export async function executeToolBatch(
         data: null,
         json: JSON.stringify({ available: false, reason: `tool crashed: ${message}` }),
       };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
     const evidence = evidenceForExecution(outcome, Date.now() - started);
     const enriched = enrichExecution(outcome, evidence);
-    options.onEvent?.({
-      name: call.name,
-      status: enriched.ok ? 'done' : 'error',
-      summary: enriched.summary,
-      data: enriched.data,
-    });
+    options.onEvent?.({ name: call.name, status: enriched.ok ? 'done' : 'error', summary: enriched.summary, data: enriched.data });
     return { call, outcome: enriched, evidence };
   }));
 }
