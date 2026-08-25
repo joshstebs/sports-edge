@@ -8,6 +8,7 @@ import { runPredictionEvaluation } from '../lib/evaluator.js';
 import { computePerformance } from '../lib/performance.js';
 import { recordVerifiedClosingOdds } from '../lib/closingOdds.js';
 import { buildDiagnostics, predictionCsvForUser } from '../lib/diagnostics.js';
+import { gradePendingCandidateHistory } from '../candidates/candidateGrader.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 
 export const predictionsRouter = Router();
@@ -49,7 +50,13 @@ evaluationRouter.get('/evaluate', async (req, res) => {
   try {
     if (!evaluationInFlight) evaluationInFlight = runPredictionEvaluation().finally(() => { evaluationInFlight = null; });
     const result = await evaluationInFlight;
-    res.json({ ok: true, storage: storageStatus(), ...result });
+    const candidateHistory = await gradePendingCandidateHistory({ limit: 12, timeBudgetMs: 8_000 }).catch((error) => ({
+      processed: 0,
+      graded: 0,
+      pending: -1,
+      error: (error as Error).message,
+    }));
+    res.json({ ok: true, storage: storageStatus(), candidateHistory, ...result });
   } catch (error) {
     const unavailable = error instanceof StorageNotConfiguredError;
     res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'EVALUATION_ERROR', error: (error as Error).message });

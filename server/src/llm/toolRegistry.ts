@@ -3,9 +3,10 @@
 
 import { TOOL_DEFS, ToolDef, ToolOutcome } from './tools.js';
 import { MLB_PROVISIONAL_TOOL } from './mlbProvisionalTool.js';
+import { UNIVERSAL_SCREENER_TOOL } from './universalScreenerTool.js';
 import type { ToolSchema } from './chatClient.js';
 
-const ALL_TOOL_DEFS: ToolDef[] = [...TOOL_DEFS, MLB_PROVISIONAL_TOOL];
+const ALL_TOOL_DEFS: ToolDef[] = [...TOOL_DEFS, MLB_PROVISIONAL_TOOL, UNIVERSAL_SCREENER_TOOL];
 const registry = new Map<string, ToolDef>();
 for (const def of ALL_TOOL_DEFS) registry.set(def.name, def);
 
