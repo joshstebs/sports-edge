@@ -1,5 +1,6 @@
 {
   "framework": "vite",
+  "installCommand": "npm ci && npm ci --prefix server --include=dev",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" }
   ],
