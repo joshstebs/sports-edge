@@ -1,8 +1,7 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { getSgoSlateEvents, type SgoSlateEvent, type SgoSlateProp } from '../providers/sportsGameOdds.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
-import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
 import type { ToolDef, ToolOutcome } from './tools.js';
@@ -11,193 +10,174 @@ const ESPN_MAP: Record<Exclude<ModelSport, 'mlb'>, espn.EspnSport> = {
   nba: 'basketball/nba', nfl: 'football/nfl', nhl: 'hockey/nhl',
 };
 
-type CachedHistory = {
-  source: string;
-  season: Record<string, unknown>;
-  games: any[];
-  mode: 'mlb' | 'espn';
-};
-
 function ok(summary: string, payload: any): ToolOutcome {
   return { available: true, summary, data: payload, payload };
 }
 function unavailable(reason: string): ToolOutcome {
   return { available: false, reason, summary: `unavailable: ${reason}`, data: { available: false, reason }, payload: { available: false, reason } };
 }
-function todayToronto(): string {
+function torontoToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 function requestedDate(value: unknown): string {
   const text = String(value ?? '').slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : todayToronto();
+  return /^\\d{4}-\\d{2}-\\d{2}$/.test(text) ? text : torontoToday();
 }
-function usableEvent(status: string | null): boolean {
-  const value = String(status ?? '').toLowerCase();
-  return !['final', 'completed', 'postponed', 'canceled', 'cancelled'].some((token) => value.includes(token));
+function sportKey(value: string): ModelSport {
+  return String(value || 'mlb').toLowerCase() as ModelSport;
 }
-function marketsFor(player: DiscoveredPlayer, sport: ModelSport): string[] {
-  const pos = String(player.position ?? '').toUpperCase();
-  if (sport === 'mlb') {
-    const pitcher = player.probablePitcher || pos.includes('P');
-    return pitcher ? ['strikeouts', 'outsRecorded'] : ['hits', 'totalBases'];
-  }
-  if (sport === 'nba') return ['points', 'rebounds'];
-  if (sport === 'nfl') {
-    if (pos === 'QB') return ['passingYards', 'passingTouchdowns'];
-    if (pos === 'RB' || pos === 'FB') return ['rushingYards', 'receptions'];
-    return ['receivingYards', 'receptions'];
-  }
-  if (['G', 'GOALIE'].includes(pos)) return ['saves'];
-  return ['shotsOnGoal', 'hockeyPoints'];
+function oddsNumber(value: number | null): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
-function balanced(groups: DiscoveredPlayer[][], limit: number): DiscoveredPlayer[] {
-  const queues = groups.map((rows) => {
-    const away = rows.filter((row) => row.homeAway === 'away');
-    const home = rows.filter((row) => row.homeAway === 'home');
-    const mixed: DiscoveredPlayer[] = [];
-    while (away.length || home.length) {
-      const a = away.shift(); if (a) mixed.push(a);
-      const h = home.shift(); if (h) mixed.push(h);
-    }
-    return mixed;
-  });
-  const out: DiscoveredPlayer[] = [];
-  while (out.length < limit && queues.some((q) => q.length)) {
-    for (const queue of queues) {
-      if (out.length >= limit) break;
-      const row = queue.shift(); if (row) out.push(row);
-    }
-  }
-  return out;
-}
-async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
-  if (sport === 'mlb') {
-    const found = await mlb.searchPlayer(player.name);
-    if (!found.available || !found.data) return null;
-    const pitching = player.probablePitcher || String(player.position ?? '').toUpperCase().includes('P');
-    const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
-    if (!log.available || !Array.isArray(log.data)) return null;
-    return { source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON }, games: log.data, mode: 'mlb' };
-  }
-  const s = sport as Exclude<ModelSport, 'mlb'>;
-  let playerId = player.id != null ? String(player.id) : '';
-  if (!playerId) {
-    const found = await espn.findPlayer(player.name, ESPN_MAP[s]);
-    if (!found.available || !found.player) return null;
-    playerId = found.player.id;
-  }
-  const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
-  if (!log.available || !Array.isArray(log.games)) return null;
-  return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
-}
-function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
-  return history.games.map((game: any) => {
-    const value = history.mode === 'mlb'
-      ? mlbObservation(market, game.stat ?? {})
-      : espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
-    if (value == null) return null;
-    return { date: game.date ?? game.gameDate ?? null, value };
-  }).filter(Boolean) as HistoricalObservation[];
-}
-function halfLine(rows: HistoricalObservation[]): number {
-  const mean = rows.reduce((sum, row) => sum + row.value, 0) / rows.length;
-  let line = Math.round(mean * 2) / 2;
-  if (Number.isInteger(line)) line += 0.5;
-  return Math.max(0.5, line);
-}
-function calibrationFor(learning: Awaited<ReturnType<typeof loadLearning>>, sport: ModelSport, market: string) {
-  if (!learning) return null;
+function calibrationFor(learning: any, sport: ModelSport, market: string) {
   const keys = [`${sport}:${market}`, `${sport.toUpperCase()}:${market}`, `${sport}|${market}`, market];
   for (const key of keys) {
-    const row = learning.perSportMarket?.[key] ?? learning.perMarket?.[key];
+    const row = learning?.perSportMarket?.[key] ?? learning?.perMarket?.[key];
     if (row) return { n: row.n, averageConfidence: row.averageConfidence ?? null, hitRate: row.hitRate };
   }
   return null;
 }
+function propName(prop: SgoSlateProp): string {
+  return prop.playerName.trim() || prop.playerId.replace(/_\\d+_(?:MLB|NBA|NFL|NHL)$/i, '').replace(/_/g, ' ');
+}
+function marketFor(prop: SgoSlateProp): string {
+  const raw = prop.market.toLowerCase();
+  const aliases: Record<string, string> = {
+    batting_hits: 'hits', hits: 'hits', total_bases: 'totalBases', totalbases: 'totalBases',
+    home_runs: 'homeRuns', homeruns: 'homeRuns', rbis: 'rbi', runs_batted_in: 'rbi',
+    strikeouts: 'strikeouts', pitcher_strikeouts: 'strikeouts', pitching_strikeouts: 'strikeouts',
+    points: 'points', rebounds: 'rebounds', assists: 'assists', three_pointers: 'threePointersMade',
+    passing_yards: 'passingYards', rushing_yards: 'rushingYards', receiving_yards: 'receivingYards',
+    receptions: 'receptions', shots_on_goal: 'shotsOnGoal', saves: 'saves', goals: 'goals',
+  };
+  return normalizeMarket(aliases[raw] ?? raw.replace(/-/g, '_'));
+}
+async function historyFor(name: string, sport: ModelSport, market: string): Promise<{ source: string; observations: HistoricalObservation[]; season: any } | null> {
+  if (sport === 'mlb') {
+    const found = await mlb.searchPlayer(name);
+    if (!found.available || !found.data) return null;
+    const pitching = ['strikeouts', 'outsRecorded', 'earnedRuns', 'hitsAllowed', 'walksAllowed'].includes(normalizeMarket(market));
+    const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
+    if (!log.available || !Array.isArray(log.data)) return null;
+    const observations = log.data.map((game: any) => {
+      const value = mlbObservation(market, game.stat ?? {});
+      return value == null ? null : { date: game.date ?? null, value };
+    }).filter(Boolean) as HistoricalObservation[];
+    return { source: 'statsapi.mlb.com', observations, season: { playerId: found.data.id, season: mlb.CURRENT_SEASON } };
+  }
+  const league = ESPN_MAP[sport as Exclude<ModelSport, 'mlb'>];
+  const found = await espn.findPlayer(name, league);
+  if (!found.available || !found.player) return null;
+  const log = await espn.getGamelog(found.player.id, league, 20);
+  if (!log.available || !Array.isArray(log.games)) return null;
+  const observations = log.games.map((game: any) => {
+    const value = espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
+    return value == null ? null : { date: game.date ?? game.gameDate ?? null, value };
+  }).filter(Boolean) as HistoricalObservation[];
+  return { source: 'site.web.api.espn.com', observations, season: { season: log.season ?? null } };
+}
+function uniqueProps(events: SgoSlateEvent[], max: number): Array<{ event: SgoSlateEvent; prop: SgoSlateProp }> {
+  const seen = new Set<string>();
+  const rows: Array<{ event: SgoSlateEvent; prop: SgoSlateProp }> = [];
+  for (const event of events) {
+    for (const prop of event.props) {
+      if (prop.line == null || prop.odds == null) continue;
+      const market = marketFor(prop);
+      const name = propName(prop);
+      if (!name || !market) continue;
+      const key = `${name.toLowerCase()}|${market}|${prop.line}|${prop.side}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ event, prop: { ...prop, playerName: name, market } });
+      if (rows.length >= max) return rows;
+    }
+  }
+  return rows;
+}
 
 const handler = async (args: any): Promise<ToolOutcome> => {
-  const sport = String(args?.sport ?? 'mlb').toLowerCase() as ModelSport;
+  const sport = sportKey(args?.sport);
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  const maxPlayers = Math.min(16, Math.max(8, Number(args?.maxPlayers ?? requested * 2 + 2) || requested * 2 + 2));
+  const maxProps = Math.min(16, Math.max(8, requested * 2 + 4));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
 
-  const events = (await discoverSlateEvents(sport, date)).filter((event) => usableEvent(event.status));
-  if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
-  const groups = await Promise.all(events.map((event) => discoverPlayersForEvent(event).catch(() => [])));
-  const players = balanced(groups, maxPlayers);
-  if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate`);
+  const slate = await getSgoSlateEvents(sport, 10);
+  if (!slate.available || !slate.events.length) return unavailable(slate.reason ?? 'SportsGameOdds returned no live events');
+  const liveProps = uniqueProps(slate.events, maxProps);
+  if (!liveProps.length) return unavailable('SportsGameOdds returned events but no usable player props with current lines');
 
   const learning = await loadLearning().catch(() => null);
+  const historyCache = new Map<string, Promise<any>>();
   const evaluated: any[] = [];
-  await Promise.all(players.map(async (player) => {
-    const history = await loadPlayerHistory(player, sport).catch(() => null);
-    if (!history) return;
-    for (const market of marketsFor(player, sport)) {
-      const rows = observations(history, sport, market);
-      if (rows.length < 5) continue;
-      const line = halfLine(rows);
-      const calibration = calibrationFor(learning, sport, normalizeMarket(market));
-      const over = buildPlayerPropModel({ sport, market, side: 'over', line, observations: rows, source: history.source, calibration });
-      const under = buildPlayerPropModel({ sport, market, side: 'under', line, observations: rows, source: history.source, calibration });
-      const model = [over, under].filter((x) => x.available && x.probability != null).sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0))[0];
-      if (!model?.available || model.probability == null || !model.grade) continue;
-      const values = rows.map((row) => row.value);
-      const profile: PlayerFeatureProfile = {
-        sport, player: player.name, team: player.team, opponent: player.opponent,
-        eventId: player.eventId, eventDate: player.eventDate, role: player.position,
-        availability: {
-          status: sport === 'mlb' && player.lineupSlot == null && !player.probablePitcher ? 'provisional' : 'unknown',
-          reason: sport === 'mlb' && player.lineupSlot == null && !player.probablePitcher ? 'active roster candidate; final lineup still required' : 'final availability gate still required',
-        },
-        recent: { last5: featureWindow(values, line, 5), last10: featureWindow(values, line, 10), last20: featureWindow(values, line, 20) },
-        season: history.season, matchup: { opponent: player.opponent },
-        context: { homeAway: player.homeAway, restDays: null, expectedPlayingTime: null, lineupSlot: player.lineupSlot, weather: null, venueFactor: null },
-        market: { market: normalizeMarket(market), suggestedLine: line, side: model.side, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize, impliedProbability: null, estimatedEdge: null, modelVersion: model.modelVersion },
-        sources: [...new Set([history.source, player.source])], fallbackUsed: sport !== 'mlb', retrievedAt: new Date().toISOString(),
-      };
-      evaluated.push({ player, market: normalizeMarket(market), line, model, profile, source: history.source });
+  await Promise.all(liveProps.map(async ({ event, prop }) => {
+    const market = marketFor(prop);
+    const name = propName(prop);
+    const cacheKey = `${sport}|${name}|${market}`;
+    let history = historyCache.get(cacheKey);
+    if (!history) {
+      history = historyFor(name, sport, market).catch(() => null);
+      historyCache.set(cacheKey, history);
     }
+    const loaded = await history;
+    if (!loaded || loaded.observations.length < 5 || prop.line == null) return;
+    const calibration = calibrationFor(learning, sport, market);
+    const model = buildPlayerPropModel({
+      sport, market, side: prop.side, line: prop.line, observations: loaded.observations,
+      source: loaded.source, calibration,
+    });
+    if (!model.available || model.probability == null || !model.grade) return;
+    evaluated.push({
+      event, prop, model, source: loaded.source,
+      eventDate: event.commenceTime.slice(0, 10) || date,
+      team: event.home,
+      opponent: event.away,
+    });
   }));
 
-  if (!evaluated.length) return unavailable(`no supported ${sport.toUpperCase()} markets had enough recent-game history`);
-  await recordCandidateEvaluations(evaluated.map(({ player, market, line, model, profile, source }) => ({
-    eventDate: player.eventDate, eventId: player.eventId, sport, player: player.name, team: player.team, opponent: player.opponent,
-    market, side: model.side, line, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
-    modelVersion: model.modelVersion, modelSource: source, sources: profile.sources, fallbackUsed: sport !== 'mlb',
-    metadata: { lineupSlot: player.lineupSlot, availability: profile.availability },
-  }))).catch(() => {});
+  if (!evaluated.length) return unavailable('Live props were found, but none had enough compatible historical player data for the deterministic model');
+
+  await recordCandidateEvaluations(evaluated.map((row) => ({
+    eventDate: row.eventDate, eventId: row.event.id, sport, player: propName(row.prop),
+    team: row.team, opponent: row.opponent, market: marketFor(row.prop), side: row.prop.side,
+    line: row.prop.line, modelProbability: row.model.probability, grade: row.model.grade,
+    sampleSize: row.model.sampleSize, modelVersion: row.model.modelVersion, modelSource: row.source,
+    sources: [row.source, 'api.sportsgameodds.com'], fallbackUsed: row.source !== 'statsapi.mlb.com',
+    metadata: { odds: row.prop.odds, fairOdds: row.prop.fairOdds },
+  })).catch(() => {}));
 
   const qualified = evaluated
-    .filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence)
+    .filter((row) => row.model.grade !== 'D' && (row.model.probability ?? 0) >= minConfidence)
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
 
-  const candidates = qualified.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, source }) => ({
-    player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
-    market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
-    grade: model.grade, sampleSize: model.sampleSize, modelVersion: model.modelVersion, source,
-    availability: profile.availability, recent: profile.recent, sources: profile.sources,
-    note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
+  const candidates = qualified.slice(0, Math.max(requested * 2, 10)).map((row) => ({
+    player: propName(row.prop), playerId: row.prop.playerId, sport, market: marketFor(row.prop),
+    side: row.prop.side, line: row.prop.line, odds: oddsNumber(row.prop.odds), fairOdds: oddsNumber(row.prop.fairOdds),
+    team: row.team, opponent: row.opponent, eventId: row.event.id, eventDate: row.eventDate,
+    confidencePct: Math.round((row.model.probability ?? 0) * 1000) / 10, grade: row.model.grade,
+    sampleSize: row.model.sampleSize, modelVersion: row.model.modelVersion, modelSource: row.source,
+    availability: 'final player_availability gate required before recommendation',
+    sources: [row.source, 'api.sportsgameodds.com'],
+    note: 'Live sportsbook line and odds were used for screening. Final availability and lineup validation are still mandatory.',
   }));
 
   return ok(
-    `${sport.toUpperCase()} fast screener evaluated ${evaluated.length} markets across ${players.length} players; ${qualified.length} cleared ${Math.round(minConfidence * 100)}%`,
-    { available: true, sport, date, slate: { events: events.length, discoveredPlayers: players.length, modelEvaluations: evaluated.length, qualifiedCandidates: qualified.length }, candidates, providerPolicy: { apiSportsRequired: false, fallbackRule: 'MLB uses MLB Stats API; NBA/NFL/NHL use ESPN recent game logs.' } },
+    `${sport.toUpperCase()} live screener evaluated ${evaluated.length} real live props across ${slate.events.length} events; ${qualified.length} cleared ${Math.round(minConfidence * 100)}%`,
+    { available: true, sport, date, provider: 'api.sportsgameodds.com', slate: { events: slate.events.length, liveProps: liveProps.length, modelEvaluations: evaluated.length, qualifiedCandidates: qualified.length }, candidates, partial: qualified.length < requested, notice: slate.notice ?? null },
   );
 };
 
 export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
   name: 'slate_candidate_screener',
-  description: 'Fast slate-wide MLB/NBA/NFL/NHL candidate screener for multi-pick requests. It balances players across games/teams, fetches each player history once, evaluates a small set of high-value markets, stores every candidate for calibration, and is designed to finish inside the agent tool timeout. Final picks still require exact current line/odds and availability verification.',
+  description: 'Bounded live slate screener. It bulk-fetches real SportsGameOdds events and player props, evaluates only those live lines with the deterministic historical model, and returns ranked candidates for final availability/lineup validation. It may return a partial result when a provider lacks data.',
   parameters: {
     type: 'object',
     properties: {
       sport: { type: 'string', enum: ['mlb', 'nba', 'nfl', 'nhl'] },
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
-      requestedPicks: { type: 'number' },
-      maxPlayers: { type: 'number', description: '8-16 players; defaults to roughly 2x requested picks plus two' },
-      minConfidence: { type: 'number', description: 'Decimal; default 0.54' },
+      requestedPicks: { type: 'number', description: 'Target number of candidates' },
+      minConfidence: { type: 'number', description: 'Minimum decimal model probability; default 0.54' },
     },
     required: ['sport'],
   },
