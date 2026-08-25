@@ -269,7 +269,10 @@ export async function runAgent(
     const results = await executeToolBatch(
       resp.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, parsed: tc.parsed ?? {} })),
       {
-        timeoutMs: 5_000,
+        // The slate screener legitimately needs more than the default 5s budget
+        // (it fans out ~12 players x 2 Stats API calls in parallel, ~20s). Let
+        // executeToolBatch's screener-aware clamp raise the window.
+        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 45_000 : 5_000,
         onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );

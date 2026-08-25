@@ -101,12 +101,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  const maxProps = Math.min(16, Math.max(8, requested * 2 + 4));
-  const minConfidence = Math.max(0.58, Math.min(0.75, Number(args?.minConfidence ?? 0.58) || 0.58));
+  const maxPlayers = Math.min(14, Math.max(8, Number(args?.maxPlayers ?? requested + 6) || requested + 6));
+  const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
 
   const slate = await getSgoSlateEvents(sport, 10);
   if (!slate.available || !slate.events.length) return unavailable(slate.reason ?? 'SportsGameOdds returned no live events');
-  const liveProps = uniqueProps(slate.events, maxProps);
+  const liveProps = uniqueProps(slate.events, maxPlayers);
   if (!liveProps.length) return unavailable('SportsGameOdds returned events but no usable player props with current lines');
 
   const learning = await loadLearning().catch(() => null);
