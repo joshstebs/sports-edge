@@ -33,8 +33,11 @@ export function llmConfig(): LlmConfig {
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  // OpenRouter (gpt-oss) is the primary: fast, reliable, free tier. Gemini is
+  // the fallback (some gemini models are slow on long synthesis turns and blow
+  // the 60s Vercel function budget). OpenAI last.
   if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: openrouterModels[0], models: openrouterModels, baseUrl: 'https://openrouter.ai/api/v1' });
+  if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
   for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
   if (providers.length) return providers[0];
