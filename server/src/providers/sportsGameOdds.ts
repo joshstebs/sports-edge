@@ -40,8 +40,15 @@ export function sgoNotice(): string | null {
   return lastNotice;
 }
 
+function keys(): string[] {
+  return [
+    process.env.SPORTSGAMEODDS_API_KEY,
+    process.env.SPORTSGAMEODDS_API_KEY_2,
+  ].filter((value): value is string => Boolean(value?.trim()));
+}
+
 function key(): string | null {
-  return process.env.SPORTSGAMEODDS_API_KEY ?? null;
+  return keys()[0] ?? null;
 }
 
 function americanImplied(price: number): number {
@@ -64,32 +71,45 @@ interface SgoEvent {
 }
 
 async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): Promise<{ events: SgoEvent[]; next: string | null; notice: string | null; rateLimited: boolean }> {
-  const k = key();
-  if (!k) return { events: [], next: null, notice: null, rateLimited: false };
+  const credentials = keys();
+  if (!credentials.length) return { events: [], next: null, notice: null, rateLimited: false };
   const params = new URLSearchParams({ leagueID });
   if (oddsOnly) params.set('oddsAvailable', 'true');
   if (cursor) params.set('cursor', cursor);
   const url = `${BASE}/events?${params.toString()}`;
-  const res = await fetch(url, {
-    headers: { 'x-api-key': k, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (res.status === 429) {
-    lastNotice = 'Rate limit exceeded (free-tier quota)';
-    return { events: [], next: null, notice: lastNotice, rateLimited: true };
+
+  let lastStatus = 0;
+  let lastBody: any = null;
+  for (const credential of credentials) {
+    const res = await fetch(url, {
+      headers: { 'x-api-key': credential, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36' },
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = await res.json().catch(() => null);
+    lastStatus = res.status;
+    lastBody = body;
+    // Fail over only for credential/quota failures. Do not hide provider errors.
+    if ((res.status === 401 || res.status === 403 || res.status === 429) && credential !== credentials[credentials.length - 1]) {
+      continue;
+    }
+    if (res.status === 429) {
+      lastNotice = 'Rate limit exceeded (free-tier quota)';
+      return { events: [], next: null, notice: lastNotice, rateLimited: true };
+    }
+    if (!res.ok || !body) {
+      lastNotice = body?.error ?? `HTTP ${res.status}`;
+      return { events: [], next: null, notice: lastNotice, rateLimited: false };
+    }
+    lastNotice = body.notice ?? null;
+    return {
+      events: (body.data ?? []) as SgoEvent[],
+      next: body.nextCursor ?? null,
+      notice: lastNotice,
+      rateLimited: false,
+    };
   }
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body) {
-    lastNotice = body?.error ?? `HTTP ${res.status}`;
-    return { events: [], next: null, notice: lastNotice, rateLimited: false };
-  }
-  lastNotice = body.notice ?? null;
-  return {
-    events: (body.data ?? []) as SgoEvent[],
-    next: body.nextCursor ?? null,
-    notice: lastNotice,
-    rateLimited: false,
-  };
+  lastNotice = lastBody?.error ?? `HTTP ${lastStatus}`;
+  return { events: [], next: null, notice: lastNotice, rateLimited: lastStatus === 429 };
 }
 
 // Pull pages until we have a candidate match or run out (max 5 pages).
