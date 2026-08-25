@@ -101,7 +101,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  const maxPlayers = Math.min(14, Math.max(8, Number(args?.maxPlayers ?? requested + 6) || requested + 6));
+  const maxPlayers = Math.min(8, Math.max(5, Number(args?.maxPlayers ?? requested + 1) || requested + 1));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
 
   const slate = await getSgoSlateEvents(sport, 10);

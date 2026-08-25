@@ -243,8 +243,9 @@ export async function runAgent(
   let modelUsed: string | null = null;
   let endedWithTools = false;
 
-  // The route has a 52s hard deadline. Reserve time for final synthesis instead
-  // of allowing 120s model turns that can never finish in production.
+  // The route has a 58s hard deadline (function maxDuration is 60s). Reserve
+  // time for final synthesis instead of allowing long model turns that can
+  // never finish in production.
   for (; iterations < MAX_TOOL_ROUNDS; iterations++) {
     let turnText = '';
     const resp = await streamChatOnce(researchCfg, msgs, tools, {
