@@ -6,6 +6,7 @@ import {
   ledgerTicketBatches,
   ledgerTicketKey,
   mergeSgpLegs,
+  normalizeSgpLeg,
 } from '../src/lib/slip.ts';
 
 const first = {
@@ -25,6 +26,31 @@ test('successive SGP events append legs and refresh exact duplicates', () => {
   assert.equal(next.length, 2);
   assert.equal(next[0]?.odds, 110);
   assert.equal(next[0]?.confidence, 61);
+});
+
+test('structured player and model provenance survives normalization', () => {
+  const normalized = normalizeSgpLeg({
+    ...first,
+    entity_type: 'player',
+    player_name: 'Player One',
+    player_id: 'espn-123',
+    team: 'TOR',
+    side: 'over',
+    model_probability: '61.4',
+    model_version: 'nba-prop-v3',
+    model_sample_size: 24,
+    model_source: 'official-game-log-model',
+    __gateNote: 'lineup checked at request time',
+  });
+  assert.equal(normalized?.player_name, 'Player One');
+  assert.equal(normalized?.player_id, 'espn-123');
+  assert.equal(normalized?.entity_type, 'player');
+  assert.equal(normalized?.side, 'over');
+  assert.equal(normalized?.model_probability, '61.4');
+  assert.equal(normalized?.model_version, 'nba-prop-v3');
+  assert.equal(normalized?.model_sample_size, 24);
+  assert.equal(normalized?.model_source, 'official-game-log-model');
+  assert.equal(normalized?.__gateNote, 'lineup checked at request time');
 });
 
 test('ledger tickets are deterministic and split at the API limit', () => {

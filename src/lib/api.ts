@@ -295,3 +295,71 @@ export async function fetchCalibration(sport?: string): Promise<CalibrationRespo
   }
   return payload as CalibrationResponse;
 }
+
+export interface PlayerProfile {
+  id: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+  teamAbbreviation: string;
+  position: string | null;
+  headshotUrl: string | null;
+}
+
+export interface PlayerProfileResponse {
+  available: boolean;
+  source: string;
+  checkedAt: string;
+  player?: PlayerProfile;
+  reason?: string;
+}
+
+export async function fetchPlayerProfile(sport: string, name: string): Promise<PlayerProfileResponse> {
+  const params = new URLSearchParams({ sport, name });
+  const res = await fetch(`${import.meta.env.BASE_URL}api/player-profile?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = (await res.json().catch(() => null)) as PlayerProfileResponse | null;
+  if (!res.ok || !payload) throw new Error(payload?.reason || `Player profile unavailable (HTTP ${res.status})`);
+  return payload;
+}
+
+export interface PlayerResearchObservation {
+  date: string | null;
+  value: number;
+  opponent: string | null;
+  result: string | null;
+  gameId: string | null;
+}
+
+export interface PlayerResearchResponse {
+  available: boolean;
+  source?: string;
+  sport?: string;
+  player?: string;
+  playerId?: string;
+  team?: string;
+  position?: string;
+  market?: string;
+  season?: string | null;
+  observations?: PlayerResearchObservation[];
+  reason?: string;
+}
+
+export async function fetchPlayerResearch(
+  sport: string,
+  name: string,
+  market: string,
+  limit = 10,
+): Promise<PlayerResearchResponse> {
+  const params = new URLSearchParams({ sport, name, market, limit: String(limit) });
+  const res = await fetch(`${import.meta.env.BASE_URL}api/player-research?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = (await res.json().catch(() => null)) as PlayerResearchResponse | null;
+  if (!payload) throw new Error(`Player research unavailable (HTTP ${res.status})`);
+  if (!res.ok && res.status !== 404) throw new Error(payload.reason || `Player research unavailable (HTTP ${res.status})`);
+  return payload;
+}
