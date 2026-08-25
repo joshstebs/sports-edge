@@ -21,14 +21,14 @@ export function llmConfig(): LlmConfig {
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
   const geminiModels = [
-    process.env.GEMINI_MODEL || 'gemini-3.5-flash',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
+    process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+    'gemini-flash-latest',
+    'gemini-3.5-flash',
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openrouterModels = [
-    process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
-    'openai/gpt-oss-120b:free',
-    'meta-llama/llama-3.1-8b-instruct:free',
+    process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+    'mistralai/mistral-7b-instruct:free',
+    'meta-llama/llama-3.2-3b-instruct:free',
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
