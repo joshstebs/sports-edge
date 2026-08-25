@@ -22,9 +22,8 @@ export function llmConfig(): LlmConfig {
   const openaiKey = process.env.OPENAI_API_KEY;
   const geminiModels = [
     process.env.GEMINI_MODEL || 'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openrouterModels = [
     process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
@@ -146,6 +145,13 @@ async function tryModel(
       }
       const result = await readStream(res, cb);
       result.modelUsed = model;
+      // An empty-content response is not a usable answer (e.g. flash-lite
+      // returning a blank completion). Treat it as a failure so the caller
+      // falls through to the next model in the fallback chain instead of
+      // emitting a blank recommendation.
+      if (!result.content?.trim() && !result.toolCalls.length) {
+        return { ok: false, error: `empty content from ${model}` };
+      }
       return { ok: true, result };
     } catch (e) {
       const err = e as Error;
