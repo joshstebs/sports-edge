@@ -51,9 +51,14 @@ function ok(summary: string, payload: any, data?: any): ToolOutcome {
 function unavailable(reason: string): ToolOutcome {
   return { available: false, reason, summary: `unavailable: ${reason}`, data: { available: false, reason }, payload: { available: false, reason } };
 }
+function torontoToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
 function dateOnly(value: unknown): string {
   const text = String(value ?? '').slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : torontoToday();
 }
 function average(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
@@ -140,8 +145,21 @@ function chooseBestSide(
   return usable.sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0))[0];
 }
 
+function balanceEventPlayers(rows: DiscoveredPlayer[]): DiscoveredPlayer[] {
+  const away = rows.filter((row) => row.homeAway === 'away');
+  const home = rows.filter((row) => row.homeAway === 'home');
+  const out: DiscoveredPlayer[] = [];
+  while (away.length || home.length) {
+    const nextAway = away.shift();
+    if (nextAway) out.push(nextAway);
+    const nextHome = home.shift();
+    if (nextHome) out.push(nextHome);
+  }
+  return out;
+}
+
 function distributePlayers(playersByEvent: DiscoveredPlayer[][], limit: number): DiscoveredPlayer[] {
-  const queues = playersByEvent.map((rows) => [...rows]);
+  const queues = playersByEvent.map((rows) => balanceEventPlayers(rows));
   const out: DiscoveredPlayer[] = [];
   while (out.length < limit && queues.some((queue) => queue.length)) {
     for (const queue of queues) {
@@ -234,6 +252,11 @@ async function screenPlayer(
   return candidates;
 }
 
+function eventIsUsable(status: string | null): boolean {
+  const value = String(status ?? '').toLowerCase();
+  return !['final', 'completed', 'postponed', 'canceled', 'cancelled'].some((token) => value.includes(token));
+}
+
 const handler = async (args: any): Promise<ToolOutcome> => {
   const sport = String(args?.sport ?? 'mlb').toLowerCase() as ModelSport;
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
@@ -242,8 +265,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const maxPlayers = Math.min(48, Math.max(18, Number(args?.maxPlayers ?? requested * 5) || requested * 5));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
 
-  const events = await discoverSlateEvents(sport, date);
-  if (!events.length) return unavailable(`no ${sport.toUpperCase()} events found for ${date}`);
+  const allEvents = await discoverSlateEvents(sport, date);
+  const events = allEvents.filter((event) => eventIsUsable(event.status));
+  if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
 
   const playerGroups = await Promise.all(events.map((event) => discoverPlayersForEvent(event).catch(() => [])));
   const players = distributePlayers(playerGroups, maxPlayers);
@@ -336,7 +360,7 @@ export const UNIVERSAL_SCREENER_TOOL: ToolDef = {
     type: 'object',
     properties: {
       sport: { type: 'string', enum: ['mlb', 'nba', 'nfl', 'nhl'] },
-      date: { type: 'string', description: 'YYYY-MM-DD; defaults to today' },
+      date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
       requestedPicks: { type: 'number', description: 'How many final picks the user asked for; used to size the candidate pool' },
       maxPlayers: { type: 'number', description: 'Optional cap on distinct players screened (18-48; default about 5x requested picks)' },
       minConfidence: { type: 'number', description: 'Screening floor as decimal; default 0.54' },
