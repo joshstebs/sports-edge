@@ -30,7 +30,15 @@ export interface LedgerPick {
   selection: string;
   market?: string | null;
   line?: string | number | null;
+  /** American odds captured at save time. */
+  odds?: number | null;
+  justification?: string | null;
+  risk?: string | null;
+  correlation?: string | null;
+  confidence?: number | null;
   status: 'pending' | 'won' | 'lost' | 'push';
+  settledAt?: string | null;
+  settlementSource?: 'manual' | 'prediction-evaluator' | null;
 }
 
 export interface LedgerResponse {
@@ -100,6 +108,10 @@ export interface TopEdgePick {
   edgePct: number | null;
   model: string;
   source: string | null;
+  /** Sample size behind the model probability, when the model reported one. */
+  modelSampleSize?: number | null;
+  /** Availability-gate note persisted at logging time (null = fully verified). */
+  lineupStatus?: string | null;
 }
 
 export interface CalibrationDiagnostic {
@@ -246,6 +258,7 @@ export interface CalibrationBucket {
   avgClvPercent: number;
 }
 
+/** Mirrors server/src/lib/clvTracker.ts SportMarketCalibration (GET /api/calibration rows). */
 export interface SportMarketCalibration {
   sport: string;
   market: string;
@@ -257,6 +270,7 @@ export interface SportMarketCalibration {
     overallRoi: number;
     overallClvBeatRate: number;
     avgCalibrationError: number;
+    /** Not currently emitted by the server; the dashboard renders an em-dash when absent. */
     overallAvgClvPercent?: number | null;
   };
 }
@@ -266,6 +280,7 @@ export interface CalibrationResponse {
   calibration: SportMarketCalibration[];
 }
 
+/** GET /api/calibration — model calibration report, optionally filtered by sport. */
 export async function fetchCalibration(sport?: string): Promise<CalibrationResponse> {
   const params = sport ? `?sport=${encodeURIComponent(sport)}` : '';
   const res = await fetch(`${import.meta.env.BASE_URL}api/calibration${params}`, {
