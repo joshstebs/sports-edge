@@ -75,9 +75,9 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-const MODEL_TURN_TIMEOUT_MS = 9_000;
-const CLOSER_TIMEOUT_MS = 10_000;
-const MAX_TOOL_ROUNDS = 2;
+const MODEL_TURN_TIMEOUT_MS = 8_000;
+const CLOSER_TIMEOUT_MS = 7_000;
+const MAX_TOOL_ROUNDS = 1;
 
 function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs);
@@ -269,7 +269,7 @@ export async function runAgent(
     const results = await executeToolBatch(
       resp.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, parsed: tc.parsed ?? {} })),
       {
-        timeoutMs: 8_000,
+        timeoutMs: 5_000,
         onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );
