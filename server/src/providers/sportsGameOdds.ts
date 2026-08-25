@@ -33,7 +33,7 @@ const LEAGUE_IDS: Record<string, string> = {
 let lastNotice: string | null = null;
 
 export function sgoConfigured(): boolean {
-  return Boolean(process.env.SPORTSGAMEODDS_API_KEY);
+  return keys().length > 0;
 }
 
 export function sgoNotice(): string | null {
@@ -288,7 +288,7 @@ export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<
   if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE, events: [] };
   if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE, events: [] };
   try {
-    const { events, rateLimited } = await collectEvents(league, false);
+    const { events, rateLimited } = await collectEvents(league, true);
     const rows = events
       .filter((event) => !event.status?.completed)
       .slice(0, Math.max(1, Math.min(12, maxEvents)))
