@@ -21,6 +21,8 @@
     "api/index.ts": { "maxDuration": 60 }
   },
   "crons": [
-    { "path": "/api/evaluate", "schedule": "0 10 * * *" }
+    { "path": "/api/evaluate", "schedule": "0 10 * * *" },
+    { "path": "/api/cron/odds-cache?sport=mlb", "schedule": "*/30 14-23,0-4 * * *" },
+    { "path": "/api/cron/odds-cache?sport=nba", "schedule": "*/30 18-23,0-6 * * *" }
   ]
 }

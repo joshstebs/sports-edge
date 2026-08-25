@@ -19,6 +19,7 @@ import { createBillingRouter, customerIdFromRequest, customerIsEntitled } from '
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
+import { oddsCacheRouter } from './routes/oddsCache.js';
 import { statsRouter } from './routes/stats.js';
 import { calibrationRouter } from './routes/calibration.js';
 import { monitorRouter } from './routes/monitor.js';
@@ -105,6 +106,7 @@ app.use('/api/calibration', calibrationRouter);
 app.use('/api/monitor', monitorRouter);
 app.use('/api', healthRouter);
 app.use('/api', evaluationRouter);
+app.use('/api/cron', oddsCacheRouter);
 // Chat/ledger/stats access: a valid session (owner/configured users) passes, or an
 // entitled Stripe customer via a signed HttpOnly browser credential. Everyone else gets
 // a 402 with the trial CTA.

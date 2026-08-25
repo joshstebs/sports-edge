@@ -338,6 +338,12 @@ export async function getSgoGameOdds(
   if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE };
   const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
   if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE };
+
+  // Pre-warmed cache (odds-cache cron): a full slate walk is expensive, so the
+  // cron stores per-event payloads in Redis with a short TTL. Reads are free.
+  const cached = await readOddsCache(league, teamA, teamB);
+  if (cached) return { ...cached, source: SOURCE, notice: lastNotice ?? 'served from pre-warm odds cache' };
+
   try {
     const na = teamA ? normalizeName(teamA) : null;
     const nb = teamB ? normalizeName(teamB) : null;
@@ -348,19 +354,97 @@ export async function getSgoGameOdds(
     if (!ev) {
       return { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no SportsGameOdds event matching ${teamA ?? '?'} vs ${teamB ?? '?'}`, source: SOURCE, notice: lastNotice };
     }
-    const { home, away } = teamNames(ev);
-    const props = extractProps(ev.odds);
-    return {
-      available: true,
-      source: SOURCE,
-      sport: league,
-      event: { id: ev.eventID, home, away, commenceTime: ev.status?.startsAt ?? '' },
-      markets: mapMarkets(ev.odds),
-      props,
-      notice: lastNotice,
-    };
+    const result = buildSgoResult(ev, league);
+    await writeOddsCache(league, ev, result).catch(() => {});
+    return { ...result, notice: lastNotice };
   } catch (e) {
     return { available: false, reason: `SportsGameOdds fetch failed: ${(e as Error).message}`, source: SOURCE };
+  }
+}
+
+function buildSgoResult(ev: SgoEvent, league: string): SgoResult {
+  const { home, away } = teamNames(ev);
+  return {
+    available: true,
+    source: SOURCE,
+    sport: league,
+    event: { id: ev.eventID, home, away, commenceTime: ev.status?.startsAt ?? '' },
+    markets: mapMarkets(ev.odds),
+    props: extractProps(ev.odds),
+  };
+}
+
+const ODDS_CACHE_PREFIX = 'sportsedge:odds-cache';
+const ODDS_CACHE_TTL_SECONDS = 30 * 60;
+
+function oddsCacheIndexKey(league: string): string {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  return `${ODDS_CACHE_PREFIX}:${league}:${day}`;
+}
+
+async function readOddsCache(league: string, teamA?: string, teamB?: string): Promise<SgoResult | null> {
+  try {
+    const { redisCommand, redisConfigured } = await import('../lib/predictionStore.js');
+    if (!redisConfigured()) return null;
+    const raw = await redisCommand<string>(['GET', `${oddsCacheIndexKey(league)}:payloads`]);
+    if (!raw) return null;
+    const payloads = JSON.parse(raw) as SgoResult[];
+    if (!payloads.length) return null;
+    if (!teamA && !teamB) {
+      // No matchup filter: serve the freshest cached event so callers scanning
+      // a slate still get verified prices without paying for a live walk.
+      return payloads[0] ?? null;
+    }
+    const na = teamA ? normalizeName(teamA) : '';
+    const nb = teamB ? normalizeName(teamB) : '';
+    const hit = payloads.find((p) => {
+      const h = p.event?.home ? normalizeName(p.event.home) : '';
+      const a = p.event?.away ? normalizeName(p.event.away) : '';
+      return (h === na && a === nb) || (h === nb && a === na) || h === na || a === na;
+    });
+    return hit ?? null;
+  } catch {
+    return null; // cache is best-effort; never block live reads on cache errors
+  }
+}
+
+async function writeOddsCache(league: string, ev: SgoEvent, result: SgoResult): Promise<void> {
+  const { redisCommand, redisConfigured } = await import('../lib/predictionStore.js');
+  if (!redisConfigured()) return;
+  const key = `${oddsCacheIndexKey(league)}:payloads`;
+  let payloads: SgoResult[] = [];
+  try {
+    const raw = await redisCommand<string | null>(['GET', key]);
+    if (raw) payloads = JSON.parse(raw) as SgoResult[];
+  } catch { /* start fresh */ }
+  const { home, away } = teamNames(ev);
+  payloads = payloads.filter((p) => !(p.event?.home === home && p.event?.away === away));
+  payloads.unshift(result);
+  payloads = payloads.slice(0, 24); // bound memory: ~a day's slate per league
+  await redisCommand(['SET', key, JSON.stringify(payloads), 'EX', ODDS_CACHE_TTL_SECONDS]);
+}
+
+/** Pre-warm the odds cache for a whole slate. Called by /api/cron/odds-cache. */
+export async function warmSgoOddsCache(sport: string): Promise<{ warmed: number; events: number; rateLimited?: boolean }> {
+  const k = key();
+  if (!k) return { warmed: 0, events: 0 };
+  const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
+  if (!league) return { warmed: 0, events: 0 };
+  try {
+    const { events, rateLimited } = await collectEvents(league, false);
+    if (!events.length) return { warmed: 0, events: 0, rateLimited };
+    const usable = events.filter((ev) => !ev.status?.completed).slice(0, 16);
+    let warmed = 0;
+    for (const ev of usable) {
+      try {
+        const result = buildSgoResult(ev, league);
+        await writeOddsCache(league, ev, result);
+        warmed++;
+      } catch { /* keep warming the rest */ }
+    }
+    return { warmed, events: events.length, rateLimited };
+  } catch {
+    return { warmed: 0, events: 0 };
   }
 }
 

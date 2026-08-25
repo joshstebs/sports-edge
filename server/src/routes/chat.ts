@@ -329,6 +329,10 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         content:
           SYSTEM_PROMPT +
           await learningPromptBlock() +
+          // The LLM has no clock. Pin the current date (America/Toronto) so it
+          // passes the right date to slate_candidate_screener and never
+          // analyzes a stale/off-season slate by accident.
+          `\nCurrent date: ${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}. When a tool needs a date for "today", use this date.` +
           (sport ? `\nFocus analysis on ${sport}.` : ''),
       },
       ...(rawMessages.map((m: any): ChatMessage | null => {
