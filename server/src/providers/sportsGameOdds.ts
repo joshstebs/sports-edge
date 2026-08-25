@@ -223,6 +223,95 @@ export async function getSgoFeaturedOdds(sport: string): Promise<SgoResult> {
   }
 }
 
+export interface SgoSlateProp {
+  playerId: string;
+  playerName: string;
+  market: string;
+  side: 'over' | 'under';
+  line: number | null;
+  odds: number | null;
+  fairOdds: number | null;
+  oddID: string;
+  byBookmaker: Record<string, any>;
+}
+
+export interface SgoSlateEvent {
+  id: string;
+  league: string;
+  home: string;
+  away: string;
+  commenceTime: string;
+  completed: boolean;
+  props: SgoSlateProp[];
+}
+
+function displayPlayerName(playerId: string): string {
+  return playerId
+    .replace(/_\\d+_(?:MLB|NBA|NFL|NHL)$/i, '')
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function extractSlateProps(odds: Record<string, any> | undefined): SgoSlateProp[] {
+  if (!odds) return [];
+  const out: SgoSlateProp[] = [];
+  for (const [oddID, raw] of Object.entries(odds)) {
+    if (!raw) continue;
+    const parts = oddID.split('-');
+    const stat = parts[0] ?? '';
+    const playerId = String(raw.playerID ?? raw.statEntityID ?? parts[1] ?? '');
+    const side = String(raw.sideID ?? parts[4] ?? '').toLowerCase();
+    const line = raw.bookOverUnder ?? raw.fairOverUnder;
+    if (!playerId || ['home', 'away', 'all'].includes(playerId.toLowerCase())) continue;
+    if (side !== 'over' && side !== 'under') continue;
+    out.push({
+      playerId,
+      playerName: String(raw.playerName ?? displayPlayerName(playerId)),
+      market: stat,
+      side,
+      line: line == null || !Number.isFinite(Number(line)) ? null : Number(line),
+      odds: parseAmerican(raw.bookOdds),
+      fairOdds: parseAmerican(raw.fairOdds),
+      oddID,
+      byBookmaker: raw.byBookmaker ?? {},
+    });
+  }
+  return out;
+}
+
+/** Bulk live slate feed: one bounded provider request window per sport. */
+export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<{ available: boolean; reason?: string; source: string; events: SgoSlateEvent[]; notice?: string | null }> {
+  const k = key();
+  const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
+  if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE, events: [] };
+  if (!league) return { available: false, reason: `unknown sport "${sport}"`, source: SOURCE, events: [] };
+  try {
+    const { events, rateLimited } = await collectEvents(league, false);
+    const rows = events
+      .filter((event) => !event.status?.completed)
+      .slice(0, Math.max(1, Math.min(12, maxEvents)))
+      .map((event) => {
+        const names = teamNames(event);
+        return {
+          id: event.eventID,
+          league,
+          home: names.home,
+          away: names.away,
+          commenceTime: event.status?.startsAt ?? '',
+          completed: Boolean(event.status?.completed),
+          props: extractSlateProps(event.odds),
+        };
+      });
+    return rows.length
+      ? { available: true, source: SOURCE, events: rows, notice: lastNotice }
+      : { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no upcoming ${league} events with props`, source: SOURCE, events: [], notice: lastNotice };
+  } catch (error) {
+    return { available: false, reason: `SportsGameOdds slate fetch failed: ${(error as Error).message}`, source: SOURCE, events: [] };
+  }
+}
+
 /** Odds for a specific matchup. */
 export async function getSgoGameOdds(
   teamA?: string,
