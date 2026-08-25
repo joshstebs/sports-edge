@@ -10,28 +10,22 @@ import { executeToolBatch } from './toolBatch.js';
 export interface LlmConfig {
   configured: boolean;
   provider: string;
-  model: string; // default/display model
-  models: string[]; // chain tried in order — per-model quota buckets make rotation the fix for 429s
+  model: string;
+  models: string[];
   baseUrl: string;
-  fallback?: LlmConfig; // secondary provider (e.g. OpenAI) tried after the primary chain
+  fallback?: LlmConfig;
 }
 
 export function llmConfig(): LlmConfig {
   const geminiKey = process.env.GEMINI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  // NOTE: 2.5-era models are LISTED in the models endpoint but 404 for new
-  // keys ("no longer available to new users") — only 3.x/current-gen work.
-  // Free-tier quota is per-model: flash lite models keep the generous daily
-  // limits while the flagship flash aliases exhaust quickly — lead with lite.
   const geminiModels = [
     process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     'gemini-flash-lite-latest',
     'gemini-3.1-flash-lite',
     'gemini-3.5-flash-lite',
   ].filter((m, i, a) => a.indexOf(m) === i);
-  // OpenRouter :free models share a throttled pool — chain several.
-  // Verified tool-calling: gpt-oss-20b + nemotron-3.5-lightning (Aug 2026).
   const openrouterModels = [
     process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
     'nvidia/nemotron-3.5-lightning:free',
@@ -40,44 +34,16 @@ export function llmConfig(): LlmConfig {
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  if (geminiKey) {
-    providers.push({
-      configured: true,
-      provider: 'gemini',
-      model: geminiModels[0],
-      models: geminiModels,
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    });
-  }
-  if (openrouterKey) {
-    providers.push({
-      configured: true,
-      provider: 'openrouter',
-      model: openrouterModels[0],
-      models: openrouterModels,
-      baseUrl: 'https://openrouter.ai/api/v1',
-    });
-  }
-  if (openaiKey) {
-    providers.push({
-      configured: true,
-      provider: 'openai',
-      model: openaiModels[0],
-      models: openaiModels,
-      baseUrl: 'https://api.openai.com/v1',
-    });
-  }
-  for (let index = 0; index < providers.length - 1; index++) {
-    providers[index].fallback = providers[index + 1];
-  }
+  if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: openrouterModels[0], models: openrouterModels, baseUrl: 'https://openrouter.ai/api/v1' });
+  if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
+  for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
   if (providers.length) return providers[0];
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
-  // string for plain text; content-part arrays (e.g. [{type:'text'},{type:'image_url'}])
-  // for multimodal user messages with attached screenshots.
   content?: string | null | Array<{ type: string; [k: string]: unknown }>;
   tool_calls?: any[];
   tool_call_id?: string;
@@ -89,25 +55,18 @@ export interface ToolSchema {
 }
 
 export interface ToolCallFragment {
-  key?: string; // internal map key (id or idx-N)
+  key?: string;
   index: number;
   id?: string;
   name?: string;
   arguments?: string;
-  extra_content?: any; // Gemini 3.x: thought_signature lives here; MUST be echoed back
+  extra_content?: any;
 }
 
 export interface OneShotResult {
   content: string;
   modelUsed?: string;
-  toolCalls: Array<{
-    index: number;
-    id: string;
-    name: string;
-    arguments: string;
-    parsed: any;
-    extra_content?: any | null;
-  }>;
+  toolCalls: Array<{ index: number; id: string; name: string; arguments: string; parsed: any; extra_content?: any | null }>;
 }
 
 interface StreamCallbacks {
@@ -116,9 +75,15 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-/** One streaming chat completion with model-chain fallback.
- * Tries cfg.models in order (Gemini free tier quotas are PER-MODEL, so a 429
- * on one model is fixed by rotating), then cfg.fallback provider if present. */
+const MODEL_TURN_TIMEOUT_MS = 9_000;
+const CLOSER_TIMEOUT_MS = 10_000;
+const MAX_TOOL_ROUNDS = 2;
+
+function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return parent ? AbortSignal.any([parent, timeout]) : timeout;
+}
+
 export async function streamChatOnce(
   cfg: LlmConfig,
   messages: ChatMessage[],
@@ -135,20 +100,16 @@ export async function streamChatOnce(
 
   for (const pc of providers) {
     for (const model of pc.models) {
+      if (cb.signal?.aborted) throw new DOMException('Agent turn deadline exceeded', 'AbortError');
       const attempt = await tryModel(pc, model, messages, tools, cb);
       if (attempt.ok && attempt.result) return attempt.result;
       errors.push(`${pc.provider}/${model}: ${attempt.error}`);
     }
   }
-
   throw new Error(`All LLM providers failed: ${errors.join(' | ')}`);
 }
 
-interface TryResult {
-  ok: boolean;
-  result?: OneShotResult;
-  error?: string;
-}
+interface TryResult { ok: boolean; result?: OneShotResult; error?: string; }
 
 async function tryModel(
   pc: LlmConfig,
@@ -158,37 +119,25 @@ async function tryModel(
   cb: StreamCallbacks
 ): Promise<TryResult> {
   const url = `${pc.baseUrl}/chat/completions`;
-  const apiKey =
-    pc.provider === 'gemini'
-      ? process.env.GEMINI_API_KEY
-      : pc.provider === 'openrouter'
-        ? process.env.OPENROUTER_API_KEY
-        : process.env.OPENAI_API_KEY;
+  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY;
 
-  // One quick 429 retry with backoff (respect Retry-After up to 20s), then move on.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          tools,
-          temperature: 0.6,
-          stream: true,
-        }),
-        signal: cb.signal ?? AbortSignal.timeout(120000),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages, tools, temperature: 0.6, stream: true }),
+        signal: cb.signal ?? AbortSignal.timeout(MODEL_TURN_TIMEOUT_MS),
       });
 
       if (res.status === 429 && attempt === 0) {
         const retryAfter = Number(res.headers.get('retry-after')) || 0;
         await res.body?.cancel().catch(() => {});
-        const wait = Math.min(retryAfter > 0 ? retryAfter : 8, 20);
-        await new Promise((r) => setTimeout(r, wait * 1000));
+        const wait = Math.min(retryAfter > 0 ? retryAfter : 1, 2);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, wait * 1000);
+          cb.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Agent turn deadline exceeded', 'AbortError')); }, { once: true });
+        });
         continue;
       }
       if (!res.ok || !res.body) {
@@ -200,33 +149,24 @@ async function tryModel(
       return { ok: true, result };
     } catch (e) {
       const err = e as Error;
-      if (err.name === 'AbortError' && cb.signal?.aborted) throw err; // client left — don't fall through
+      if (err.name === 'AbortError' && cb.signal?.aborted) throw err;
       return { ok: false, error: err.message.slice(0, 200) };
     }
   }
   return { ok: false, error: 'HTTP 429 after retry' };
 }
 
-async function readStream(
-  res: Response,
-  cb: StreamCallbacks
-): Promise<OneShotResult> {
+async function readStream(res: Response, cb: StreamCallbacks): Promise<OneShotResult> {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let content = '';
-  // Keyed by tool-call id when present (Gemini omits `index`, so keying by
-  // index would merge multiple calls in one turn). OpenAI sends id only on the
-  // first fragment — subsequent fragments fall back to the last key for their index.
   const toolCalls = new Map<string, ToolCallFragment>();
   const keyByIndex = new Map<number, string>();
   let sawKey = false;
 
   const flushToolCall = (idx: number, id?: string): ToolCallFragment => {
     let key = id ?? keyByIndex.get(idx);
-    if (!key) {
-      key = `idx-${idx}`;
-      keyByIndex.set(idx, key);
-    }
+    if (!key) { key = `idx-${idx}`; keyByIndex.set(idx, key); }
     let tc = toolCalls.get(key);
     if (!tc) {
       tc = { key, index: idx, id: id ?? '', name: '', arguments: '' };
@@ -239,10 +179,7 @@ async function readStream(
   const mergeToolFragment = (frag: ToolCallFragment) => {
     sawKey = true;
     const cur = flushToolCall(frag.index ?? 0, frag.id);
-    if (frag.id) {
-      cur.id = frag.id;
-      keyByIndex.set(frag.index ?? 0, cur.key!);
-    }
+    if (frag.id) { cur.id = frag.id; keyByIndex.set(frag.index ?? 0, cur.key!); }
     if (frag.name) cur.name = frag.name;
     if (frag.arguments) cur.arguments = (cur.arguments ?? '') + frag.arguments;
     if (frag.extra_content) cur.extra_content = frag.extra_content;
@@ -262,20 +199,10 @@ async function readStream(
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') break;
       let json: any;
-      try {
-        json = JSON.parse(payload);
-      } catch {
-        continue;
-      }
+      try { json = JSON.parse(payload); } catch { continue; }
       const delta = json?.choices?.[0]?.delta;
       if (!delta) continue;
-      if (typeof delta.content === 'string') {
-        sawKey = true;
-        content += delta.content;
-        cb.onDelta?.(delta.content);
-      }
-      // OpenAI streams tool_calls as {index, id, function:{name, arguments}} fragments;
-      // Gemini 3.x also carries extra_content.google.thought_signature per call.
+      if (typeof delta.content === 'string') { sawKey = true; content += delta.content; cb.onDelta?.(delta.content); }
       const tcFrags: any[] = delta.tool_calls ?? json?.choices?.[0]?.message?.tool_calls ?? [];
       for (const f of tcFrags) {
         const idx = f.index ?? 0;
@@ -290,48 +217,18 @@ async function readStream(
     if (buf.includes('[DONE]')) break;
   }
 
-  if (!sawKey) {
-    throw new Error(
-      'LLM stream produced no content or tool calls (empty response from provider)'
-    );
-  }
-
-  const calls = [...toolCalls.values()]
-    .map((tc) => {
-      let parsed: any = null;
-      try {
-        parsed = tc.arguments ? JSON.parse(tc.arguments) : {};
-      } catch {
-        parsed = null;
-      }
-      return {
-        index: tc.index ?? 0,
-        id: tc.id ?? `call_${tc.index ?? 0}`,
-        name: tc.name ?? '',
-        arguments: tc.arguments ?? '',
-        parsed,
-        extra_content: tc.extra_content ?? null,
-      };
-    })
-    .filter((c) => c.name);
-
+  if (!sawKey) throw new Error('LLM stream produced no content or tool calls (empty response from provider)');
+  const calls = [...toolCalls.values()].map((tc) => {
+    let parsed: any = null;
+    try { parsed = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch { parsed = null; }
+    return { index: tc.index ?? 0, id: tc.id ?? `call_${tc.index ?? 0}`, name: tc.name ?? '', arguments: tc.arguments ?? '', parsed, extra_content: tc.extra_content ?? null };
+  }).filter((c) => c.name);
   return { content, toolCalls: calls };
 }
 
-export interface ToolEvent {
-  name: string;
-  status: 'running' | 'done' | 'error';
-  summary?: string;
-  data?: any;
-}
+export interface ToolEvent { name: string; status: 'running' | 'done' | 'error'; summary?: string; data?: any; }
+export interface AgentCallbacks { onDelta?: (text: string) => void; onToolEvent?: (ev: ToolEvent) => void; signal?: AbortSignal; }
 
-export interface AgentCallbacks {
-  onDelta?: (text: string) => void;
-  onToolEvent?: (ev: ToolEvent) => void;
-  signal?: AbortSignal;
-}
-
-/** Full tool-calling loop: stream -> execute tool batches -> re-call. */
 export async function runAgent(
   cfg: LlmConfig,
   messages: ChatMessage[],
@@ -339,96 +236,52 @@ export async function runAgent(
   cb: AgentCallbacks = {}
 ): Promise<{ content: string; iterations: number; modelUsed: string | null }> {
   const msgs: ChatMessage[] = [...messages];
-  // RESEARCH cfg: tool-gathering rounds use the FAST lite chain (they just
-  // collect data); only the final synthesis round uses the full (flash-first)
-  // cfg. Keeps total loop time inside Vercel's 60s cap without losing quality
-  // on the actual recommendation. (2026-08-17)
   const liteFirst = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
-  const researchCfg: LlmConfig = {
-    ...cfg,
-    models: [...liteFirst, ...cfg.models.filter((m) => !liteFirst.includes(m))],
-  };
+  const researchCfg: LlmConfig = { ...cfg, models: [...liteFirst, ...cfg.models.filter((m) => !liteFirst.includes(m))] };
   let finalText = '';
   let iterations = 0;
   let modelUsed: string | null = null;
   let endedWithTools = false;
 
-  // Streaming budget: Vercel serverless functions cap at 60s, so cap the loop
-  // at 3 tool rounds (the prompt mandates gathering all data in round one);
-  // the forced closer below guarantees a final answer either way.
-  for (; iterations < 3; iterations++) {
-    // Buffer per-turn deltas: when a turn contains BOTH text and tool calls the
-    // text is usually a fragment ("let me check...") that the closer then
-    // re-answers fully. Only forward deltas for final text turns so the user
-    // never sees duplicated fragments.
+  // The route has a 52s hard deadline. Reserve time for final synthesis instead
+  // of allowing 120s model turns that can never finish in production.
+  for (; iterations < MAX_TOOL_ROUNDS; iterations++) {
     let turnText = '';
-    const activeCfg = iterations < 2 ? researchCfg : cfg;
-    const resp = await streamChatOnce(activeCfg, msgs, tools, {
-      onDelta: (d) => {
-        turnText += d;
-      },
-      signal: cb.signal ? AbortSignal.any([cb.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
+    const resp = await streamChatOnce(researchCfg, msgs, tools, {
+      onDelta: (d) => { turnText += d; },
+      signal: boundedSignal(cb.signal, MODEL_TURN_TIMEOUT_MS),
     });
     if (resp.modelUsed) modelUsed = resp.modelUsed;
     finalText = resp.content;
 
     if (!resp.toolCalls.length) {
-      // A normal answer completed this loop. Without resetting this flag, any
-      // earlier tool round incorrectly triggers a second, no-tools closer that
-      // can duplicate (or contradict) the already-grounded recommendation.
       endedWithTools = false;
       if (turnText) cb.onDelta?.(turnText);
       break;
     }
     endedWithTools = true;
-
-    // Record assistant turn with tool_calls (required by the API), then execute
-    // every independent call from this model turn concurrently. Tool messages
-    // are still appended in model order so provider history stays deterministic.
     msgs.push({
       role: 'assistant',
       content: resp.content || null,
-      tool_calls: resp.toolCalls.map((tc) => ({
-        id: tc.id,
-        type: 'function',
-        function: { name: tc.name, arguments: tc.arguments || '{}' },
-        // Gemini 3.x requires the thought_signature roundtrip or the API 400s.
-        ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
-      })),
+      tool_calls: resp.toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments || '{}' }, ...(tc.extra_content ? { extra_content: tc.extra_content } : {}) })),
     });
 
     const results = await executeToolBatch(
       resp.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, parsed: tc.parsed ?? {} })),
       {
-        onEvent: (event) => cb.onToolEvent?.({
-          name: event.name,
-          status: event.status,
-          summary: event.summary,
-          data: event.data,
-        }),
+        timeoutMs: 8_000,
+        onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );
-    for (const result of results) {
-      msgs.push({ role: 'tool', tool_call_id: result.call.id, content: result.outcome.json });
-    }
+    for (const result of results) msgs.push({ role: 'tool', tool_call_id: result.call.id, content: result.outcome.json });
   }
 
-  // If the loop exhausted its iteration budget still mid-tool-use, or the final
-  // turn produced no text at all, force one last generation WITHOUT tools so the
-  // user always receives an actual answer (never a silent stream end).
   if (endedWithTools || !finalText) {
     const closer = await streamChatOnce(
       cfg,
-      [
-        ...msgs,
-        {
-          role: 'user',
-          content:
-            'Wrap up now: write your complete final analysis and any recommendations in prose (include any ```sgp / [PREDICTION_LOG] blocks you promised). Do NOT call any more tools. If some data could not be fetched, say so and reason from what you have.',
-        },
-      ],
+      [...msgs, { role: 'user', content: 'Wrap up now. Use the completed tool results only; do not call more tools. Return the strongest valid picks you have, including the requested count when the evidence supports it. Include the ```sgp block and [PREDICTION_LOG] for final-eligible picks. If a provider timed out, skip only that missing input rather than failing the whole answer.' }],
       [],
-      { onDelta: cb.onDelta, signal: cb.signal ? AbortSignal.any([cb.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000) },
+      { onDelta: cb.onDelta, signal: boundedSignal(cb.signal, CLOSER_TIMEOUT_MS) },
     );
     if (closer.content) finalText = closer.content;
     if (closer.modelUsed) modelUsed = closer.modelUsed;
