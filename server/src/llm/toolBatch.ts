@@ -111,7 +111,7 @@ export async function executeToolBatch(
   // Give only that batch a small extra window while keeping the overall 52s
   // agent deadline intact; ordinary tools retain the tighter caller budget.
   const timeoutMs = calls.some((call) => call.name === 'slate_candidate_screener')
-    ? Math.min(6_500, Math.max(4_000, requestedTimeout))
+    ? Math.min(15_000, Math.max(10_000, requestedTimeout))
     : requestedTimeout;
   for (const call of calls) options.onEvent?.({ name: call.name, status: 'running' });
 
