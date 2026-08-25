@@ -100,18 +100,22 @@ function relevantMarkets(player: DiscoveredPlayer, sport: ModelSport): string[] 
   return MARKETS[sport];
 }
 
-async function mlbObservations(player: DiscoveredPlayer, market: string): Promise<{ observations: HistoricalObservation[]; source: string; season: any } | null> {
-  const found = await mlb.searchPlayer(player.name);
-  if (!found.available || !found.data) return null;
+async function mlbObservations(player: DiscoveredPlayer, market: string, resolvedId?: number | null): Promise<{ observations: HistoricalObservation[]; source: string; season: any } | null> {
+  let playerId = resolvedId ?? null;
+  if (playerId == null) {
+    const found = await mlb.searchPlayer(player.name);
+    if (!found.available || !found.data) return null;
+    playerId = found.data.id;
+  }
   const pitching = relevantMlbMarkets(player).includes('strikeouts') && ['strikeouts', 'outsRecorded', 'earnedRuns', 'hitsAllowed'].includes(normalizeMarket(market));
   const group = pitching ? 'pitching' : 'hitting';
-  const log = await mlb.getGameLog(found.data.id, group, mlb.CURRENT_SEASON, 20);
+  const log = await mlb.getGameLog(playerId, group, mlb.CURRENT_SEASON, 20);
   if (!log.available || !Array.isArray(log.data)) return null;
   const observations = log.data.map((game: any) => {
     const value = mlbObservation(market, game.stat ?? {});
     return value == null ? null : { date: game.date ?? null, value };
   }).filter(Boolean) as HistoricalObservation[];
-  return { observations, source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON } };
+  return { observations, source: 'statsapi.mlb.com', season: { playerId, season: mlb.CURRENT_SEASON } };
 }
 
 async function espnObservations(player: DiscoveredPlayer, sport: Exclude<ModelSport, 'mlb'>, market: string): Promise<{ observations: HistoricalObservation[]; source: string; season: any } | null> {
@@ -177,9 +181,10 @@ async function screenPlayer(
   learning: Awaited<ReturnType<typeof loadLearning>>,
 ): Promise<ScreenerCandidate[]> {
   const candidates: ScreenerCandidate[] = [];
+  const resolved = await mlb.resolvePlayerId(player, sport);
   for (const market of relevantMarkets(player, sport)) {
     const history = sport === 'mlb'
-      ? await mlbObservations(player, market)
+      ? await mlbObservations(player, market, resolved)
       : await espnObservations(player, sport as Exclude<ModelSport, 'mlb'>, market);
     if (!history || history.observations.length < 5) continue;
     const calibration = learningCalibration(learning, sport, normalizeMarket(market));
@@ -262,16 +267,24 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = dateOnly(args?.date);
   const requested = Math.min(12, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  const maxPlayers = Math.min(48, Math.max(18, Number(args?.maxPlayers ?? requested * 5) || requested * 5));
-  const minConfidence = Math.max(0.58, Math.min(0.75, Number(args?.minConfidence ?? 0.58) || 0.58));
+  // maxPlayers is re-derived below with a Stats-API-aware cap; this line only
+  // seeds the default so the value is defined before any early return.
+  const maxPlayers = Number(args?.maxPlayers ?? 12) || 12;
+  const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
+  // The MLB Stats API throttles to ~1.2s/call, so the screening pool must stay
+  // small enough to finish within the tool budget. 25 players x 2 groups =
+  // 50 calls ~= 60s when parallelized, which blows the budget. Cap the default
+  // pool at 12 (still yields far more than the 5 requested legs) unless the
+  // caller explicitly asks for a larger scan.
+  const effectiveMax = Math.min(12, Math.max(8, Number(args?.maxPlayers ?? 12) || 12));
+  const maxPlayersFinal = Math.min(48, Math.max(8, effectiveMax));
 
   const allEvents = await discoverSlateEvents(sport, date);
   const events = allEvents.filter((event) => eventIsUsable(event.status));
   if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
 
   const playerGroups = await Promise.all(events.map((event) => discoverPlayersForEvent(event).catch(() => [])));
-  const players = distributePlayers(playerGroups, maxPlayers);
-  if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate`);
+  const players = distributePlayers(playerGroups, maxPlayersFinal);
 
   const learning = await loadLearning().catch(() => null);
   const perPlayer = await Promise.all(players.map((player) => screenPlayer(player, sport, learning).catch(() => [])));

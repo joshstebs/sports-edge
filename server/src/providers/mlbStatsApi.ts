@@ -26,6 +26,27 @@ function fail<T>(reason: string): ProviderResult<T> {
 
 // --- player lookup ----------------------------------------------------------
 
+// Resolve an MLB player id once, memoized for the process lifetime so the
+// screener doesn't re-hit /people/search for every (player, market) combo.
+const PLAYER_ID_CACHE = new Map<string, Promise<number | null>>();
+// Game logs are re-fetched for every (player, market) combo in the screener;
+// a single player's hitting/pitching log is the same for all their markets, so
+// memoize by player+group+season to slash redundant Stats API calls.
+const GAME_LOG_CACHE = new Map<string, Promise<ProviderResult<any[]>>>();
+
+export function resolvePlayerId(player: { name: string }, _sport?: string): Promise<number | null> {
+  const key = player.name?.trim().toLowerCase();
+  if (!key) return Promise.resolve(null);
+  const cached = PLAYER_ID_CACHE.get(key);
+  if (cached) return cached;
+  const task = (async () => {
+    const found = await searchPlayer(player.name);
+    return found.available && found.data ? found.data.id : null;
+  })();
+  PLAYER_ID_CACHE.set(key, task);
+  return task;
+}
+
 export async function searchPlayer(name: string): Promise<ProviderResult<{ id: number; fullName: string }>> {
   try {
     if (!name || !name.trim()) return fail('no player name provided');
@@ -109,7 +130,10 @@ export async function getGameLog(
   season: string = CURRENT_SEASON,
   limit?: number
 ): Promise<ProviderResult<any[]>> {
-  try {
+  const cacheKey = `${playerId}:${group}:${season}`;
+  const cached = GAME_LOG_CACHE.get(cacheKey);
+  if (cached) return cached;
+  const task = (async (): Promise<ProviderResult<any[]>> => {
     const j = await fetchJson(
       `${BASE}/people/${playerId}/stats?stats=gameLog&season=${season}&group=${group}`
     );
@@ -123,9 +147,9 @@ export async function getGameLog(
     filtered = filtered.reverse();
     if (limit && filtered.length > limit) filtered = filtered.slice(0, limit);
     return { available: true, source: SOURCE, data: filtered };
-  } catch (e) {
-    return fail(`game log failed: ${(e as Error).message}`);
-  }
+  })();
+  GAME_LOG_CACHE.set(cacheKey, task);
+  return task;
 }
 
 // --- platoon splits (statSplits) --------------------------------------------

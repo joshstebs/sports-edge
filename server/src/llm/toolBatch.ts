@@ -108,10 +108,12 @@ export async function executeToolBatch(
   const executor = options.execute ?? executeTool;
   const requestedTimeout = Math.max(1_000, options.timeoutMs ?? 5_000);
   // Slate discovery legitimately performs several parallel roster/history reads.
-  // Give only that batch a small extra window while keeping the overall 52s
-  // agent deadline intact; ordinary tools retain the tighter caller budget.
+  // Give only that batch a window near the agent deadline (but leave headroom
+  // for synthesis). The screener is concurrency-limited + pool-capped so it
+  // finishes well inside this budget. Previously capped at 6.5s, which
+  // guaranteed timeouts on every slate request.
   const timeoutMs = calls.some((call) => call.name === 'slate_candidate_screener')
-    ? Math.min(15_000, Math.max(10_000, requestedTimeout))
+    ? Math.min(45_000, Math.max(20_000, requestedTimeout))
     : requestedTimeout;
   for (const call of calls) options.onEvent?.({ name: call.name, status: 'running' });
 
