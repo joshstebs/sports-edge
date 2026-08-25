@@ -6,7 +6,7 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 const MIN_GAP_MS = 800;
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 5000;
 
 let lastFetchAt = 0;
 let queue: Promise<void> = Promise.resolve();
@@ -50,7 +50,7 @@ export async function pacedFetch(
     try {
       const res = await fetch(url, { ...opts, headers, signal: controller.signal });
       if ((res.status === 429 || res.status >= 500) && attempt === 0) {
-        await sleep(1200);
+        await sleep(400);
         continue;
       }
       return res;
