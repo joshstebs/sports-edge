@@ -247,11 +247,25 @@ export interface SgoSlateEvent {
 
 function displayPlayerName(playerId: string): string {
   return playerId
-    .replace(/_\\d+_(?:MLB|NBA|NFL|NHL)$/i, '')
+    .replace(/_\d+_(?:MLB|NBA|NFL|NHL)$/i, '')
     .split('_')
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ');
+}
+
+function bookmakerConsensus(raw: any): { odds: number | null; line: number | null } {
+  const books = raw?.byBookmaker && typeof raw.byBookmaker === 'object'
+    ? Object.values(raw.byBookmaker) as any[]
+    : [];
+  for (const book of books) {
+    if (!book || typeof book !== 'object') continue;
+    const odds = parseAmerican(book.odds ?? book.bookOdds ?? book.price);
+    const lineValue = book.overUnder ?? book.bookOverUnder ?? book.line;
+    const line = lineValue == null || !Number.isFinite(Number(lineValue)) ? null : Number(lineValue);
+    if (odds != null || line != null) return { odds, line };
+  }
+  return { odds: null, line: null };
 }
 
 function extractSlateProps(odds: Record<string, any> | undefined): SgoSlateProp[] {
@@ -263,7 +277,9 @@ function extractSlateProps(odds: Record<string, any> | undefined): SgoSlateProp[
     const stat = parts[0] ?? '';
     const playerId = String(raw.playerID ?? raw.statEntityID ?? parts[1] ?? '');
     const side = String(raw.sideID ?? parts[4] ?? '').toLowerCase();
-    const line = raw.bookOverUnder ?? raw.fairOverUnder;
+    const bookmaker = bookmakerConsensus(raw);
+    const lineValue = raw.bookOverUnder ?? raw.fairOverUnder ?? bookmaker.line;
+    const oddsValue = raw.bookOdds ?? bookmaker.odds;
     if (!playerId || ['home', 'away', 'all'].includes(playerId.toLowerCase())) continue;
     if (side !== 'over' && side !== 'under') continue;
     out.push({
@@ -271,8 +287,8 @@ function extractSlateProps(odds: Record<string, any> | undefined): SgoSlateProp[
       playerName: String(raw.playerName ?? displayPlayerName(playerId)),
       market: stat,
       side,
-      line: line == null || !Number.isFinite(Number(line)) ? null : Number(line),
-      odds: parseAmerican(raw.bookOdds),
+      line: lineValue == null || !Number.isFinite(Number(lineValue)) ? null : Number(lineValue),
+      odds: parseAmerican(oddsValue),
       fairOdds: parseAmerican(raw.fairOdds),
       oddID,
       byBookmaker: raw.byBookmaker ?? {},
