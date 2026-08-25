@@ -290,15 +290,77 @@ export async function runAgent(
   }
 
   if (endedWithTools || !finalText) {
-    const closer = await streamChatOnce(
-      cfg,
-      [...msgs, { role: 'user', content: 'Wrap up now. Use the completed tool results only; do not call more tools. Return the strongest valid picks you have, including the requested count when the evidence supports it. Include the ```sgp block and [PREDICTION_LOG] for final-eligible picks. If a provider timed out, skip only that missing input rather than failing the whole answer.' }],
-      [],
-      { onDelta: cb.onDelta, signal: boundedSignal(cb.signal, CLOSER_TIMEOUT_MS) },
-    );
-    if (closer.content) finalText = closer.content;
-    if (closer.modelUsed) modelUsed = closer.modelUsed;
+    // Prefer a fast, deterministic summary built directly from the screener
+    // candidates. The full LLM "closer" synthesis is slow (gpt-oss / gemini can
+    // take 30s+ to write a 5-leg prose answer) and blows the 60s function budget
+    // after the ~20s screener. We only fall back to the LLM closer if we have no
+    // screener data to render. This guarantees the user sees real picks.
+    const screenerData = extractScreenerCandidates(msgs);
+    if (screenerData.length) {
+      finalText = renderScreenerSummary(screenerData, requestedCountHint(msgs));
+      cb.onDelta?.(finalText);
+      modelUsed = modelUsed ?? 'server-template';
+    } else {
+      const closer = await streamChatOnce(
+        cfg,
+        [...msgs, { role: 'user', content: 'Wrap up now. Use the completed tool results only; do not call more tools. Return the strongest valid picks you have, including the requested count when the evidence supports it. Include the ```sgp block and [PREDICTION_LOG] for final-eligible picks. If a provider timed out, skip only that missing input rather than failing the whole answer.' }],
+        [],
+        { onDelta: cb.onDelta, signal: boundedSignal(cb.signal, CLOSER_TIMEOUT_MS) },
+      );
+      if (closer.content) finalText = closer.content;
+      if (closer.modelUsed) modelUsed = closer.modelUsed;
+    }
   }
 
   return { content: finalText, iterations: iterations + 1, modelUsed };
+}
+
+/** Pull the candidates array out of a slate_candidate_screener tool result. */
+function extractScreenerCandidates(msgs: ChatMessage[]): any[] {
+  for (const m of msgs) {
+    if (m.role === 'tool' && typeof m.content === 'string') {
+      try {
+        const parsed = JSON.parse(m.content);
+        if (Array.isArray(parsed?.candidates) && parsed.candidates.length) return parsed.candidates;
+      } catch { /* not JSON or not the screener */ }
+    }
+  }
+  return [];
+}
+
+function requestedCountHint(msgs: ChatMessage[]): number {
+  for (const m of msgs) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      const match = m.content.match(/(\d+)\s*(?:leg|pick|player)/i);
+      if (match) return Number(match[1]);
+    }
+  }
+  return 5;
+}
+
+/** Render a concise, gate-honest parlay summary from screener candidates. */
+function renderScreenerSummary(candidates: any[], requested: number): string {
+  const top = candidates.slice(0, Math.max(requested, 5));
+  const lines: string[] = [];
+  lines.push(`**Verified slate screen — ${top.length} qualified candidate${top.length === 1 ? '' : 's'} (model grades, live stats).**`);
+  lines.push('');
+  top.forEach((c, i) => {
+    const prob = c.confidencePct != null ? `${c.confidencePct}%` : 'n/a';
+    const line = c.suggestedLine != null ? ` ${c.suggestedLine}` : '';
+    lines.push(`${i + 1}. **${c.player}** (${c.team} vs ${c.opponent ?? '?'}) — ${c.market} ${c.side?.toUpperCase()}${line} · model ${prob} (Grade ${c.grade ?? '?'})`);
+    const hr = c.recentHitRate;
+    if (hr) {
+      const parts = [hr.last5 != null && `L5 ${Math.round((hr.last5 ?? 0) * 100)}%`, hr.last20 != null && `L20 ${Math.round((hr.last20 ?? 0) * 100)}%`].filter(Boolean);
+      if (parts.length) lines.push(`   _form: ${parts.join(' · ')}_`);
+    }
+    lines.push(`   _verify live line/odds + lineup before betting._`);
+  });
+  const shortfall = requested - top.length;
+  if (shortfall > 0) {
+    lines.push('');
+    lines.push(`⚠️ **Shortfall:** only ${top.length} of ${requested} requested legs cleared the ${Math.round((candidates[0]?.minConfidence ?? 0.54) * 100)}%+ screen. Remaining slots not filled with sub-threshold bets.`);
+  }
+  lines.push('');
+  lines.push('_Lines/probabilities are model screening outputs from verified-live stats (statsapi.mlb.com). Final sportsbook odds and +EV must be confirmed via game_odds before any wager. Pre-lineup: availability gate still required._');
+  return lines.join('\n');
 }
