@@ -309,7 +309,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   }
 
   const controller = new AbortController();
-  const requestDeadline = setTimeout(() => controller.abort(), 58_000);
+  const requestDeadline = setTimeout(() => controller.abort(), 59_000);
   // Node 18+: req 'close' fires when the request BODY is consumed, not on
   // disconnect — that would abort every request instantly. Detect real client
   // disconnects via 'aborted' + res 'close' while the response is unfinished.
