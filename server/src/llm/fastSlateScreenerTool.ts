@@ -120,14 +120,21 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  const maxPlayers = Math.min(5, Math.max(4, Number(args?.maxPlayers ?? 4) || 4));
+  // Pull a WIDER pool than the final pick count so "more/other" requests can
+  // surface genuinely different athletes instead of re-ranking the same five.
+  const maxPlayers = Math.min(14, Math.max(8, Number(args?.maxPlayers ?? Math.max(8, requested * 2)) || 8));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
+  const excludeNames = new Set<string>(
+    Array.isArray(args?.exclude)
+      ? args.exclude.map((n: any) => String(n ?? '').toLowerCase()).filter(Boolean)
+      : String(args?.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
+  );
 
   const events = (await discoverSlateEvents(sport, date)).filter((event) => usableEvent(event.status));
   if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
-  const groups = await Promise.all(events.map((event) => discoverPlayersForEvent(event).catch(() => [])));
+  const groups = await Promise.all(events.map((event) => discoverPlayersForEvent(event, excludeNames).catch(() => [])));
   const players = balanced(groups, maxPlayers);
-  if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate`);
+  if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate${excludeNames.size ? ' after excluding prior picks' : ''}`);
 
   const learning = await loadLearning().catch(() => null);
   const evaluated: any[] = [];

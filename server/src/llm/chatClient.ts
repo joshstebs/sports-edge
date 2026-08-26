@@ -296,13 +296,43 @@ export async function runAgent(
     const userAskedMultiPick = msgs.some(
       (m) => m.role === 'user' && typeof m.content === 'string' && /(\d+)\s*(?:leg|pick|player|parlay|prop)/i.test(m.content),
     );
-    const calledScreener = resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener');
+    const screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
+    const calledScreener = Boolean(screenerCall);
+
+    // Detect "more/other/different" follow-ups and gather names already shown
+    // from PRIOR assistant text (picks render as "**Name** (Team vs Opp)").
+    const lastUser = msgs.filter((m) => m.role === 'user' && typeof m.content === 'string').pop()?.content;
+    const wantsMore = typeof lastUser === 'string' && /\b(more|other|another|different|else|additional|again)\b/i.test(lastUser);
+    const priorNames = extractPriorPickNames(msgs);
+
     if (userAskedMultiPick && !calledScreener) {
       const firstUser = msgs.find((m) => m.role === 'user' && typeof m.content === 'string');
       const countMatch = (typeof firstUser?.content === 'string' ? firstUser.content : '').match(/(\d+)\s*(?:leg|pick|player|parlay|prop)/i);
       const requested = countMatch ? Number(countMatch[1]) : 5;
-      msgs.push({ role: 'user', content: `Call slate_candidate_screener with requestedPicks=${requested} and date=${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())} now.` });
+      const excludeArg = wantsMore && priorNames.length ? `, exclude=${JSON.stringify(priorNames)}` : '';
+      msgs.push({ role: 'user', content: `Call slate_candidate_screener with requestedPicks=${requested} and date=${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}${excludeArg} now.` });
       continue;
+    }
+
+    // Model DID call the screener itself — but on a "more/other" request it may
+    // have forgotten to exclude prior picks. Patch its arguments so we don't
+    // hand back the identical set.
+    if (calledScreener && wantsMore && priorNames.length) {
+      const raw = screenerCall!.arguments ?? '{}';
+      let parsed: any = {};
+      try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+      const already = new Set<string>([
+        ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
+        ...String(parsed.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
+      ]);
+      const merged = [...new Set([...already, ...priorNames.map((n) => n.toLowerCase())])];
+      if (merged.length > already.size) {
+        parsed.exclude = merged;
+        screenerCall!.arguments = JSON.stringify(parsed);
+        resp.toolCalls = resp.toolCalls.map((tc) =>
+          tc.name === 'slate_candidate_screener' ? { ...tc, arguments: screenerCall!.arguments } : tc,
+        );
+      }
     }
 
     endedWithTools = true;
@@ -362,6 +392,26 @@ function extractScreenerCandidates(msgs: ChatMessage[]): any[] {
     }
   }
   return [];
+}
+
+/**
+ * Extract player names the assistant already recommended in PRIOR turns.
+ * Picks are rendered as "**Full Name** (Team vs Opp)" so we pull the bold
+ * lead. This lets a "more/other" follow-up exclude them even though the
+ * screener tool result isn't in the visible message history.
+ */
+function extractPriorPickNames(msgs: ChatMessage[]): string[] {
+  const names = new Set<string>();
+  for (const m of msgs) {
+    if (m.role !== 'assistant' || typeof m.content !== 'string') continue;
+    for (const match of m.content.matchAll(/\*\*([^*]+?)\*\*/g)) {
+      const name = match[1].trim();
+      // Skip non-player bold leads (headers like "Verified slate screen")
+      if (name.includes('Verified slate') || name.includes('⚠')) continue;
+      names.add(name);
+    }
+  }
+  return [...names];
 }
 
 function requestedCountHint(msgs: ChatMessage[]): number {

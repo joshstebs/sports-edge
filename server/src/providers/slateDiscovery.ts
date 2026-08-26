@@ -123,7 +123,7 @@ function positionAllowed(sport: 'mlb' | 'nba' | 'nfl' | 'nhl', position: string 
   return true;
 }
 
-export async function discoverPlayersForEvent(event: SlateEvent): Promise<DiscoveredPlayer[]> {
+export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<string> = new Set()): Promise<DiscoveredPlayer[]> {
   if (event.sport === 'mlb') {
     const lineups = await mlb.getLineups(Number(event.eventId));
     const output: DiscoveredPlayer[] = [];
@@ -133,7 +133,9 @@ export async function discoverPlayersForEvent(event: SlateEvent): Promise<Discov
         { side: 'home' as const, team: event.home.name, opponent: event.away.name, data: lineups.data.home },
       ];
       for (const row of sides) {
-        row.data.battingOrder.forEach((player: any, index: number) => output.push({
+        row.data.battingOrder.forEach((player: any, index: number) => {
+          if (exclude.has(String(player.fullName ?? '').toLowerCase())) return;
+          output.push({
           id: player.id ?? null,
           name: player.fullName,
           teamId: null,
@@ -146,7 +148,8 @@ export async function discoverPlayersForEvent(event: SlateEvent): Promise<Discov
           lineupSlot: index + 1,
           probablePitcher: false,
           source: 'statsapi.mlb.com boxscore',
-        }));
+          });
+        });
       }
     }
 
@@ -161,7 +164,9 @@ export async function discoverPlayersForEvent(event: SlateEvent): Promise<Discov
         if (!teamId) continue;
         try {
           const roster = (await espnRoster('baseball/mlb', teamId)).filter((player) => positionAllowed('mlb', player.position));
-          for (const player of roster.slice(0, 7)) output.push({
+          for (const player of roster.slice(0, 16)) {
+            if (exclude.has(String(player.name ?? '').toLowerCase())) continue;
+          output.push({
             id: player.id,
             name: player.name,
             teamId,
@@ -175,12 +180,14 @@ export async function discoverPlayersForEvent(event: SlateEvent): Promise<Discov
             probablePitcher: false,
             source: 'site.web.api.espn.com roster',
           });
+          }
         } catch { /* other teams still remain usable */ }
       }
     }
 
     for (const [side, name] of [['away', event.awayProbable], ['home', event.homeProbable]] as const) {
       if (!name) continue;
+      if (exclude.has(String(name ?? '').toLowerCase())) continue;
       output.push({
         id: null,
         name,
