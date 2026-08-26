@@ -330,7 +330,9 @@ export async function runAgent(
         parsed.exclude = merged;
         screenerCall!.arguments = JSON.stringify(parsed);
         resp.toolCalls = resp.toolCalls.map((tc) =>
-          tc.name === 'slate_candidate_screener' ? { ...tc, arguments: screenerCall!.arguments } : tc,
+          tc.name === 'slate_candidate_screener'
+            ? { ...tc, arguments: screenerCall!.arguments, parsed }
+            : tc,
         );
       }
     }
