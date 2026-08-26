@@ -173,7 +173,23 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     .filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence)
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
 
-  const candidates = qualified.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, source }) => ({
+  // One leg per player: keep each player's single best market so a parlay never
+  // double-counts the same athlete. Also record whether the player is actually
+  // in TODAY'S posted lineup (batting order or confirmed probable pitcher) —
+  // roster-fallback guesses are not startable/bettable until lineups post.
+  const seenPlayer = new Set<string>();
+  const deduped = qualified.filter(({ player }) => {
+    const key = `${player.name}|${player.team}`.toLowerCase();
+    if (seenPlayer.has(key)) return false;
+    seenPlayer.add(key);
+    return true;
+  });
+  const inLineup = (player: DiscoveredPlayer) => player.lineupSlot != null || player.probablePitcher;
+  deduped.sort((a, b) => Number(inLineup(b.player)) - Number(inLineup(a.player)) || (b.model.probability ?? 0) - (a.model.probability ?? 0));
+
+  const lineupPosted = evaluated.some(({ player }) => inLineup(player));
+
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, source }) => ({
     player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
     market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
     grade: model.grade, sampleSize: model.sampleSize,
@@ -181,6 +197,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     // (separate, persisted) so the synthesis turn stays small enough to finish
     // inside the 60s function budget. Keep only a compact hit-rate summary.
     availability: profile.availability,
+    inLineupToday: inLineup(player),
+    lineupSlot: player.lineupSlot,
     recentHitRate: {
       last5: profile.recent?.last5?.hitRateOverSuggestedLine,
       last10: profile.recent?.last10?.hitRateOverSuggestedLine,
@@ -189,9 +207,11 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
   }));
 
+  const payload: any = { available: true, sport, date, slate: { events: events.length, discoveredPlayers: players.length, modelEvaluations: evaluated.length, qualifiedCandidates: deduped.length, lineupPosted }, candidates, providerPolicy: { apiSportsRequired: false, fallbackRule: 'MLB uses MLB Stats API; NBA/NFL/NHL use ESPN recent game logs.' } };
+  if (!lineupPosted) payload.warning = 'Batting orders have NOT been posted for this date yet. Candidates below come from current rosters/probable pitchers and are NOT confirmable starters. Re-run closer to game time once lineups post.';
   return ok(
-    `${sport.toUpperCase()} fast screener evaluated ${evaluated.length} markets across ${players.length} players; ${qualified.length} cleared ${Math.round(minConfidence * 100)}%`,
-    { available: true, sport, date, slate: { events: events.length, discoveredPlayers: players.length, modelEvaluations: evaluated.length, qualifiedCandidates: qualified.length }, candidates, providerPolicy: { apiSportsRequired: false, fallbackRule: 'MLB uses MLB Stats API; NBA/NFL/NHL use ESPN recent game logs.' } },
+    `${sport.toUpperCase()} fast screener evaluated ${evaluated.length} markets across ${players.length} players; ${deduped.length} cleared ${Math.round(minConfidence * 100)}%${lineupPosted ? '' : ' (lineups not posted)'}`,
+    payload,
   );
 };
 

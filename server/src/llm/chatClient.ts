@@ -1,6 +1,8 @@
 // OpenAI-compatible LLM chat client (raw fetch; Node 22 has fetch).
-// Provider selection: GEMINI_API_KEY -> generativelanguage.googleapis.com/v1beta/openai
-// else OPENAI_API_KEY -> api.openai.com/v1. Neither set -> llmConfigured=false.
+// Provider selection (priority order):
+//   1. Ox Alpha via OpenRouter (OPENROUTER_API_KEY, stealth/ox-alpha)
+//   2. DeepSeek V4 via OpenCode Go (OPENCODE_GO_API_KEY, deepseek-v4-flash)
+//   3. Cheap/free fallback via OpenCode Zen (deepseek-v4-flash-free) and Gemini
 // Supports streaming content deltas AND streaming tool_calls (accumulated per
 // index, partial JSON fragments concatenated). Tool calls emitted in one model
 // turn execute concurrently, then the model receives results in original order.
@@ -17,26 +19,43 @@ export interface LlmConfig {
 }
 
 export function llmConfig(): LlmConfig {
-  const geminiKey = process.env.GEMINI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const opencodeGoKey = process.env.OPENCODE_GO_API_KEY;
+  const opencodeZenKey = process.env.OPENCODE_ZEN_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+
+  // 1. Ox Alpha (OpenRouter) — requested default.
+  const oxAlphaModels = [
+    process.env.OPENROUTER_MODEL || 'stealth/ox-alpha',
+    'openai/gpt-oss-120b',
+    'meta-llama/llama-3.3-70b-instruct:free',
+  ].filter((m, i, a) => a.indexOf(m) === i);
+
+  // 2. DeepSeek V4 via OpenCode Go.
+  const deepseekGoModels = [
+    process.env.OPENCODE_GO_MODEL || 'deepseek-v4-flash',
+    'deepseek-v4-pro',
+    'kimi-k3',
+  ].filter((m, i, a) => a.indexOf(m) === i);
+
+  // 3. Cheap/free fallback via OpenCode Zen.
+  const zenModels = [
+    process.env.OPENCODE_ZEN_MODEL || 'deepseek-v4-flash-free',
+    'hy3-free',
+    'nemotron-3-ultra-free',
+  ].filter((m, i, a) => a.indexOf(m) === i);
+
   const geminiModels = [
     process.env.GEMINI_MODEL || 'gemini-3.6-flash',
     'gemini-flash-latest',
-    'gemini-3.5-flash',
-  ].filter((m, i, a) => a.indexOf(m) === i);
-  const openrouterModels = [
-    process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
-    'mistralai/mistral-7b-instruct:free',
-    'meta-llama/llama-3.2-3b-instruct:free',
   ].filter((m, i, a) => a.indexOf(m) === i);
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  // OpenRouter (gpt-oss) is the primary: fast, reliable, free tier. Gemini is
-  // the fallback (some gemini models are slow on long synthesis turns and blow
-  // the 60s Vercel function budget). OpenAI last.
-  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: openrouterModels[0], models: openrouterModels, baseUrl: 'https://openrouter.ai/api/v1' });
+  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
+  if (opencodeGoKey) providers.push({ configured: true, provider: 'opencode-go', model: deepseekGoModels[0], models: deepseekGoModels, baseUrl: 'https://opencode.ai/zen/go/v1' });
+  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
   if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
   for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
@@ -121,7 +140,7 @@ async function tryModel(
   cb: StreamCallbacks
 ): Promise<TryResult> {
   const url = `${pc.baseUrl}/chat/completions`;
-  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY;
+  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : pc.provider === 'opencode-go' ? process.env.OPENCODE_GO_API_KEY : pc.provider === 'opencode-zen' ? process.env.OPENCODE_ZEN_API_KEY : process.env.OPENAI_API_KEY;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -359,12 +378,18 @@ function requestedCountHint(msgs: ChatMessage[]): number {
 function renderScreenerSummary(candidates: any[], requested: number): string {
   const top = candidates.slice(0, Math.max(requested, 5));
   const lines: string[] = [];
+  const anyNotInLineup = top.some((c) => c.inLineupToday === false);
   lines.push(`**Verified slate screen — ${top.length} qualified candidate${top.length === 1 ? '' : 's'} (model grades, live stats).**`);
+  if (anyNotInLineup) {
+    lines.push('');
+    lines.push('⚠️ **Today\'s batting orders are not posted yet** — some candidates below come from current rosters / probable pitchers and are not confirmable starters. Re-run closer to game time once lineups post. Picks marked 🕐 = lineup pending.');
+  }
   lines.push('');
   top.forEach((c, i) => {
     const prob = c.confidencePct != null ? `${c.confidencePct}%` : 'n/a';
     const line = c.suggestedLine != null ? ` ${c.suggestedLine}` : '';
-    lines.push(`${i + 1}. **${c.player}** (${c.team} vs ${c.opponent ?? '?'}) — ${c.market} ${c.side?.toUpperCase()}${line} · model ${prob} (Grade ${c.grade ?? '?'})`);
+    const flag = c.inLineupToday === false ? ' 🕐' : c.inLineupToday === true ? '' : ' 🕐';
+    lines.push(`${i + 1}. **${c.player}** (${c.team} vs ${c.opponent ?? '?'})${flag} — ${c.market} ${c.side?.toUpperCase()}${line} · model ${prob} (Grade ${c.grade ?? '?'})`);
     const hr = c.recentHitRate;
     if (hr) {
       const parts = [hr.last5 != null && `L5 ${Math.round((hr.last5 ?? 0) * 100)}%`, hr.last20 != null && `L20 ${Math.round((hr.last20 ?? 0) * 100)}%`].filter(Boolean);
@@ -378,6 +403,6 @@ function renderScreenerSummary(candidates: any[], requested: number): string {
     lines.push(`⚠️ **Shortfall:** only ${top.length} of ${requested} requested legs cleared the ${Math.round((candidates[0]?.minConfidence ?? 0.54) * 100)}%+ screen. Remaining slots not filled with sub-threshold bets.`);
   }
   lines.push('');
-  lines.push('_Lines/probabilities are model screening outputs from verified-live stats (statsapi.mlb.com). Final sportsbook odds and +EV must be confirmed via game_odds before any wager. Pre-lineup: availability gate still required._');
+  lines.push('_Lines/probabilities are model screening outputs from verified-live stats (statsapi.mlb.com). Live sportsbook odds are fetched when available (The Odds API → SportsGameOdds → ESPN → keyless OddsTrader scrape) and can be confirmed via game_odds; edge is only claimed when a verified price is present. Pre-lineup: availability gate still required._');
   return lines.join('\n');
 }

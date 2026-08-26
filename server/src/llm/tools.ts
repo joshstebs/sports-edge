@@ -11,6 +11,7 @@ import * as sgo from '../providers/sportsGameOdds.js';
 import * as weather from '../providers/weather.js';
 import * as news from '../providers/news.js';
 import * as espnOdds from '../providers/espnOdds.js';
+import * as oddsScraper from '../providers/oddsScraper.js';
 import * as availability from '../providers/playerAvailability.js';
 import {
   buildPlayerPropModel,
@@ -506,8 +507,43 @@ const gameOdds = async (args: any): Promise<ToolOutcome> => {
     );
   }
 
+  // Fallback 3: OddsTrader keyless board scrape (last resort; real public odds).
+  const sc = await oddsScraper.scrapeOddsTrader(teamA, teamB, sport);
+  if (sc.available && sc.moneyline) {
+    const ml = sc.moneyline;
+    const payload = {
+      available: true,
+      source: 'oddstrader.com',
+      provider: 'OddsTrader (scraped public board)',
+      sport: sc.sport,
+      event: sc.event,
+      away: sc.away,
+      home: sc.home,
+      moneyline: ml
+        ? {
+            away: ml.away ? { odds: ml.away, implied: impliedProb(espnOdds.parseAmerican(ml.away)) } : null,
+            home: ml.home ? { odds: ml.home, implied: impliedProb(espnOdds.parseAmerican(ml.home)) } : null,
+          }
+        : null,
+      runline: sc.runline ?? null,
+      total: sc.total ?? null,
+      retrievedAt: new Date().toISOString(),
+      note: 'keyless scrape of public OddsTrader board; single consolidated price, not multi-book. Treat as indicative, confirm on your book before wagering.',
+    };
+    return ok(
+      `Odds for ${sc.away} @ ${sc.home} (OddsTrader scrape)`,
+      payload,
+      {
+        event: `${sc.away} @ ${sc.home}`,
+        provider: 'OddsTrader',
+        moneyline: ml ? { away: ml.away, home: ml.home } : null,
+        total: sc.total?.line ?? null,
+      }
+    );
+  }
+
   return unavail(
-    `The Odds API: ${r.reason ?? 'unavailable'}${e.reason ? ` | ESPN odds: ${e.reason}` : ''}`
+    `The Odds API: ${r.reason ?? 'unavailable'}${e.reason ? ` | ESPN odds: ${e.reason}` : ''}${sc.reason ? ` | OddsTrader: ${sc.reason}` : ''}`
   );
 };
 
