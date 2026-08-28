@@ -146,7 +146,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     sampleSize: row.model.sampleSize, modelVersion: row.model.modelVersion, modelSource: row.source,
     sources: [row.source, 'api.sportsgameodds.com'], fallbackUsed: row.source !== 'statsapi.mlb.com',
     metadata: { odds: row.prop.odds, fairOdds: row.prop.fairOdds },
-  })).catch(() => {}));
+  }))).catch(() => {});
 
   const qualified = evaluated
     .filter((row) => row.model.grade !== 'D' && (row.model.probability ?? 0) >= minConfidence)
