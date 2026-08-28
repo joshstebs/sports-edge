@@ -263,7 +263,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const date = dateOnly(args?.date);
   const requested = Math.min(12, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
   const maxPlayers = Math.min(48, Math.max(18, Number(args?.maxPlayers ?? requested * 5) || requested * 5));
-  const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
+  const minConfidence = Math.max(0.58, Math.min(0.75, Number(args?.minConfidence ?? 0.58) || 0.58));
 
   const allEvents = await discoverSlateEvents(sport, date);
   const events = allEvents.filter((event) => eventIsUsable(event.status));
@@ -347,7 +347,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   };
 
   return ok(
-    `${sport.toUpperCase()} slate screener evaluated ${evaluated.length} player/market combinations across ${players.length} players; ${qualified.length} cleared ${Math.round(minConfidence * 100)}%`,
+    `${sport.toUpperCase()} slate screener evaluated ${evaluated.length} player/market combinations across ${players.length} players; ${qualified.length} A/B candidates cleared ${Math.round(minConfidence * 100)}%`,
     payload,
     { events: events.length, players: players.length, evaluated: evaluated.length, qualified: qualified.length, top: payload.candidates.slice(0, requested) },
   );
@@ -355,7 +355,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
 export const UNIVERSAL_SCREENER_TOOL: ToolDef = {
   name: 'slate_candidate_screener',
-  description: 'Slate-wide deterministic candidate discovery for MLB/NBA/NFL/NHL. Use FIRST for requests asking for multiple picks. It discovers today’s games and roster candidates itself, evaluates a bounded broad pool from official/ESPN recent game logs, ranks A/B and eligible C+ candidates, records every evaluated candidate for calibration, and does NOT require API-Sports to be healthy. Returned lines are model screening lines, not claimed sportsbook lines; final picks must still be verified with player_prop_model / availability against the exact current market.',
+  description: 'Slate-wide deterministic candidate discovery for MLB/NBA/NFL/NHL. Use FIRST for requests asking for multiple picks. It discovers today’s games and roster candidates itself, evaluates a bounded broad pool from official/ESPN recent game logs, ranks only A/B candidates by default, records every evaluated candidate for calibration, and does NOT require API-Sports to be healthy. Returned lines are model screening lines, not claimed sportsbook lines; final picks must still be verified with player_prop_model / availability against the exact current market.',
   parameters: {
     type: 'object',
     properties: {
@@ -363,7 +363,7 @@ export const UNIVERSAL_SCREENER_TOOL: ToolDef = {
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
       requestedPicks: { type: 'number', description: 'How many final picks the user asked for; used to size the candidate pool' },
       maxPlayers: { type: 'number', description: 'Optional cap on distinct players screened (18-48; default about 5x requested picks)' },
-      minConfidence: { type: 'number', description: 'Screening floor as decimal; default 0.54' },
+      minConfidence: { type: 'number', description: 'Screening floor as decimal; default 0.58; values below 0.58 are raised to protect parlay quality' },
     },
     required: ['sport'],
   },
