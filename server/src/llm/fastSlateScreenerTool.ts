@@ -4,6 +4,7 @@ import { getSgoSlateEvents, type SgoSlateEvent, type SgoSlateProp } from '../pro
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
+import { verifyRecommendationAvailability } from '../providers/playerAvailability.js';
 import type { ToolDef, ToolOutcome } from './tools.js';
 
 const ESPN_MAP: Record<Exclude<ModelSport, 'mlb'>, espn.EspnSport> = {
@@ -101,7 +102,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
   const maxProps = Math.min(16, Math.max(8, requested * 2 + 4));
-  const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
+  const minConfidence = Math.max(0.58, Math.min(0.75, Number(args?.minConfidence ?? 0.58) || 0.58));
 
   const slate = await getSgoSlateEvents(sport, 10);
   if (!slate.available || !slate.events.length) return unavailable(slate.reason ?? 'SportsGameOdds returned no live events');
@@ -151,20 +152,40 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     .filter((row) => row.model.grade !== 'D' && (row.model.probability ?? 0) >= minConfidence)
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
 
-  const candidates = qualified.slice(0, Math.max(requested * 2, 10)).map((row) => ({
+  // Never expose a live candidate as recommendation-ready until its current
+  // roster, injury, event, and (for MLB) lineup status has passed the gate.
+  const gated = (await Promise.all(
+    qualified.slice(0, Math.max(requested * 3, 12)).map(async (row) => {
+      const availability = await verifyRecommendationAvailability({
+        player: propName(row.prop),
+        sport,
+        date: row.eventDate,
+      }).catch((error: unknown) => ({
+        recommendationEligible: false,
+        reason: error instanceof Error ? error.message : 'availability check failed',
+      }));
+      return availability.recommendationEligible ? { ...row, availability } : null;
+    }),
+  )).filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (!gated.length) {
+    return unavailable('Live props cleared the model threshold, but no player passed the current roster, injury, event, and lineup gates');
+  }
+
+  const candidates = gated.slice(0, Math.max(requested * 2, 10)).map((row) => ({
     player: propName(row.prop), playerId: row.prop.playerId, sport, market: marketFor(row.prop),
     side: row.prop.side, line: row.prop.line, odds: oddsNumber(row.prop.odds), fairOdds: oddsNumber(row.prop.fairOdds),
     team: row.team, opponent: row.opponent, eventId: row.event.id, eventDate: row.eventDate,
     confidencePct: Math.round((row.model.probability ?? 0) * 1000) / 10, grade: row.model.grade,
     sampleSize: row.model.sampleSize, modelVersion: row.model.modelVersion, modelSource: row.source,
-    availability: 'final player_availability gate required before recommendation',
+    availability: row.availability,
     sources: [row.source, 'api.sportsgameodds.com'],
-    note: 'Live sportsbook line and odds were used for screening. Final availability and lineup validation are still mandatory.',
+    note: 'Live sportsbook line and odds were used. Current availability and lineup validation passed immediately before emission; re-check close to lock.',
   }));
 
   return ok(
-    `${sport.toUpperCase()} live screener evaluated ${evaluated.length} real live props across ${slate.events.length} events; ${qualified.length} cleared ${Math.round(minConfidence * 100)}%`,
-    { available: true, sport, date, provider: 'api.sportsgameodds.com', slate: { events: slate.events.length, liveProps: liveProps.length, modelEvaluations: evaluated.length, qualifiedCandidates: qualified.length }, candidates, partial: qualified.length < requested, notice: slate.notice ?? null },
+    `${sport.toUpperCase()} live screener evaluated ${evaluated.length} real live props across ${slate.events.length} events; ${gated.length} passed model and availability gates at ${Math.round(minConfidence * 100)}%`,
+    { available: true, sport, date, provider: 'api.sportsgameodds.com', slate: { events: slate.events.length, liveProps: liveProps.length, modelEvaluations: evaluated.length, qualifiedCandidates: gated.length, gatedCandidates: gated.length }, candidates, partial: gated.length < requested, notice: slate.notice ?? null },
   );
 };
 
