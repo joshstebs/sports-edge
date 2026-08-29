@@ -105,6 +105,113 @@ function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): Abor
   return parent ? AbortSignal.any([parent, timeout]) : timeout;
 }
 
+type ScreenerSide = 'over' | 'under';
+interface ScreenerIntent {
+  requestedPicks?: number;
+  market?: string;
+  side?: ScreenerSide;
+  sport?: 'mlb' | 'nba' | 'nfl' | 'nhl';
+}
+
+function clampRequestedPicks(value: number): number | undefined {
+  return Number.isFinite(value) ? Math.min(10, Math.max(1, Math.round(value))) : undefined;
+}
+
+function inferRequestedPicks(text: string): number | undefined {
+  const range = text.match(/\b(\d{1,2})\s*(?:or|to|-)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
+  if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
+  const giveMe = text.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-)\s*(\d{1,2}))?/i);
+  if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
+  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets)\b/i);
+  if (explicit) return clampRequestedPicks(Number(explicit[1]));
+  return undefined;
+}
+
+function inferScreenerIntent(text: string): ScreenerIntent {
+  const lower = text.toLowerCase();
+  const intent: ScreenerIntent = {};
+  intent.requestedPicks = inferRequestedPicks(text);
+
+  const hasOver = /\bover(?:s)?\b/i.test(text);
+  const hasUnder = /\bunder(?:s)?\b/i.test(text);
+  if (hasOver !== hasUnder) intent.side = hasOver ? 'over' : 'under';
+
+  const marketPatterns: Array<[RegExp, string, ScreenerIntent['sport']?]> = [
+    [/\btotal\s*bases?\b/i, 'totalBases', 'mlb'],
+    [/\b(?:batter\s+)?hits?\b/i, 'hits', 'mlb'],
+    [/\b(?:pitcher\s+)?strikeouts?\b|\bks\b/i, 'strikeouts', 'mlb'],
+    [/\bouts?\s*recorded\b/i, 'outsRecorded', 'mlb'],
+    [/\brebounds?\b/i, 'rebounds', 'nba'],
+    [/\bpassing\s*yards?\b/i, 'passingYards', 'nfl'],
+    [/\bpassing\s*(?:touchdowns?|tds?)\b/i, 'passingTouchdowns', 'nfl'],
+    [/\brushing\s*yards?\b/i, 'rushingYards', 'nfl'],
+    [/\breceiving\s*yards?\b/i, 'receivingYards', 'nfl'],
+    [/\breceptions?\b/i, 'receptions', 'nfl'],
+    [/\bshots?\s*(?:on\s*goal|sog)\b/i, 'shotsOnGoal', 'nhl'],
+    [/\bhockey\s*points?\b/i, 'hockeyPoints', 'nhl'],
+    [/\bgoalie\s*saves?\b|\bsaves?\b/i, 'saves', 'nhl'],
+    [/\bpoints?\b/i, 'points', 'nba'],
+  ];
+  for (const [pattern, market, sport] of marketPatterns) {
+    if (!pattern.test(text)) continue;
+    intent.market = market;
+    if (sport) intent.sport = sport;
+    break;
+  }
+
+  if (/\bmlb\b|\bbaseball\b/i.test(lower)) intent.sport = 'mlb';
+  else if (/\bnba\b|\bbasketball\b/i.test(lower)) intent.sport = 'nba';
+  else if (/\bnfl\b|\bfootball\b/i.test(lower)) intent.sport = 'nfl';
+  else if (/\bnhl\b|\bhockey\b/i.test(lower)) intent.sport = 'nhl';
+
+  return intent;
+}
+
+function inferConversationScreenerIntent(msgs: ChatMessage[]): ScreenerIntent {
+  const userTexts = msgs
+    .filter((m) => m.role === 'user' && typeof m.content === 'string')
+    .map((m) => m.content as string);
+  if (!userTexts.length) return {};
+  const current = inferScreenerIntent(userTexts[userTexts.length - 1]);
+  // Follow-ups like "give me 5 more" should keep the immediately preceding
+  // market/side context. Only inherit from the last few user turns so an old,
+  // unrelated betting request cannot leak into a new topic.
+  for (let i = userTexts.length - 2; i >= Math.max(0, userTexts.length - 4); i--) {
+    const prior = inferScreenerIntent(userTexts[i]);
+    current.market ??= prior.market;
+    current.side ??= prior.side;
+    current.sport ??= prior.sport;
+    if (current.requestedPicks == null && /\b(more|other|another|different|additional|again)\b/i.test(userTexts[userTexts.length - 1])) {
+      current.requestedPicks = prior.requestedPicks;
+    }
+  }
+  return current;
+}
+
+function patchScreenerCall(
+  call: OneShotResult['toolCalls'][number],
+  intent: ScreenerIntent,
+  wantsMore: boolean,
+  priorNames: string[],
+): OneShotResult['toolCalls'][number] {
+  let parsed: any = {};
+  try { parsed = JSON.parse(call.arguments || '{}'); } catch { parsed = {}; }
+  if (intent.sport) parsed.sport = intent.sport;
+  if (intent.requestedPicks != null) parsed.requestedPicks = intent.requestedPicks;
+  if (intent.market) parsed.market = intent.market;
+  if (intent.side) parsed.side = intent.side;
+  if (wantsMore && priorNames.length) {
+    const already = new Set<string>([
+      ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
+      ...String(parsed.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
+    ]);
+    for (const name of priorNames) already.add(name.toLowerCase());
+    parsed.exclude = [...already];
+  }
+  const argumentsJson = JSON.stringify(parsed);
+  return { ...call, arguments: argumentsJson, parsed };
+}
+
 export async function streamChatOnce(
   cfg: LlmConfig,
   messages: ChatMessage[],
@@ -289,52 +396,49 @@ export async function runAgent(
       break;
     }
 
-    // Safety net: if the user asked for 3+ picks/legs and the model did not call
-    // the slate screener (it sometimes calls mlb_schedule or nothing useful),
-    // force a screener call so we always return real, ranked candidates instead
-    // of an empty "0 qualify" answer.
-    const userAskedMultiPick = msgs.some(
-      (m) => m.role === 'user' && typeof m.content === 'string' && /(\d+)\s*(?:leg|pick|player|parlay|prop)/i.test(m.content),
-    );
-    const screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
-    const calledScreener = Boolean(screenerCall);
-
-    // Detect "more/other/different" follow-ups and gather names already shown
-    // from PRIOR assistant text (picks render as "**Name** (Team vs Opp)").
     const lastUser = msgs.filter((m) => m.role === 'user' && typeof m.content === 'string').pop()?.content;
-    const wantsMore = typeof lastUser === 'string' && /\b(more|other|another|different|else|additional|again)\b/i.test(lastUser);
+    const lastUserText = typeof lastUser === 'string' ? lastUser : '';
+    const intent = inferConversationScreenerIntent(msgs);
+    const wantsMore = /\b(more|other|another|different|else|additional|again)\b/i.test(lastUserText);
     const priorNames = extractPriorPickNames(msgs);
+    const userAskedMultiPick = (intent.requestedPicks ?? 0) >= 3 || /\bparlay\b/i.test(lastUserText) || msgs.some(
+      (m) => m.role === 'user' && typeof m.content === 'string' && /(\d+)\s*(?:leg|pick|player|parlay|prop|bet)/i.test(m.content),
+    );
 
-    if (userAskedMultiPick && !calledScreener) {
-      const firstUser = msgs.find((m) => m.role === 'user' && typeof m.content === 'string');
-      const countMatch = (typeof firstUser?.content === 'string' ? firstUser.content : '').match(/(\d+)\s*(?:leg|pick|player|parlay|prop)/i);
-      const requested = countMatch ? Number(countMatch[1]) : 5;
-      const excludeArg = wantsMore && priorNames.length ? `, exclude=${JSON.stringify(priorNames)}` : '';
-      msgs.push({ role: 'user', content: `Call slate_candidate_screener with requestedPicks=${requested} and date=${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}${excludeArg} now.` });
-      continue;
+    let screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
+
+    // If a multi-pick request somehow reaches a model that skipped the screener,
+    // inject the tool call directly in THIS round. The old implementation pushed
+    // another user message then `continue`d, but MAX_TOOL_ROUNDS=1 meant that
+    // supposed safety net never actually executed.
+    if (userAskedMultiPick && !screenerCall) {
+      const forcedArgs: Record<string, unknown> = {
+        sport: intent.sport ?? 'mlb',
+        requestedPicks: intent.requestedPicks ?? 5,
+        date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
+      };
+      if (intent.market) forcedArgs.market = intent.market;
+      if (intent.side) forcedArgs.side = intent.side;
+      if (wantsMore && priorNames.length) forcedArgs.exclude = priorNames;
+      const argumentsJson = JSON.stringify(forcedArgs);
+      screenerCall = {
+        index: resp.toolCalls.length,
+        id: `forced_screener_${Date.now()}`,
+        name: 'slate_candidate_screener',
+        arguments: argumentsJson,
+        parsed: forcedArgs,
+        extra_content: null,
+      };
+      resp.toolCalls.push(screenerCall);
     }
 
-    // Model DID call the screener itself — but on a "more/other" request it may
-    // have forgotten to exclude prior picks. Patch its arguments so we don't
-    // hand back the identical set.
-    if (calledScreener && wantsMore && priorNames.length) {
-      const raw = screenerCall!.arguments ?? '{}';
-      let parsed: any = {};
-      try { parsed = JSON.parse(raw); } catch { parsed = {}; }
-      const already = new Set<string>([
-        ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
-        ...String(parsed.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
-      ]);
-      const merged = [...new Set([...already, ...priorNames.map((n) => n.toLowerCase())])];
-      if (merged.length > already.size) {
-        parsed.exclude = merged;
-        screenerCall!.arguments = JSON.stringify(parsed);
-        resp.toolCalls = resp.toolCalls.map((tc) =>
-          tc.name === 'slate_candidate_screener'
-            ? { ...tc, arguments: screenerCall!.arguments, parsed }
-            : tc,
-        );
-      }
+    // User intent is authoritative. Even if the LLM calls the screener with
+    // generic/default arguments, rewrite its parsed arguments so an explicit
+    // "OVER total bases" request can never degrade into hits or UNDER picks.
+    if (screenerCall) {
+      const patched = patchScreenerCall(screenerCall, intent, wantsMore, priorNames);
+      screenerCall = patched;
+      resp.toolCalls = resp.toolCalls.map((tc) => tc.id === patched.id ? patched : tc);
     }
 
     endedWithTools = true;
@@ -417,13 +521,8 @@ function extractPriorPickNames(msgs: ChatMessage[]): string[] {
 }
 
 function requestedCountHint(msgs: ChatMessage[]): number {
-  for (const m of msgs) {
-    if (m.role === 'user' && typeof m.content === 'string') {
-      const match = m.content.match(/(\d+)\s*(?:leg|pick|player)/i);
-      if (match) return Number(match[1]);
-    }
-  }
-  return 5;
+  const intent = inferConversationScreenerIntent(msgs);
+  return intent.requestedPicks ?? 5;
 }
 
 /** Render a concise, gate-honest parlay summary from screener candidates. */
