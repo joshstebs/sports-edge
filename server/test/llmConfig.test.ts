@@ -2,9 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { llmConfig } from '../src/llm/chatClient.js';
 
-const KEY_NAMES = ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'OPENAI_API_KEY'] as const;
+const KEY_NAMES = [
+  'OPENROUTER_API_KEY',
+  'OPENCODE_GO_API_KEY',
+  'OPENCODE_ZEN_API_KEY',
+  'GEMINI_API_KEY',
+  'OPENAI_API_KEY',
+] as const;
 
-function withKeys(enabled: readonly (typeof KEY_NAMES)[number][], run: () => void) {
+type KeyName = (typeof KEY_NAMES)[number];
+
+function withKeys(enabled: readonly KeyName[], run: () => void) {
   const previous = Object.fromEntries(KEY_NAMES.map((name) => [name, process.env[name]]));
   try {
     for (const name of KEY_NAMES) {
@@ -23,10 +31,18 @@ function withKeys(enabled: readonly (typeof KEY_NAMES)[number][], run: () => voi
 test('LLM configuration creates one ordered, deduplicated provider chain', () => {
   withKeys(KEY_NAMES, () => {
     const cfg = llmConfig();
+    assert.equal(cfg.provider, 'openrouter');
+    assert.equal(cfg.fallback?.provider, 'opencode-go');
+    assert.equal(cfg.fallback?.fallback?.provider, 'opencode-zen');
+    assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'gemini');
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.provider, 'openai');
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
+  });
+  withKeys(['GEMINI_API_KEY', 'OPENAI_API_KEY'], () => {
+    const cfg = llmConfig();
     assert.equal(cfg.provider, 'gemini');
-    assert.equal(cfg.fallback?.provider, 'openrouter');
-    assert.equal(cfg.fallback?.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback?.fallback, undefined);
+    assert.equal(cfg.fallback?.provider, 'openai');
+    assert.equal(cfg.fallback?.fallback, undefined);
   });
   withKeys(['OPENROUTER_API_KEY', 'OPENAI_API_KEY'], () => {
     const cfg = llmConfig();
