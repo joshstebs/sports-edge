@@ -105,6 +105,26 @@ function halfLine(rows: HistoricalObservation[]): number {
   if (Number.isInteger(line)) line += 0.5;
   return Math.max(0.5, line);
 }
+
+/**
+ * Run an async mapper over items with a bounded concurrency. The screener fans
+ * out player-history fetches; firing ~25 × 2-3 HTTP calls all at once
+ * (Promise.all) stalls on rate limits and blows the tool timeout in serverless.
+ * Capping concurrency (default 6) keeps wall time low while never overloading
+ * upstream providers.
+ */
+async function mapConcurrent<T, U>(items: T[], limit: number, fn: (item: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let idx = 0;
+  async function worker(): Promise<void> {
+    while (idx < items.length) {
+      const current = idx++;
+      out[current] = await fn(items[current]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, () => worker()));
+  return out;
+}
 function calibrationFor(learning: Awaited<ReturnType<typeof loadLearning>>, sport: ModelSport, market: string) {
   if (!learning) return null;
   const keys = [`${sport}:${market}`, `${sport.toUpperCase()}:${market}`, `${sport}|${market}`, market];
@@ -132,13 +152,20 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
   const events = (await discoverSlateEvents(sport, date)).filter((event) => usableEvent(event.status));
   if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
-  const groups = await Promise.all(events.map((event) => discoverPlayersForEvent(event, excludeNames).catch(() => [])));
+  // Bound slate scope: on a busy day there can be 10-15+ events; processing all
+  // with per-player history fetches exceeds the tool budget. Screen the first
+  // N usable events (balanced across the slate) and keep the pool tight.
+  const maxEvents = Math.min(Number(args?.maxEvents ?? 6) || 6, events.length);
+  const scopedEvents = events.slice(0, maxEvents);
+  const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
+    (await discoverPlayersForEvent(event, excludeNames).catch(() => [])) as DiscoveredPlayer[]
+  );
   const players = balanced(groups, maxPlayers);
   if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate${excludeNames.size ? ' after excluding prior picks' : ''}`);
 
   const learning = await loadLearning().catch(() => null);
   const evaluated: any[] = [];
-  await Promise.all(players.map(async (player) => {
+  await mapConcurrent(players, 6, async (player) => {
     const history = await loadPlayerHistory(player, sport).catch(() => null);
     if (!history) return;
     for (const market of marketsFor(player, sport)) {
@@ -166,7 +193,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       };
       evaluated.push({ player, market: normalizeMarket(market), line, model, profile, source: history.source });
     }
-  }));
+  });
 
   if (!evaluated.length) return unavailable(`no supported ${sport.toUpperCase()} markets had enough recent-game history`);
   await recordCandidateEvaluations(evaluated.map(({ player, market, line, model, profile, source }) => ({
@@ -232,6 +259,7 @@ export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
       requestedPicks: { type: 'number' },
       maxPlayers: { type: 'number', description: '8-16 players; defaults to roughly 2x requested picks plus two' },
+      maxEvents: { type: 'number', description: 'Screen at most this many events (default 6) to stay inside the tool timeout; balanced across the slate' },
       minConfidence: { type: 'number', description: 'Decimal; default 0.54' },
     },
     required: ['sport'],

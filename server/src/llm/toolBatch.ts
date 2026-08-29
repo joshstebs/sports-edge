@@ -113,7 +113,7 @@ export async function executeToolBatch(
   // finishes well inside this budget. Previously capped at 6.5s, which
   // guaranteed timeouts on every slate request.
   const timeoutMs = calls.some((call) => call.name === 'slate_candidate_screener')
-    ? Math.min(45_000, Math.max(20_000, requestedTimeout))
+    ? Math.min(52_000, Math.max(20_000, requestedTimeout))
     : requestedTimeout;
   for (const call of calls) options.onEvent?.({ name: call.name, status: 'running' });
 
