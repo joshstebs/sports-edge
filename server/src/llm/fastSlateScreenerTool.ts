@@ -18,6 +18,15 @@ type CachedHistory = {
   mode: 'mlb' | 'espn';
 };
 
+type RequestedSide = 'over' | 'under';
+
+const SPORT_MARKETS: Record<ModelSport, string[]> = {
+  mlb: ['hits', 'totalBases', 'strikeouts', 'outsRecorded'],
+  nba: ['points', 'rebounds'],
+  nfl: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions'],
+  nhl: ['shotsOnGoal', 'hockeyPoints', 'saves'],
+};
+
 function ok(summary: string, payload: any): ToolOutcome {
   return { available: true, summary, data: payload, payload };
 }
@@ -35,20 +44,34 @@ function usableEvent(status: string | null): boolean {
   const value = String(status ?? '').toLowerCase();
   return !['final', 'completed', 'postponed', 'canceled', 'cancelled'].some((token) => value.includes(token));
 }
-function marketsFor(player: DiscoveredPlayer, sport: ModelSport): string[] {
+function requestedSide(value: unknown): RequestedSide | null {
+  const side = String(value ?? '').trim().toLowerCase();
+  return side === 'over' || side === 'under' ? side : null;
+}
+function requestedMarket(value: unknown, sport: ModelSport): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const normalized = normalizeMarket(raw);
+  return SPORT_MARKETS[sport].includes(normalized) ? normalized : null;
+}
+function marketsFor(player: DiscoveredPlayer, sport: ModelSport, marketFilter: string | null): string[] {
   const pos = String(player.position ?? '').toUpperCase();
+  let markets: string[];
   if (sport === 'mlb') {
     const pitcher = player.probablePitcher || pos.includes('P');
-    return pitcher ? ['strikeouts', 'outsRecorded'] : ['hits', 'totalBases'];
+    markets = pitcher ? ['strikeouts', 'outsRecorded'] : ['hits', 'totalBases'];
+  } else if (sport === 'nba') {
+    markets = ['points', 'rebounds'];
+  } else if (sport === 'nfl') {
+    if (pos === 'QB') markets = ['passingYards', 'passingTouchdowns'];
+    else if (pos === 'RB' || pos === 'FB') markets = ['rushingYards', 'receptions'];
+    else markets = ['receivingYards', 'receptions'];
+  } else if (['G', 'GOALIE'].includes(pos)) {
+    markets = ['saves'];
+  } else {
+    markets = ['shotsOnGoal', 'hockeyPoints'];
   }
-  if (sport === 'nba') return ['points', 'rebounds'];
-  if (sport === 'nfl') {
-    if (pos === 'QB') return ['passingYards', 'passingTouchdowns'];
-    if (pos === 'RB' || pos === 'FB') return ['rushingYards', 'receptions'];
-    return ['receivingYards', 'receptions'];
-  }
-  if (['G', 'GOALIE'].includes(pos)) return ['saves'];
-  return ['shotsOnGoal', 'hockeyPoints'];
+  return marketFilter ? markets.filter((market) => market === marketFilter) : markets;
 }
 function balanced(groups: DiscoveredPlayer[][], limit: number): DiscoveredPlayer[] {
   const queues = groups.map((rows) => {
@@ -69,6 +92,20 @@ function balanced(groups: DiscoveredPlayer[][], limit: number): DiscoveredPlayer
     }
   }
   return out;
+}
+function spreadEvents<T>(events: T[], limit: number): T[] {
+  if (events.length <= limit) return events;
+  if (limit <= 1) return events.slice(0, 1);
+  const picked: T[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < limit; i++) {
+    const index = Math.round((i * (events.length - 1)) / (limit - 1));
+    if (!seen.has(index)) {
+      seen.add(index);
+      picked.push(events[index]);
+    }
+  }
+  return picked;
 }
 async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
   if (sport === 'mlb') {
@@ -105,6 +142,10 @@ function halfLine(rows: HistoricalObservation[]): number {
   if (Number.isInteger(line)) line += 0.5;
   return Math.max(0.5, line);
 }
+function sideHitRate(overRate: number | null | undefined, side: RequestedSide): number | null | undefined {
+  if (overRate == null) return overRate;
+  return side === 'over' ? overRate : Math.max(0, Math.min(1, 1 - overRate));
+}
 
 /**
  * Run an async mapper over items with a bounded concurrency. The screener fans
@@ -140,9 +181,21 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
   const date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
-  // Pull a WIDER pool than the final pick count so "more/other" requests can
-  // surface genuinely different athletes instead of re-ranking the same five.
-  const maxPlayers = Math.min(14, Math.max(8, Number(args?.maxPlayers ?? Math.max(8, requested * 2)) || 8));
+  const rawMarket = String(args?.market ?? '').trim();
+  const marketFilter = requestedMarket(rawMarket, sport);
+  if (rawMarket && !marketFilter) {
+    return unavailable(`unsupported ${sport.toUpperCase()} market ${rawMarket}; supported fast-screen markets: ${SPORT_MARKETS[sport].join(', ')}`);
+  }
+  const rawSide = String(args?.side ?? '').trim();
+  const sideFilter = requestedSide(rawSide);
+  if (rawSide && !sideFilter) return unavailable(`unsupported side ${rawSide}; expected over or under`);
+  const constrained = Boolean(marketFilter || sideFilter);
+  // Pull a wider pool for market/side-specific requests. Filtering to one market
+  // or one direction naturally removes many generic top candidates, so screen
+  // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
+  const defaultPlayers = constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
+  const maxPlayersCap = constrained ? 22 : 14;
+  const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
     Array.isArray(args?.exclude)
@@ -152,11 +205,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
   const events = (await discoverSlateEvents(sport, date)).filter((event) => usableEvent(event.status));
   if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
-  // Bound slate scope: on a busy day there can be 10-15+ events; processing all
-  // with per-player history fetches exceeds the tool budget. Screen the first
-  // N usable events (balanced across the slate) and keep the pool tight.
-  const maxEvents = Math.min(Number(args?.maxEvents ?? 6) || 6, events.length);
-  const scopedEvents = events.slice(0, maxEvents);
+  // Bound slate scope while sampling across the entire day instead of only the
+  // first games. This keeps the same timeout discipline without systematically
+  // ignoring later games that may contain stronger requested-market candidates.
+  const defaultMaxEvents = constrained ? 8 : 6;
+  const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
+  const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
     (await discoverPlayersForEvent(event, excludeNames).catch(() => [])) as DiscoveredPlayer[]
   );
@@ -168,14 +222,17 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   await mapConcurrent(players, 6, async (player) => {
     const history = await loadPlayerHistory(player, sport).catch(() => null);
     if (!history) return;
-    for (const market of marketsFor(player, sport)) {
+    for (const market of marketsFor(player, sport, marketFilter)) {
       const rows = observations(history, sport, market);
       if (rows.length < 5) continue;
       const line = halfLine(rows);
       const calibration = calibrationFor(learning, sport, normalizeMarket(market));
-      const over = buildPlayerPropModel({ sport, market, side: 'over', line, observations: rows, source: history.source, calibration });
-      const under = buildPlayerPropModel({ sport, market, side: 'under', line, observations: rows, source: history.source, calibration });
-      const model = [over, under].filter((x) => x.available && x.probability != null).sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0))[0];
+      const sides: RequestedSide[] = sideFilter ? [sideFilter] : ['over', 'under'];
+      const models = sides
+        .map((side) => buildPlayerPropModel({ sport, market, side, line, observations: rows, source: history.source, calibration }))
+        .filter((x) => x.available && x.probability != null)
+        .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
+      const model = models[0];
       if (!model?.available || model.probability == null || !model.grade) continue;
       const values = rows.map((row) => row.value);
       const profile: PlayerFeatureProfile = {
@@ -195,7 +252,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     }
   });
 
-  if (!evaluated.length) return unavailable(`no supported ${sport.toUpperCase()} markets had enough recent-game history`);
+  const filterLabel = [marketFilter, sideFilter?.toUpperCase()].filter(Boolean).join(' ');
+  if (!evaluated.length) return unavailable(`no supported ${sport.toUpperCase()} ${filterLabel || 'markets'} had enough recent-game history`);
   await recordCandidateEvaluations(evaluated.map(({ player, market, line, model, profile, source }) => ({
     eventDate: player.eventDate, eventId: player.eventId, sport, player: player.name, team: player.team, opponent: player.opponent,
     market, side: model.side, line, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
@@ -208,9 +266,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
 
   // One leg per player: keep each player's single best market so a parlay never
-  // double-counts the same athlete. Also record whether the player is actually
-  // in TODAY'S posted lineup (batting order or confirmed probable pitcher) —
-  // roster-fallback guesses are not startable/bettable until lineups post.
+  // double-counts the same athlete. With an explicit market filter, this simply
+  // deduplicates athletes while preserving the requested market and side.
   const seenPlayer = new Set<string>();
   const deduped = qualified.filter(({ player }) => {
     const key = `${player.name}|${player.team}`.toLowerCase();
@@ -223,43 +280,54 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
   const lineupPosted = evaluated.some(({ player }) => inLineup(player));
 
-  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, source }) => ({
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile }) => ({
     player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
     market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
     grade: model.grade, sampleSize: model.sampleSize,
-    // Trimmed for LLM context: full history windows live in the PREDICTION_LOG
-    // (separate, persisted) so the synthesis turn stays small enough to finish
-    // inside the 60s function budget. Keep only a compact hit-rate summary.
+    // Side-aware form rates: the old renderer always showed the OVER hit rate,
+    // even beside an UNDER recommendation, which made those summaries internally
+    // inconsistent. Half-lines cannot push, so UNDER rate = 1 - OVER rate.
     availability: profile.availability,
     inLineupToday: inLineup(player),
     lineupSlot: player.lineupSlot,
     recentHitRate: {
-      last5: profile.recent?.last5?.hitRateOverSuggestedLine,
-      last10: profile.recent?.last10?.hitRateOverSuggestedLine,
-      last20: profile.recent?.last20?.hitRateOverSuggestedLine,
+      last5: sideHitRate(profile.recent?.last5?.hitRateOverSuggestedLine, model.side),
+      last10: sideHitRate(profile.recent?.last10?.hitRateOverSuggestedLine, model.side),
+      last20: sideHitRate(profile.recent?.last20?.hitRateOverSuggestedLine, model.side),
     },
     note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
   }));
 
-  const payload: any = { available: true, sport, date, slate: { events: events.length, discoveredPlayers: players.length, modelEvaluations: evaluated.length, qualifiedCandidates: deduped.length, lineupPosted }, candidates, providerPolicy: { apiSportsRequired: false, fallbackRule: 'MLB uses MLB Stats API; NBA/NFL/NHL use ESPN recent game logs.' } };
+  const payload: any = {
+    available: true,
+    sport,
+    date,
+    requestFilters: { market: marketFilter, side: sideFilter },
+    slate: { events: events.length, screenedEvents: scopedEvents.length, discoveredPlayers: players.length, modelEvaluations: evaluated.length, qualifiedCandidates: deduped.length, lineupPosted },
+    candidates,
+    providerPolicy: { apiSportsRequired: false, fallbackRule: 'MLB uses MLB Stats API; NBA/NFL/NHL use ESPN recent game logs.' },
+  };
   if (!lineupPosted) payload.warning = 'Batting orders have NOT been posted for this date yet. Candidates below come from current rosters/probable pitchers and are NOT confirmable starters. Re-run closer to game time once lineups post.';
   return ok(
-    `${sport.toUpperCase()} fast screener evaluated ${evaluated.length} markets across ${players.length} players; ${deduped.length} cleared ${Math.round(minConfidence * 100)}%${lineupPosted ? '' : ' (lineups not posted)'}`,
+    `${sport.toUpperCase()} fast screener${filterLabel ? ` (${filterLabel})` : ''} evaluated ${evaluated.length} markets across ${players.length} players; ${deduped.length} cleared ${Math.round(minConfidence * 100)}%${lineupPosted ? '' : ' (lineups not posted)'}`,
     payload,
   );
 };
 
 export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
   name: 'slate_candidate_screener',
-  description: 'Fast slate-wide MLB/NBA/NFL/NHL candidate screener for multi-pick requests. It balances players across games/teams, fetches each player history once, evaluates a small set of high-value markets, stores every candidate for calibration, and is designed to finish inside the agent tool timeout. Final picks still require exact current line/odds and availability verification.',
+  description: 'Fast slate-wide MLB/NBA/NFL/NHL candidate screener for multi-pick requests. IMPORTANT: when the user names a prop market and/or direction, pass market and side so every returned candidate matches the request (example: market="totalBases", side="over"). It balances players across games/teams, fetches each player history once, stores every candidate for calibration, and is designed to finish inside the agent tool timeout. Final picks still require exact current line/odds and availability verification.',
   parameters: {
     type: 'object',
     properties: {
       sport: { type: 'string', enum: ['mlb', 'nba', 'nfl', 'nhl'] },
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
-      requestedPicks: { type: 'number' },
-      maxPlayers: { type: 'number', description: '8-16 players; defaults to roughly 2x requested picks plus two' },
-      maxEvents: { type: 'number', description: 'Screen at most this many events (default 6) to stay inside the tool timeout; balanced across the slate' },
+      requestedPicks: { type: 'number', description: 'How many picks the user asked for' },
+      market: { type: 'string', description: 'Optional exact requested prop market. Preserve the user request; e.g. total bases -> totalBases, hits -> hits, strikeouts -> strikeouts.' },
+      side: { type: 'string', enum: ['over', 'under'], description: 'Optional requested direction. If the user asks for OVER bets, pass over; if UNDER, pass under. Never omit an explicit user direction.' },
+      exclude: { type: 'array', items: { type: 'string' }, description: 'Optional player names to exclude, especially for more/other/different follow-ups.' },
+      maxPlayers: { type: 'number', description: '8-22 players; constrained market/side requests automatically screen a wider pool' },
+      maxEvents: { type: 'number', description: 'Screen at most this many events (default 6 generic, 8 when market/side constrained) sampled across the slate' },
       minConfidence: { type: 'number', description: 'Decimal; default 0.54' },
     },
     required: ['sport'],
