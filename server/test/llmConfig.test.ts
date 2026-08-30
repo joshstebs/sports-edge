@@ -8,6 +8,7 @@ const KEY_NAMES = [
   'OPENCODE_ZEN_API_KEY',
   'GEMINI_API_KEY',
   'OPENAI_API_KEY',
+  'GROQ_API_KEY',
 ] as const;
 
 type KeyName = (typeof KEY_NAMES)[number];
@@ -28,15 +29,20 @@ function withKeys(enabled: readonly KeyName[], run: () => void) {
   }
 }
 
+// Chain order (2026-08-30, verified live): OpenCode Go is PRIMARY —
+// 'stealth/ox-alpha' OpenRouter was retired and its replacement slugs are
+// quota-exhausted (403), so OpenRouter is demoted to fallback. Groq is the
+// terminal fallback before the chain ends.
 test('LLM configuration creates one ordered, deduplicated provider chain', () => {
   withKeys(KEY_NAMES, () => {
     const cfg = llmConfig();
-    assert.equal(cfg.provider, 'openrouter');
-    assert.equal(cfg.fallback?.provider, 'opencode-go');
+    assert.equal(cfg.provider, 'opencode-go');
+    assert.equal(cfg.fallback?.provider, 'openrouter');
     assert.equal(cfg.fallback?.fallback?.provider, 'opencode-zen');
     assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'gemini');
     assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback?.provider, 'groq');
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
   });
   withKeys(['GEMINI_API_KEY', 'OPENAI_API_KEY'], () => {
     const cfg = llmConfig();

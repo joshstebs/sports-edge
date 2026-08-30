@@ -125,11 +125,15 @@ export async function executeToolBatch(
       outcome = await Promise.race([
         executor(call.name, call.parsed ?? {}),
         new Promise<ToolExecution>((resolve) => {
-          timer = setTimeout(() => resolve(timeoutExecution(call.name, timeoutMs)), timeoutMs);
+          timer = setTimeout(() => {
+            console.warn(`[toolBatch] ${call.name} timed out after ${Math.round(timeoutMs / 1000)}s (args: ${JSON.stringify(call.parsed ?? {}).slice(0, 200)})`);
+            resolve(timeoutExecution(call.name, timeoutMs));
+          }, timeoutMs);
         }),
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(`[toolBatch] ${call.name} crashed: ${message}`);
       outcome = {
         ok: false,
         summary: `${call.name} crashed: ${message}`,

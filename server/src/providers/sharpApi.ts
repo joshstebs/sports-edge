@@ -106,17 +106,56 @@ export async function getSharpGameOdds(
   };
   const markets = marketsForSport[sportKey] ?? [];
 
+  const WALK_DEADLINE_MS = 18_000; // keep the whole 4-market walk inside the screener's budget
+  const FETCH_TIMEOUT_MS = 6_000;
+  const walkStartedAt = Date.now();
+  const remainingBudgetMs = () => walkStartedAt + WALK_DEADLINE_MS - Date.now();
+
   try {
     const rows: any[] = [];
+    let missingMarkets: string[] = [];
     for (const market of markets) {
-      const url = `${BASE}/odds?sport=${map.sport}&league=${map.league}&market_type=${market}&limit=500`;
-      const resp = await fetch(url, { headers: { 'X-API-Key': k, 'User-Agent': 'SportsEdge/0.3' } });
-      if (resp.ok) {
-        const data = (await resp.json()) as { data?: any[] };
-        rows.push(...(data.data || []).map((r) => ({ ...r, _market: market })));
+      if (remainingBudgetMs() < 2_500) {
+        console.warn(`[sharpApi] walk budget exhausted after ${rows.length} rows; skipping remaining ${markets.length - markets.indexOf(market) - 1} market(s)`);
+        break;
       }
-      // Free tier 12 req/min — pace.
-      await new Promise((r) => setTimeout(r, 5500));
+      const url = `${BASE}/odds?sport=${map.sport}&league=${map.league}&market_type=${market}&limit=500`;
+      // Attempt each market at most twice: once immediately, once after a paced
+      // wait when the free tier answers 429 (12 req/min). Never hang the parent
+      // tool on a stalled fetch — every request carries its own timeout.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (remainingBudgetMs() < 2_500) break;
+        try {
+          const resp = await fetch(url, {
+            headers: { 'X-API-Key': k, 'User-Agent': 'SportsEdge/0.3' },
+            signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingBudgetMs())),
+          });
+          if (resp.status === 429 && attempt === 0) {
+            const retryAfter = Number(resp.headers.get('retry-after')) || 0;
+            await resp.body?.cancel().catch(() => {});
+            await new Promise((r) => setTimeout(r, Math.min(7_000, Math.max(6_500, retryAfter * 1000))));
+            continue;
+          }
+          if (!resp.ok) {
+            // 400/401/403/404/5xx will not improve by hammering the other markets
+            console.warn(`[sharpApi] market ${market} HTTP ${resp.status}; stopping walk`);
+            missingMarkets.push(market);
+            await resp.body?.cancel().catch(() => {});
+            break;
+          }
+          const data = (await resp.json().catch(() => null)) as { data?: any[] } | null;
+          const fetched = data?.data ?? [];
+          rows.push(...fetched.map((r) => ({ ...r, _market: market })));
+          break;
+        } catch (fetchError) {
+          const err = fetchError as Error;
+          console.warn(`[sharpApi] market ${market} attempt ${attempt + 1} failed: ${err.name === 'TimeoutError' ? 'timeout' : err.message}`);
+          if (attempt === 1) break;
+        }
+      }
+    }
+    if (!rows.length && missingMarkets.length === markets.length) {
+      return { available: false, reason: `SharpApi unreachable for all ${markets.length} markets (HTTP errors/timeouts)`, source: SOURCE };
     }
 
     const props = groupProps(rows);

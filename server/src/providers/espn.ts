@@ -75,7 +75,11 @@ export async function getTeams(sport: EspnSport): Promise<TeamInfo[]> {
   const key = `espn:teams:${sport}`;
   const cached = cacheGet<TeamInfo[]>(key, CACHE_TTL);
   if (cached) return cached;
-  const j = await (await fetch(`${API}/${sport}/teams`, { headers: { 'User-Agent': UA() } })).json();
+  // Bounded: an unbounded fetch here stalled findPlayer()/roster discovery past
+  // the tool timeout (espn.ts raw fetches previously had NO timeout at all).
+  const res = await fetch(`${API}/${sport}/teams`, { headers: { 'User-Agent': UA() }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`teams HTTP ${res.status} for ${sport}`);
+  const j = await res.json();
   const teams: TeamInfo[] = (j?.sports?.[0]?.leagues?.[0]?.teams ?? []).map((t: any) => ({
     id: String(t.team.id),
     name: t.team.displayName ?? t.team.name,
@@ -93,6 +97,7 @@ async function fetchRoster(sport: EspnSport, teamId: string): Promise<any[]> {
   if (cached) return cached;
   const res = await fetch(`${API}/${sport}/teams/${teamId}/roster`, {
     headers: { 'User-Agent': UA() },
+    signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`roster HTTP ${res.status} for team ${teamId}`);
   const j = await res.json();
@@ -339,7 +344,8 @@ export async function getGamelog(
 ): Promise<{ available: boolean; reason?: string; season?: string; games?: GameEntry[] }> {
   try {
     const url = `${V3}/${sport}/athletes/${espnId}/gamelog`;
-    const j = await (await fetch(url, { headers: { 'User-Agent': UA() } })).json();
+    // Bounded fetch: this gamelog feeds the NBA/NFL/NHL screener directly.
+    const j = await (await fetch(url, { headers: { 'User-Agent': UA() }, signal: AbortSignal.timeout(8000) })).json();
     const names: string[] = j?.names ?? [];
     const seasonTypes: any[] = j?.seasonTypes ?? [];
     const events: Record<string, any> = j?.events ?? {};
@@ -392,6 +398,7 @@ export async function getTeamStats(
     if (!t) return { available: false, reason: `team "${teamNameOrId}" not found` };
     const res = await fetch(`${API}/${sport}/teams/${t.id}/statistics`, {
       headers: { 'User-Agent': UA() },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
       return { available: false, reason: `ESPN team statistics HTTP ${res.status} (endpoint unavailable)` };

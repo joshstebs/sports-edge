@@ -203,8 +203,16 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       : String(args?.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
   );
 
-  const events = (await discoverSlateEvents(sport, date)).filter((event) => usableEvent(event.status));
-  if (!events.length) return unavailable(`no upcoming ${sport.toUpperCase()} events found for ${date}`);
+  const events = (await discoverSlateEvents(sport, date).catch((e) => {
+    console.warn(`[slateScreener] slate discovery failed for ${sport} ${date}: ${(e as Error).message}`);
+    return [] as Awaited<ReturnType<typeof discoverSlateEvents>>;
+  })).filter((event) => usableEvent(event.status));
+  if (!events.length) {
+    const reason = `no upcoming ${sport.toUpperCase()} events found for ${date}`;
+    console.warn(`[slateScreener] ${reason}`);
+    return unavailable(reason);
+  }
+  console.log(`[slateScreener] ${sport} ${date}: ${events.length} scheduled events found`);
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
   // ignoring later games that may contain stronger requested-market candidates.
@@ -212,10 +220,18 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
   const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
-    (await discoverPlayersForEvent(event, excludeNames).catch(() => [])) as DiscoveredPlayer[]
+    (await discoverPlayersForEvent(event, excludeNames).catch((e) => {
+      console.warn(`[slateScreener] player discovery failed for event ${event.eventId}: ${(e as Error).message}`);
+      return [] as DiscoveredPlayer[];
+    })) as DiscoveredPlayer[]
   );
   const players = balanced(groups, maxPlayers);
-  if (!players.length) return unavailable(`no roster candidates discovered for ${sport.toUpperCase()} slate${excludeNames.size ? ' after excluding prior picks' : ''}`);
+  if (!players.length) {
+    const reason = `no roster candidates discovered for ${sport.toUpperCase()} slate${excludeNames.size ? ' after excluding prior picks' : ''}`;
+    console.warn(`[slateScreener] ${reason}`);
+    return unavailable(reason);
+  }
+  console.log(`[slateScreener] screening ${players.length} players across ${scopedEvents.length} events (concurrency 6)`);
 
   const learning = await loadLearning().catch(() => null);
   const evaluated: any[] = [];
@@ -253,7 +269,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   });
 
   const filterLabel = [marketFilter, sideFilter?.toUpperCase()].filter(Boolean).join(' ');
-  if (!evaluated.length) return unavailable(`no supported ${sport.toUpperCase()} ${filterLabel || 'markets'} had enough recent-game history`);
+  if (!evaluated.length) {
+    const reason = `no supported ${sport.toUpperCase()} ${filterLabel || 'markets'} had enough recent-game history`;
+    console.warn(`[slateScreener] ${reason} (0 of ${players.length} players produced >=MIN_SAMPLE observations)`);
+    return unavailable(reason);
+  }
+  console.log(`[slateScreener] evaluated ${evaluated.length} player-markets; ${evaluated.filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence).length} above ${Math.round(minConfidence * 100)}% before dedupe`);
   await recordCandidateEvaluations(evaluated.map(({ player, market, line, model, profile, source }) => ({
     eventDate: player.eventDate, eventId: player.eventId, sport, player: player.name, team: player.team, opponent: player.opponent,
     market, side: model.side, line, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
@@ -284,7 +305,16 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
-  const sharpPrices = await getSharpSlatePrices(sport, { home: '', away: '' }).catch(() => ({ available: false, byKey: new Map<string, any>() }));
+  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any> }>((resolve) =>
+    setTimeout(() => resolve({ available: false, reason: 'SharpApi price lookup timed out (3s deadline)', byKey: new Map<string, any>() }), 3_000)
+  );
+  const sharpPrices = await Promise.race([
+    getSharpSlatePrices(sport, { home: '', away: '' }),
+    sharpDeadline,
+  ]).catch(() => ({ available: false, reason: 'SharpApi price lookup crashed', byKey: new Map<string, any>() }));
+  if (!sharpPrices.available) {
+    console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
+  }
   const sharpByKey = sharpPrices.byKey;
   const sharpline = (player: string, market: string) => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);

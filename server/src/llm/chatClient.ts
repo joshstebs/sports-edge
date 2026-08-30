@@ -24,6 +24,7 @@ export function llmConfig(): LlmConfig {
   const opencodeZenKey = process.env.OPENCODE_ZEN_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
 
   // OpenRouter (fallback). 'stealth/ox-alpha' was decommissioned (404) and the
   // free slugs are gone; use valid non-free slugs. This provider is a fallback
@@ -40,12 +41,19 @@ export function llmConfig(): LlmConfig {
     'kimi-k3',
   ].filter((m, i, a) => a.indexOf(m) === i);
 
-  // 3. Cheap/free fallback via OpenCode Zen.
+  // 3. Cheap/free fallback via OpenCode Zen. VERIFIED LIVE 2026-08-30:
+  //    'deepseek-v4-flash-free' -> HTTP 400 "Model is unavailable" and
+  //    'hy3-free' -> HTTP 401 "not supported". Both are dead slugs; keeping
+  //    them only wasted fallback-chain attempts. 'nemotron-3-ultra-free' is
+  //    the only live zen free model.
   const zenModels = [
-    process.env.OPENCODE_ZEN_MODEL || 'deepseek-v4-flash-free',
-    'hy3-free',
-    'nemotron-3-ultra-free',
+    process.env.OPENCODE_ZEN_MODEL || 'nemotron-3-ultra-free',
   ].filter((m, i, a) => a.indexOf(m) === i);
+
+  // Terminal fallback: Groq 'openai/gpt-oss-120b' (verified live 2026-08-30,
+  // HTTP 200 ~200ms, ~1000 req/min free tier). OpenRouter stays demoted: its
+  // per-key quota returned 403 "Key limit exceeded" on both of its slugs.
+  const groqModels = [process.env.GROQ_MODEL || 'openai/gpt-oss-120b'];
 
   const geminiModels = [
     process.env.GEMINI_MODEL || 'gemini-3.6-flash',
@@ -64,6 +72,7 @@ export function llmConfig(): LlmConfig {
   if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
   if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
+  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
   for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
   if (providers.length) return providers[0];
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
@@ -237,6 +246,9 @@ export async function streamChatOnce(
       if (cb.signal?.aborted) throw new DOMException('Agent turn deadline exceeded', 'AbortError');
       const attempt = await tryModel(pc, model, messages, tools, cb);
       if (attempt.ok && attempt.result) return attempt.result;
+      // Silent fallback-chain failures were invisible in prod — log each dead
+      // model so "All LLM providers failed" is never the first signal.
+      console.warn(`[llm] ${pc.provider}/${model} failed: ${attempt.error}`);
       errors.push(`${pc.provider}/${model}: ${attempt.error}`);
     }
   }
@@ -253,7 +265,7 @@ async function tryModel(
   cb: StreamCallbacks
 ): Promise<TryResult> {
   const url = `${pc.baseUrl}/chat/completions`;
-  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : pc.provider === 'opencode-go' ? process.env.OPENCODE_GO_API_KEY : pc.provider === 'opencode-zen' ? process.env.OPENCODE_ZEN_API_KEY : process.env.OPENAI_API_KEY;
+  const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : pc.provider === 'opencode-go' ? process.env.OPENCODE_GO_API_KEY : pc.provider === 'opencode-zen' ? process.env.OPENCODE_ZEN_API_KEY : pc.provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -328,36 +340,59 @@ async function readStream(res: Response, cb: StreamCallbacks): Promise<OneShotRe
   };
 
   let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') break;
-      let json: any;
-      try { json = JSON.parse(payload); } catch { continue; }
-      const delta = json?.choices?.[0]?.delta;
-      if (!delta) continue;
-      if (typeof delta.content === 'string') { sawKey = true; content += delta.content; cb.onDelta?.(delta.content); }
-      const tcFrags: any[] = delta.tool_calls ?? json?.choices?.[0]?.message?.tool_calls ?? [];
-      for (const f of tcFrags) {
-        const idx = f.index ?? 0;
-        const name = f.function?.name;
-        const args = f.function?.arguments;
-        const id = f.id;
-        const extra = f.extra_content;
-        if (name === undefined && args === undefined && id === undefined && extra === undefined) continue;
-        mergeToolFragment({ index: idx, id, name, arguments: args, extra_content: extra });
+  // Hard ceiling on stream reads: a provider that stalls mid-stream without
+  // closing used to hang the model turn until the route deadline ate the
+  // whole budget. Abort reads slightly past MODEL_TURN_TIMEOUT_MS so the
+  // fallback chain still gets a chance to run.
+  const streamDeadlineMs = MODEL_TURN_TIMEOUT_MS + 2_000;
+  const readerDeadline = AbortSignal.timeout(streamDeadlineMs);
+  const deadlineError = () => new DOMException(`LLM stream read deadline exceeded (${streamDeadlineMs}ms)`, 'TimeoutError');
+  const readWithDeadline = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    if (readerDeadline.aborted) return Promise.reject(deadlineError());
+    return Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) =>
+        readerDeadline.addEventListener('abort', () => reject(deadlineError()), { once: true })
+      ),
+    ]);
+  };
+  try {
+    for (;;) {
+      const { done, value } = await readWithDeadline();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') break;
+        let json: any;
+        try { json = JSON.parse(payload); } catch { continue; }
+        const delta = json?.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string') { sawKey = true; content += delta.content; cb.onDelta?.(delta.content); }
+        const tcFrags: any[] = delta.tool_calls ?? json?.choices?.[0]?.message?.tool_calls ?? [];
+        for (const f of tcFrags) {
+          const idx = f.index ?? 0;
+          const name = f.function?.name;
+          const args = f.function?.arguments;
+          const id = f.id;
+          const extra = f.extra_content;
+          if (name === undefined && args === undefined && id === undefined && extra === undefined) continue;
+          mergeToolFragment({ index: idx, id, name, arguments: args, extra_content: extra });
+        }
       }
+      if (buf.includes('[DONE]')) break;
     }
-    if (buf.includes('[DONE]')) break;
+  } catch (e) {
+    await reader.cancel().catch(() => {});
+    const err = e as Error;
+    if (err.name === 'AbortError' && cb.signal?.aborted) throw e;
+    console.warn(`[llm] stream read failed: ${err.name === 'TimeoutError' ? err.message : (err.message || err.name)}`);
+    throw e;
   }
-
   if (!sawKey) throw new Error('LLM stream produced no content or tool calls (empty response from provider)');
   const calls = [...toolCalls.values()].map((tc) => {
     let parsed: any = null;
@@ -377,8 +412,14 @@ export async function runAgent(
   cb: AgentCallbacks = {}
 ): Promise<{ content: string; iterations: number; modelUsed: string | null }> {
   const msgs: ChatMessage[] = [...messages];
-  const liteFirst = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
-  const researchCfg: LlmConfig = { ...cfg, models: [...liteFirst, ...cfg.models.filter((m) => !liteFirst.includes(m))] };
+  // Fast, cheap models for the optional research turn. These slugs are Gemini
+  // family and only valid on the Gemini provider — VERIFIED LIVE 2026-08-30:
+  // sending them to opencode-go returned 401 ModelError for all three, wasting
+  // three network calls on every research turn before the real model answered.
+  const geminiLite = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+  const researchCfg: LlmConfig = cfg.provider === 'gemini'
+    ? { ...cfg, models: [...geminiLite, ...cfg.models.filter((m) => !geminiLite.includes(m))] }
+    : cfg;
   let finalText = '';
   let iterations = 0;
   let modelUsed: string | null = null;

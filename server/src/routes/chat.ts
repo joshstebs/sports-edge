@@ -328,7 +328,14 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         role: 'system',
         content:
           SYSTEM_PROMPT +
-          await learningPromptBlock() +
+          // Learning context is optional enrichment: a corrupt/hanging Redis read
+          // must degrade to "no learning context", never 500 the whole chat SSE
+          // (previously an unguarded await killed the request before any token
+          // streamed, surfacing as a bare "Agent loop failed").
+          await learningPromptBlock().catch((error) => {
+            console.error('learningPromptBlock failed (continuing without learning context):', error instanceof Error ? error.message : error);
+            return '';
+          }) +
           // The LLM has no clock. Pin the current date (America/Toronto) so it
           // passes the right date to slate_candidate_screener and never
           // analyzes a stale/off-season slate by accident.

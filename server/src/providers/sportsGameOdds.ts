@@ -80,11 +80,23 @@ async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): 
 
   let lastStatus = 0;
   let lastBody: any = null;
+  let networkFailure: string | null = null;
   for (const credential of credentials) {
-    const res = await fetch(url, {
-      headers: { 'x-api-key': credential, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36' },
-      signal: AbortSignal.timeout(5000),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { 'x-api-key': credential, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0 Safari/537.36' },
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (e) {
+      // DNS/socket/timeout failures must fail over to the next key like 401/403/429
+      // do — an unhandled throw here crashed the whole getEvents walk and took
+      // every downstream tool result with it.
+      const err = e as Error;
+      networkFailure = `${err.name === 'TimeoutError' ? 'timeout' : err.message}`;
+      console.warn(`[sportsGameOdds] key #${credentials.indexOf(credential) + 1} network failure: ${networkFailure}`);
+      continue;
+    }
     const body = await res.json().catch(() => null);
     lastStatus = res.status;
     lastBody = body;
@@ -108,7 +120,7 @@ async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): 
       rateLimited: false,
     };
   }
-  lastNotice = lastBody?.error ?? `HTTP ${lastStatus}`;
+  lastNotice = lastBody?.error ?? (networkFailure ? `network failure: ${networkFailure}` : null) ?? `HTTP ${lastStatus}`;
   return { events: [], next: null, notice: lastNotice, rateLimited: lastStatus === 429 };
 }
 

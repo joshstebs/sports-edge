@@ -41,7 +41,13 @@ export function resolvePlayerId(player: { name: string }, _sport?: string): Prom
   if (cached) return cached;
   const task = (async () => {
     const found = await searchPlayer(player.name);
-    return found.available && found.data ? found.data.id : null;
+    if (!found.available || !found.data) {
+      // Do NOT memoize failures: a throttled/failed search would otherwise pin
+      // "player not found" for this name for the whole serverless instance.
+      PLAYER_ID_CACHE.delete(key);
+      return null;
+    }
+    return found.data.id;
   })();
   PLAYER_ID_CACHE.set(key, task);
   return task;
@@ -134,19 +140,27 @@ export async function getGameLog(
   const cached = GAME_LOG_CACHE.get(cacheKey);
   if (cached) return cached;
   const task = (async (): Promise<ProviderResult<any[]>> => {
-    const j = await fetchJson(
-      `${BASE}/people/${playerId}/stats?stats=gameLog&season=${season}&group=${group}`
-    );
-    const splits: any[] = j?.stats?.[0]?.splits ?? [];
-    if (!splits.length) return fail(`no ${season} game log for player ${playerId}`);
-    // oldest-first -> reverse; drop today's in-progress split; filter by group rules
-    let filtered = splits.filter((s) => {
-      if (group === 'hitting') return (s.stat?.atBats ?? 0) > 0;
-      return (s.stat?.gamesStarted ?? 0) === 1;
-    });
-    filtered = filtered.reverse();
-    if (limit && filtered.length > limit) filtered = filtered.slice(0, limit);
-    return { available: true, source: SOURCE, data: filtered };
+    try {
+      const j = await fetchJson(
+        `${BASE}/people/${playerId}/stats?stats=gameLog&season=${season}&group=${group}`
+      );
+      const splits: any[] = j?.stats?.[0]?.splits ?? [];
+      if (!splits.length) return fail(`no ${season} game log for player ${playerId}`);
+      // oldest-first -> reverse; drop today's in-progress split; filter by group rules
+      let filtered = splits.filter((s) => {
+        if (group === 'hitting') return (s.stat?.atBats ?? 0) > 0;
+        return (s.stat?.gamesStarted ?? 0) === 1;
+      });
+      filtered = filtered.reverse();
+      if (limit && filtered.length > limit) filtered = filtered.slice(0, limit);
+      return { available: true, source: SOURCE, data: filtered };
+    } catch (e) {
+      // A throttled request must not be memoized as a permanent failure —
+      // evict so the next (player, market) combo retries the fetch.
+      GAME_LOG_CACHE.delete(cacheKey);
+      console.warn(`[mlbStatsApi] gameLog ${cacheKey} failed (cache evicted for retry): ${(e as Error).message}`);
+      return fail(`game log failed: ${(e as Error).message}`);
+    }
   })();
   GAME_LOG_CACHE.set(cacheKey, task);
   return task;

@@ -1,6 +1,7 @@
 import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
 import * as sharp from './sharpApi.js';
+import { normalizeMarket } from '../models/playerPropModel.js';
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
 
@@ -112,7 +113,14 @@ async function espnTeamIdByName(sport: espn.EspnSport, teamName: string): Promis
 }
 
 async function espnRoster(sport: espn.EspnSport, teamId: string): Promise<ReturnType<typeof flattenRoster>> {
-  const payload = await fetchJson(`${ESPN_BASE}/${sport}/teams/${teamId}/roster`);
+  let payload: any;
+  try {
+    payload = await fetchJson(`${ESPN_BASE}/${sport}/teams/${teamId}/roster`);
+  } catch (e) {
+    // Degrade per team: an ESPN hiccup must not void the whole side's candidates
+    console.warn(`[slateDiscovery] ESPN roster fetch failed for ${sport} team ${teamId}: ${(e as Error).message}`);
+    return [];
+  }
   return flattenRoster(payload?.athletes ?? []);
 }
 
@@ -126,16 +134,25 @@ function positionAllowed(sport: 'mlb' | 'nba' | 'nfl' | 'nhl', position: string 
 
 export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<string> = new Set()): Promise<DiscoveredPlayer[]> {
   if (event.sport === 'mlb') {
-    const lineups = await mlb.getLineups(Number(event.eventId));
     const output: DiscoveredPlayer[] = [];
-    if (lineups.available && lineups.data) {
+    // Lineup fetch is one request, but a single failure here used to bubble out
+    // of the whole discovery call and zero out the slate for this event.
+    let lineups: Awaited<ReturnType<typeof mlb.getLineups>> | null = null;
+    try {
+      lineups = await mlb.getLineups(Number(event.eventId));
+    } catch (e) {
+      console.warn(`[slateDiscovery] lineups unavailable for game ${event.eventId}: ${(e as Error).message}`);
+    }
+    if (lineups?.available && lineups.data) {
+      const data = lineups.data;
       const sides = [
-        { side: 'away' as const, team: event.away.name, opponent: event.home.name, data: lineups.data.away },
-        { side: 'home' as const, team: event.home.name, opponent: event.away.name, data: lineups.data.home },
+        { side: 'away' as const, team: event.away.name, opponent: event.home.name, data: data.away },
+        { side: 'home' as const, team: event.home.name, opponent: event.away.name, data: data.home },
       ];
       for (const row of sides) {
-        row.data.battingOrder.forEach((player: any, index: number) => {
-          if (exclude.has(String(player.fullName ?? '').toLowerCase())) return;
+        (Array.isArray(row.data?.battingOrder) ? row.data.battingOrder : []).forEach((player: any, index: number) => {
+          if (!player?.fullName) return;
+          if (exclude.has(String(player.fullName).toLowerCase())) return;
           output.push({
           id: player.id ?? null,
           name: player.fullName,
@@ -161,7 +178,14 @@ export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<st
       for (const side of ['away', 'home'] as const) {
         const team = event[side];
         const opponent = event[side === 'away' ? 'home' : 'away'];
-        const teamId = await espnTeamIdByName('baseball/mlb', team.name);
+        let teamId: string | null = null;
+        try {
+          teamId = await espnTeamIdByName('baseball/mlb', team.name);
+        } catch (e) {
+          // espnTeamIdByName hits ESPN /teams; a failure must not abort the slate
+          console.warn(`[slateDiscovery] ESPN team lookup failed for ${team.name}: ${(e as Error).message}`);
+          continue;
+        }
         if (!teamId) continue;
         try {
           const roster = (await espnRoster('baseball/mlb', teamId)).filter((player) => positionAllowed('mlb', player.position));
@@ -262,7 +286,11 @@ export async function getSharpSlatePrices(
     const byKey = new Map<string, SharpPrice>();
     for (const m of result.props.markets as any[]) {
       if (!m?.player || m.line == null) continue;
-      const market = String(m.market ?? '').toLowerCase();
+      // Canonicalize BOTH sides of the lookup key through normalizeMarket:
+      // SharpApi emits labels like "Total Bases" while the screener looks up
+      // model markets like "totalBases"; the old raw-lowercase key silently
+      // mismatched every multi-word market (totalBases, homeRuns, shotsOnGoal…).
+      const market = normalizeMarket(String(m.market ?? '')).toLowerCase();
       const key = `${String(m.player).toLowerCase()}|${market}`;
       byKey.set(key, {
         player: m.player,
