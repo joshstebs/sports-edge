@@ -25,11 +25,12 @@ export function llmConfig(): LlmConfig {
   const geminiKey = process.env.GEMINI_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
 
-  // 1. Ox Alpha (OpenRouter) — requested default.
+  // OpenRouter (fallback). 'stealth/ox-alpha' was decommissioned (404) and the
+  // free slugs are gone; use valid non-free slugs. This provider is a fallback
+  // behind OpenCode Go, which is reliable.
   const oxAlphaModels = [
-    process.env.OPENROUTER_MODEL || 'stealth/ox-alpha',
+    process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct',
     'openai/gpt-oss-120b',
-    'meta-llama/llama-3.3-70b-instruct:free',
   ].filter((m, i, a) => a.indexOf(m) === i);
 
   // 2. DeepSeek V4 via OpenCode Go.
