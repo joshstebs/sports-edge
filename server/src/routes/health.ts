@@ -6,6 +6,7 @@ import { storageStatus } from '../lib/predictionStore.js';
 import { oddsConfigured } from '../providers/oddsApi.js';
 import { apiSportsConfigured, apiSportsQuota } from '../providers/apiSports.js';
 import { sgoConfigured } from '../providers/sportsGameOdds.js';
+import { sharpConfigured } from '../providers/sharpApi.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 
 export const VERSION = '0.2.0';
@@ -51,6 +52,12 @@ export const sources = {
     reason: sgoConfigured() ? 'configured' : 'SPORTSGAMEODDS_API_KEY not set in server/.env — returns available:false',
     baseUrl: 'https://api.sportsgameodds.com/v2',
     note: 'multi-book h2h/spreads/totals + player props; odds/scores/results bundled per event',
+  },
+  sharpApi: {
+    available: sharpConfigured(),
+    reason: sharpConfigured() ? 'configured' : 'SHARPAPI_API_KEY not set in server/.env — returns available:false',
+    baseUrl: 'https://api.sharpapi.io/api/v1',
+    note: 'real player-prop odds (MLB/NBA/NFL/NHL); free tier 60s delay, DraftKings+FanDuel, 12 req/min',
   },
   news: {
     available: true,

@@ -8,6 +8,7 @@ import * as savant from '../providers/savant.js';
 import * as espn from '../providers/espn.js';
 import * as odds from '../providers/oddsApi.js';
 import * as sgo from '../providers/sportsGameOdds.js';
+import * as sharp from '../providers/sharpApi.js';
 import * as weather from '../providers/weather.js';
 import * as news from '../providers/news.js';
 import * as espnOdds from '../providers/espnOdds.js';
@@ -468,6 +469,25 @@ const gameOdds = async (args: any): Promise<ToolOutcome> => {
       event: s.event ? `${s.event.away} @ ${s.event.home}` : null,
       h2h: payload.markets?.h2h ?? null,
       propsAvailable: s.props?.available ?? false,
+    });
+  }
+
+  // Tertiary: SharpApi real player props (MLB/NBA/NFL/NHL, DraftKings+FanDuel).
+  const sh = await sharp.getSharpGameOdds(teamA, teamB, sport);
+  if (sh.available) {
+    const payload = {
+      available: true,
+      source: 'api.sharpapi.io',
+      sport: sh.sport,
+      event: sh.event,
+      markets: sh.markets,
+      props: sh.props,
+      notice: sh.notice ?? undefined,
+    };
+    return ok(`Player props via ${sh.event?.away} @ ${sh.event?.home} (SharpApi)`, payload, {
+      event: sh.event ? `${sh.event.away} @ ${sh.event.home}` : null,
+      h2h: null,
+      propsAvailable: sh.props?.available ?? false,
     });
   }
 
