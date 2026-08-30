@@ -53,8 +53,13 @@ export function llmConfig(): LlmConfig {
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
+  // Priority order: OpenCode Go first (reliable — verified live; deepseek-v4-flash/
+  // pro/kimi-k3 all respond), then OpenRouter (retired 'stealth/ox-alpha' + quota
+  // — demoted to fallback), then OpenCode Zen free tiers, then Gemini, then OpenAI.
+  // OpenRouter's old 'stealth/ox-alpha' slug was decommissioned (404) and its
+  // gpt-oss-120b hit the per-key quota (403), so it is no longer a valid primary.
   if (opencodeGoKey) providers.push({ configured: true, provider: 'opencode-go', model: deepseekGoModels[0], models: deepseekGoModels, baseUrl: 'https://opencode.ai/zen/go/v1' });
+  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
   if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
   if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
