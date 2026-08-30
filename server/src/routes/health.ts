@@ -99,6 +99,8 @@ healthRouter.get('/health', (_req, res) => {
       },
       espn: { available: true },
       oddsApi: { available: sources.oddsApi.available, reason: sources.oddsApi.reason },
+      sportsGameOdds: { available: sources.sportsGameOdds.available, reason: sources.sportsGameOdds.reason },
+      sharpApi: { available: sources.sharpApi.available, reason: sources.sharpApi.reason, baseUrl: 'https://api.sharpapi.io/api/v1' },
       weather: { available: true },
       news: { available: true },
       ledger: { available: storage.backend !== 'not-configured', backend: storage.backend, durable: storage.durable },
