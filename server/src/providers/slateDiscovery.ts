@@ -1,5 +1,6 @@
 import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
+import * as sharp from './sharpApi.js';
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
 
@@ -232,4 +233,48 @@ export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<st
     } catch { /* degrade per team */ }
   }
   return output;
+}
+
+export interface SharpPrice {
+  player: string;
+  market: string;
+  line: number;
+  over: number | null;
+  under: number | null;
+  book: string;
+}
+
+/**
+ * Real SharpApi player-prop prices for a slate, keyed by normalized
+ * `player|market`. Used to attach a real sportsbook line/odds to a screen
+ * candidate when the model's derived line is only a proposal. Degrades to
+ * `{available:false}` on any failure — never fabricates a price.
+ */
+export async function getSharpSlatePrices(
+  sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
+  matchup?: { home: string; away: string },
+): Promise<{ available: boolean; reason?: string; byKey: Map<string, SharpPrice> }> {
+  try {
+    const result = await sharp.getSharpGameOdds(matchup?.away, matchup?.home, sport);
+    if (!result.available || !Array.isArray(result.props?.markets)) {
+      return { available: false, reason: result.reason ?? 'SharpApi no live props', byKey: new Map() };
+    }
+    const byKey = new Map<string, SharpPrice>();
+    for (const m of result.props.markets as any[]) {
+      if (!m?.player || m.line == null) continue;
+      const market = String(m.market ?? '').toLowerCase();
+      const key = `${String(m.player).toLowerCase()}|${market}`;
+      byKey.set(key, {
+        player: m.player,
+        market: market,
+        line: Number(m.line),
+        over: m.over ?? null,
+        under: m.under ?? null,
+        book: m.book ?? 'sharpapi',
+      });
+    }
+    return { available: byKey.size > 0, reason: byKey.size ? undefined : 'SharpApi no priced props', byKey };
+  } catch (error) {
+    return { available: false, reason: `SharpApi price lookup failed: ${(error as Error).message}`, byKey: new Map() };
+  }
 }

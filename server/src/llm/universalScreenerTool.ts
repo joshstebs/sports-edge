@@ -1,6 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { premiumProviderStatus, dataGapPriorities } from '../providers/premiumAdapter.js';
 import {
   buildPlayerPropModel,
@@ -320,6 +320,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     marketCalibration[market] = await candidateCalibration(sport, market).catch(() => ({ n: 0, hitRate: null, averageConfidence: null, calibrationError: null }));
   }
 
+  // Real SharpApi market prices (per player+market) to attach to candidates.
+  // Model-derived lines are proposals; a real market line/odds, when present,
+  // is surfaced alongside. Degrades to empty — never fabricated.
+  const sharpPrices = await getSharpSlatePrices(sport).catch(() => ({ available: false, byKey: new Map<string, any>() }));
+  const sharpByKey = sharpPrices.byKey;
+
   const payload = {
     available: true,
     sport,
@@ -345,6 +351,11 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       modelVersion: candidate.modelVersion,
       source: candidate.source,
       fallbackUsed: candidate.fallbackUsed,
+      marketLine: sharpByKey.get(`${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`)?.line ?? null,
+      marketOddsOver: sharpByKey.get(`${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`)?.over ?? null,
+      marketOddsUnder: sharpByKey.get(`${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`)?.under ?? null,
+      marketSource: sharpByKey.has(`${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`) ? 'api.sharpapi.io' : null,
+      marketBook: sharpByKey.get(`${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`)?.book ?? null,
       availability: candidate.profile.availability,
       recent: candidate.profile.recent,
       sources: candidate.profile.sources,

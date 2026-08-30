@@ -1,6 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
@@ -280,23 +280,40 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
   const lineupPosted = evaluated.some(({ player }) => inLineup(player));
 
-  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile }) => ({
-    player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
-    market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
-    grade: model.grade, sampleSize: model.sampleSize,
-    // Side-aware form rates: the old renderer always showed the OVER hit rate,
-    // even beside an UNDER recommendation, which made those summaries internally
-    // inconsistent. Half-lines cannot push, so UNDER rate = 1 - OVER rate.
-    availability: profile.availability,
-    inLineupToday: inLineup(player),
-    lineupSlot: player.lineupSlot,
-    recentHitRate: {
-      last5: sideHitRate(profile.recent?.last5?.hitRateOverSuggestedLine, model.side),
-      last10: sideHitRate(profile.recent?.last10?.hitRateOverSuggestedLine, model.side),
-      last20: sideHitRate(profile.recent?.last20?.hitRateOverSuggestedLine, model.side),
-    },
-    note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
-  }));
+  // Attach real SharpApi sportsbook line/odds to candidates when the
+  // player+market appears in the live props feed. The model's `line` is only a
+  // derived proposal; when SharpApi has a real market for the same player+market
+  // we surface the actual price. Never fabricated — only set on a real match.
+  const sharpPrices = await getSharpSlatePrices(sport, { home: '', away: '' }).catch(() => ({ available: false, byKey: new Map<string, any>() }));
+  const sharpByKey = sharpPrices.byKey;
+  const sharpline = (player: string, market: string) => {
+    const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
+    return match ?? null;
+  };
+
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile }) => {
+    const live = sharpline(player.name, market);
+    return {
+      player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
+      market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
+      grade: model.grade, sampleSize: model.sampleSize,
+      // Real market line/odds from SharpApi when available (else null = model-derived only).
+      marketLine: live?.line ?? null,
+      marketOddsOver: live?.over ?? null,
+      marketOddsUnder: live?.under ?? null,
+      marketSource: live ? 'api.sharpapi.io' : null,
+      marketBook: live?.book ?? null,
+      availability: profile.availability,
+      inLineupToday: inLineup(player),
+      lineupSlot: player.lineupSlot,
+      recentHitRate: {
+        last5: sideHitRate(profile.recent?.last5?.hitRateOverSuggestedLine, model.side),
+        last10: sideHitRate(profile.recent?.last10?.hitRateOverSuggestedLine, model.side),
+        last20: sideHitRate(profile.recent?.last20?.hitRateOverSuggestedLine, model.side),
+      },
+      note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
+    };
+  });
 
   const payload: any = {
     available: true,
