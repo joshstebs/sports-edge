@@ -79,10 +79,12 @@ export function isHostedProduction(env: NodeJS.ProcessEnv = process.env): boolea
 function parseAllowedOrigins(raw: string | undefined, production: boolean, env: NodeJS.ProcessEnv): readonly string[] {
   if (!raw) throw new Error('APP_ORIGIN is required for CSRF protection.');
   const origins = raw.split(',').map((value) => value.trim()).filter(Boolean);
-  if (env.VERCEL_ENV === 'preview' && env.VERCEL_URL) {
-    origins.push(`https://${env.VERCEL_URL}`);
+  if (env.VERCEL_ENV === 'preview') {
+    for (const hostname of [env.VERCEL_URL, env.VERCEL_BRANCH_URL]) {
+      if (hostname) origins.push(`https://${hostname}`);
+    }
   }
-  if (!origins.length || origins.length > 11) throw new Error('APP_ORIGIN must contain 1-10 origins plus an optional Vercel preview origin.');
+  if (!origins.length || origins.length > 12) throw new Error('APP_ORIGIN must contain 1-10 origins plus optional Vercel preview origins.');
   const parsed = origins.map((value) => {
     let url: URL;
     try { url = new URL(value); }
