@@ -76,10 +76,13 @@ export function isHostedProduction(env: NodeJS.ProcessEnv = process.env): boolea
   return env.NODE_ENV === 'production' || Boolean(env.VERCEL) || Boolean(env.VERCEL_ENV);
 }
 
-function parseAllowedOrigins(raw: string | undefined, production: boolean): readonly string[] {
+function parseAllowedOrigins(raw: string | undefined, production: boolean, env: NodeJS.ProcessEnv): readonly string[] {
   if (!raw) throw new Error('APP_ORIGIN is required for CSRF protection.');
   const origins = raw.split(',').map((value) => value.trim()).filter(Boolean);
-  if (!origins.length || origins.length > 10) throw new Error('APP_ORIGIN must contain 1-10 origins.');
+  if (env.VERCEL_ENV === 'preview' && env.VERCEL_URL) {
+    origins.push(`https://${env.VERCEL_URL}`);
+  }
+  if (!origins.length || origins.length > 11) throw new Error('APP_ORIGIN must contain 1-10 origins plus an optional Vercel preview origin.');
   const parsed = origins.map((value) => {
     let url: URL;
     try { url = new URL(value); }
@@ -120,7 +123,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     users: parseUsers(usersJson),
     sessionSecret,
     sessionTtlSeconds,
-    allowedOrigins: parseAllowedOrigins(env.APP_ORIGIN, production),
+    allowedOrigins: parseAllowedOrigins(env.APP_ORIGIN, production, env),
     production,
   });
 }
