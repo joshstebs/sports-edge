@@ -267,11 +267,21 @@ async function tryModel(
   const url = `${pc.baseUrl}/chat/completions`;
   const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : pc.provider === 'opencode-go' ? process.env.OPENCODE_GO_API_KEY : pc.provider === 'opencode-zen' ? process.env.OPENCODE_ZEN_API_KEY : pc.provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
 
+  // x-opencode-session: OpenCode requires this header (mandatory from 2026-09-06 —
+  // requests without it error). It pins one conversation to one upstream backend so
+  // the provider's prompt cache stays warm. Value must be stable per conversation;
+  // caller passes a conversation-scoped id via env-compatible session key.
+  const extraHeaders: Record<string, string> = {};
+  if (pc.provider === 'opencode-go' || pc.provider === 'opencode-zen') {
+    const sessionKey = process.env.OPENCODE_SESSION_KEY || 'sportsedge-single-tenant';
+    extraHeaders['x-opencode-session'] = `${sessionKey}-${new Date().toISOString().slice(0, 10)}`;
+  }
+
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...extraHeaders },
         body: JSON.stringify({ model, messages, tools, temperature: 0.6, stream: true }),
         signal: cb.signal ?? AbortSignal.timeout(MODEL_TURN_TIMEOUT_MS),
       });
