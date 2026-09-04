@@ -79,6 +79,7 @@ export async function streamChat(body: StreamChatBody, opts: StreamChatOptions):
   const reader = res.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  let sawTerminalEvent = false;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -86,13 +87,23 @@ export async function streamChat(body: StreamChatBody, opts: StreamChatOptions):
     buffer += decoder.decode(value, { stream: true });
     let boundary = buffer.match(/\r?\n\r?\n/);
     while (boundary?.index !== undefined) {
-      parseFrame(buffer.slice(0, boundary.index), opts.onEvent);
+      const frame = buffer.slice(0, boundary.index);
+      // Track terminal events so a killed/truncated stream can't resolve blank.
+      if (/^\s*event:\s*(done|error)\s*$/m.test(frame)) sawTerminalEvent = true;
+      parseFrame(frame, opts.onEvent);
       buffer = buffer.slice(boundary.index + boundary[0].length);
       boundary = buffer.match(/\r?\n\r?\n/);
     }
   }
   buffer += decoder.decode(); // flush any decoder-internal state
   if (buffer.trim().length > 0) {
+    if (/^\s*event:\s*(done|error)\s*$/m.test(buffer)) sawTerminalEvent = true;
     parseFrame(buffer, opts.onEvent);
+  }
+  // Vercel kills the function at 60s with no error frame — the old code resolved
+  // normally, leaving a blank message with no error (user saw "nothing"). Throw so
+  // the caller surfaces the retry message instead of blank.
+  if (!sawTerminalEvent) {
+    throw new Error('The analysis was cut off before it finished (server time limit). Your picks are saved locally — try again in a moment.');
   }
 }
