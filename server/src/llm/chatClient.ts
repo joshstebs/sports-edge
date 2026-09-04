@@ -34,10 +34,11 @@ export function llmConfig(): LlmConfig {
     'openai/gpt-oss-120b',
   ].filter((m, i, a) => a.indexOf(m) === i);
 
-  // 2. DeepSeek V4 via OpenCode Go.
+  // 2. DeepSeek V4 via OpenCode Go. deepseek-v4-flash is primary (verified 200);
+  // deepseek-v4-pro was DISABLED upstream (401 "Model is disabled" as of 2026-09-04)
+  // so it is dropped from the list rather than wasting a round-trip per turn.
   const deepseekGoModels = [
     process.env.OPENCODE_GO_MODEL || 'deepseek-v4-flash',
-    'deepseek-v4-pro',
     'kimi-k3',
   ].filter((m, i, a) => a.indexOf(m) === i);
 
