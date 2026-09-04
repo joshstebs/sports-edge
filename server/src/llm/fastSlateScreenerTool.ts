@@ -264,7 +264,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
         market: { market: normalizeMarket(market), suggestedLine: line, side: model.side, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize, impliedProbability: null, estimatedEdge: null, modelVersion: model.modelVersion },
         sources: [...new Set([history.source, player.source])], fallbackUsed: sport !== 'mlb', retrievedAt: new Date().toISOString(),
       };
-      evaluated.push({ player, market: normalizeMarket(market), line, model, profile, source: history.source });
+      evaluated.push({ player, market: normalizeMarket(market), line, model, profile, source: history.source, observations: rows, calibration });
     }
   });
 
@@ -321,8 +321,36 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     return match ?? null;
   };
 
-  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile }) => {
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, observations, calibration }) => {
     const live = sharpline(player.name, market);
+    // Edge evaluation at the REAL sportsbook line (same contract as the universal
+    // screener): recompute both sides at the book line for honest edge visibility.
+    // Side selection stays max-probability; edgeOver/edgeUnder expose value.
+    let estimatedEdge: number | null = null;
+    let edgeOver: number | null = null;
+    let edgeUnder: number | null = null;
+    let edgeLine: number | null = null;
+    if (live != null && Number.isFinite(Number(live.line)) && Array.isArray(observations)) {
+      const bookLine = Number(live.line);
+      for (const s of [
+        { side: 'over' as const, odds: live.over },
+        { side: 'under' as const, odds: live.under },
+      ]) {
+        if (s.odds == null || s.odds === '' || !Number.isFinite(Number(s.odds))) continue;
+        const m = buildPlayerPropModel({
+          sport, market, side: s.side, line: bookLine,
+          observations, source: profile.sources?.[0] ?? 'unknown',
+          calibration, americanOdds: Number(s.odds),
+        });
+        if (!m.available || m.probability == null || m.estimatedEdge == null) continue;
+        const edgeFrac = m.estimatedEdge;
+        if (s.side === 'over') edgeOver = edgeFrac; else edgeUnder = edgeFrac;
+        if (s.side === model.side) {
+          estimatedEdge = edgeFrac;
+          edgeLine = bookLine;
+        }
+      }
+    }
     return {
       player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
       market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
@@ -333,6 +361,10 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketOddsUnder: live?.under ?? null,
       marketSource: live ? 'api.sharpapi.io' : null,
       marketBook: live?.book ?? null,
+      estimatedEdge: estimatedEdge == null ? null : Math.round(estimatedEdge * 1000) / 10,
+      edgeOver: edgeOver == null ? null : Math.round(edgeOver * 1000) / 10,
+      edgeUnder: edgeUnder == null ? null : Math.round(edgeUnder * 1000) / 10,
+      edgeLine,
       availability: profile.availability,
       inLineupToday: inLineup(player),
       lineupSlot: player.lineupSlot,
@@ -343,6 +375,15 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       },
       note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
     };
+  });
+  // Rank verified-price candidates first (either side has a real edge — matches the
+  // "verified lines" requirement), then by chosen-side edge, then confidence.
+  candidates.sort((a: any, b: any) => {
+    const aPriced = (a.edgeOver != null || a.edgeUnder != null) ? 0 : 1;
+    const bPriced = (b.edgeOver != null || b.edgeUnder != null) ? 0 : 1;
+    return aPriced - bPriced
+      || (b.estimatedEdge ?? -Infinity) - (a.estimatedEdge ?? -Infinity)
+      || (b.confidencePct ?? 0) - (a.confidencePct ?? 0);
   });
 
   const payload: any = {
