@@ -319,13 +319,13 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
-  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any> }>((resolve) =>
-    setTimeout(() => resolve({ available: false, reason: 'SharpApi price lookup timed out (3s deadline)', byKey: new Map<string, any>() }), 3_000)
+  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>
+    setTimeout(() => resolve({ available: false, reason: 'Consensus price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
   );
   const sharpPrices = await Promise.race([
     getConsensusSlatePrices(sport),
     sharpDeadline,
-  ]).catch(() => ({ available: false, reason: 'SharpApi price lookup crashed', byKey: new Map<string, any>() }));
+  ]).catch(() => ({ available: false, reason: 'Consensus price lookup crashed', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }));
   if (!sharpPrices.available) {
     console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
   }
