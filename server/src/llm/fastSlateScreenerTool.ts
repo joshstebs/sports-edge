@@ -371,7 +371,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     const liveLine = live != null && Number.isFinite(Number(live.line)) ? Number(live.line) : null;
     const liveEvaluation = liveLine == null ? null : evaluatePropLine({
       sport, market, line: liveLine, observations, source: profile.sources?.[0] ?? 'unknown',
-      calibration, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
+      calibration, requestedSide: sideFilter, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
     });
     const finalModel = liveEvaluation?.chosen ?? model;
     const finalLine = liveLine ?? line;
