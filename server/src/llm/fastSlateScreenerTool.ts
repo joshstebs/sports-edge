@@ -1,5 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
+import * as statsHawk from '../providers/statsHawk.js';
 import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
@@ -15,7 +16,7 @@ type CachedHistory = {
   source: string;
   season: Record<string, unknown>;
   games: any[];
-  mode: 'mlb' | 'espn';
+  mode: 'mlb' | 'espn' | 'statshawk';
 };
 
 type RequestedSide = 'over' | 'under';
@@ -107,33 +108,46 @@ function spreadEvents<T>(events: T[], limit: number): T[] {
   }
   return picked;
 }
+async function statsHawkHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
+  if (sport !== 'mlb' && sport !== 'nfl') return null;
+  const season = sport === 'mlb' ? mlb.CURRENT_SEASON : new Date().getUTCFullYear();
+  const log = await statsHawk.getStatsHawkGameLog(player.name, sport, season);
+  if (!log.available || !log.rows.length) return null;
+  return { source: log.source, season: { season }, games: log.rows, mode: 'statshawk' };
+}
+
 async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
   if (sport === 'mlb') {
     const found = await mlb.searchPlayer(player.name);
-    if (!found.available || !found.data) return null;
-    const pitching = player.probablePitcher || String(player.position ?? '').toUpperCase().includes('P');
-    const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
-    if (!log.available || !Array.isArray(log.data)) return null;
-    return { source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON }, games: log.data, mode: 'mlb' };
+    if (found.available && found.data) {
+      const pitching = player.probablePitcher || String(player.position ?? '').toUpperCase().includes('P');
+      const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
+      if (log.available && Array.isArray(log.data)) {
+        return { source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON }, games: log.data, mode: 'mlb' };
+      }
+    }
+    return statsHawkHistory(player, sport);
   }
   const s = sport as Exclude<ModelSport, 'mlb'>;
   let playerId = player.id != null ? String(player.id) : '';
   if (!playerId) {
     const found = await espn.findPlayer(player.name, ESPN_MAP[s]);
-    if (!found.available || !found.player) return null;
+    if (!found.available || !found.player) return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
     playerId = found.player.id;
   }
   const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
-  if (!log.available || !Array.isArray(log.games)) return null;
+  if (!log.available || !Array.isArray(log.games)) return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
   return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
 }
 function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
   return history.games.map((game: any) => {
     const value = history.mode === 'mlb'
       ? mlbObservation(market, game.stat ?? {})
-      : espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
+      : history.mode === 'statshawk'
+        ? statsHawk.statsHawkObservation(sport as 'mlb' | 'nfl', market, game)
+        : espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
     if (value == null) return null;
-    return { date: game.date ?? game.gameDate ?? null, value };
+    return { date: game.date ?? game.gameDate ?? game.kickoff ?? null, value };
   }).filter(Boolean) as HistoricalObservation[];
 }
 function halfLine(rows: HistoricalObservation[]): number {
