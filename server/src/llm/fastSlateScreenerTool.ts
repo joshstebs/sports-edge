@@ -373,9 +373,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       sport, market, line: liveLine, observations, source: profile.sources?.[0] ?? 'unknown',
       calibration, requestedSide: sideFilter, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
     });
-    const finalModel = liveEvaluation?.chosen ?? model;
+    const finalModel = (liveEvaluation?.chosen ?? model)!;
     const finalLine = liveLine ?? line;
-    const recentValues = observations.map((row) => row.value);
+    const recentValues = observations.map((row: HistoricalObservation) => row.value);
     const recentAtDisplayedLine = {
       last5: sideHitRate(featureWindow(recentValues, finalLine, 5).hitRateOverSuggestedLine, finalModel.side),
       last10: sideHitRate(featureWindow(recentValues, finalLine, 10).hitRateOverSuggestedLine, finalModel.side),
