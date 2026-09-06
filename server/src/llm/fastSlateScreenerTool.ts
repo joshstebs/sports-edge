@@ -1,6 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
@@ -193,8 +193,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Pull a wider pool for market/side-specific requests. Filtering to one market
   // or one direction naturally removes many generic top candidates, so screen
   // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
-  const defaultPlayers = constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
-  const maxPlayersCap = constrained ? 22 : 14;
+  const defaultPlayers = constrained ? Math.max(16, requested * 4) : Math.max(12, requested * 3);
+  const maxPlayersCap = constrained ? 28 : 24;
   const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
@@ -309,13 +309,14 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     setTimeout(() => resolve({ available: false, reason: 'SharpApi price lookup timed out (3s deadline)', byKey: new Map<string, any>() }), 3_000)
   );
   const sharpPrices = await Promise.race([
-    getSharpSlatePrices(sport, { home: '', away: '' }),
+    getConsensusSlatePrices(sport),
     sharpDeadline,
   ]).catch(() => ({ available: false, reason: 'SharpApi price lookup crashed', byKey: new Map<string, any>() }));
   if (!sharpPrices.available) {
     console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
   }
   const sharpByKey = sharpPrices.byKey;
+  const alternateByKey = sharpPrices.alternatesByKey ?? new Map<string, any[]>();
   const sharpline = (player: string, market: string) => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
     return match ?? null;
@@ -359,8 +360,14 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketLine: live?.line ?? null,
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
-      marketSource: live ? 'api.sharpapi.io' : null,
+      marketSource: live?.source ?? null,
       marketBook: live?.book ?? null,
+      books: live?.books ?? [],
+      bookCount: live?.bookCount ?? null,
+      lineType: live?.lineType ?? (live ? 'primary' : null),
+      isAlternate: Boolean(live?.isAlternate),
+      lineLabel: live?.lineLabel ?? (live ? 'PRIMARY MARKET LINE' : 'MODEL SCREENING LINE'),
+      alternateLines: alternateByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
       estimatedEdge: estimatedEdge == null ? null : Math.round(estimatedEdge * 1000) / 10,
       edgeOver: edgeOver == null ? null : Math.round(edgeOver * 1000) / 10,
       edgeUnder: edgeUnder == null ? null : Math.round(edgeUnder * 1000) / 10,
