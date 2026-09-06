@@ -247,9 +247,45 @@ const ESPN_SPORTS: Record<'NFL' | 'NBA' | 'NHL', espn.EspnSport> = {
 };
 
 async function evaluateEspnLeg(
-  leg: PredictionLeg, sport: 'NFL' | 'NBA' | 'NHL', gameDate: string, eventId?: string | number | null,
+  leg: PredictionLeg,
+  sport: 'NFL' | 'NBA' | 'NHL',
+  gameDate: string,
+  eventId?: string | number | null,
+  matchup?: string | null,
 ): Promise<{ outcome: LegOutcome; actual: number | null; note?: string }> {
   const market = inferMarket(leg);
+
+  if (market === 'moneyline') {
+    const parts = matchupParts(String(matchup ?? ''));
+    const result = await espn.getEventResult(
+      ESPN_SPORTS[sport],
+      gameDate,
+      eventId,
+      parts[0] ?? null,
+      parts[1] ?? null,
+    );
+    if (!result.available || !result.result) {
+      return { outcome: 'ungraded', actual: null, note: `official ${sport} game result unavailable for ${gameDate}: ${result.reason ?? 'unknown reason'}` };
+    }
+    if (!result.result.completed) {
+      return { outcome: 'ungraded', actual: null, note: `official ${sport} game is not final yet (${result.result.status || 'in progress'}); will retry` };
+    }
+    const awayScore = result.result.away.score;
+    const homeScore = result.result.home.score;
+    if (awayScore == null || homeScore == null) {
+      return { outcome: 'ungraded', actual: null, note: 'official final score is unavailable; will retry' };
+    }
+    const selection = norm(String(leg.leg_name ?? ''));
+    const awaySelected = teamMatches(selection, norm(result.result.away.name));
+    const homeSelected = teamMatches(selection, norm(result.result.home.name));
+    if (awaySelected === homeSelected) {
+      return { outcome: 'ungraded', actual: null, note: 'moneyline team could not be identified unambiguously' };
+    }
+    if (awayScore === homeScore) return { outcome: 'push', actual: 0.5, note: 'game ended tied; two-way moneyline treated as push' };
+    const selectedWon = awaySelected ? awayScore > homeScore : homeScore > awayScore;
+    return { outcome: selectedWon ? 'won' : 'lost', actual: selectedWon ? 1 : 0 };
+  }
+
   const { line, side } = parseLineAndSide(leg);
   if (market === 'unknown' || line == null) return { outcome: 'ungraded', actual: null, note: 'structured market, side and line are required' };
   let playerId = leg.player_id != null ? String(leg.player_id) : '';
@@ -422,12 +458,15 @@ export async function runPredictionEvaluation(options: EvaluationOptions = {}): 
         const evaluatedAt = new Date().toISOString();
         const legs = [] as PredictionLeg[];
         for (const leg of prediction.legs) {
-          const result = await evaluateEspnLeg(leg, prediction.sport, gameDate, prediction.event_id);
+          const result = await evaluateEspnLeg(leg, prediction.sport, gameDate, prediction.event_id, prediction.matchup);
           legs.push({ ...leg, outcome: result.outcome, actual: result.actual, evaluation_note: result.note ?? null, evaluated_at: evaluatedAt });
         }
         const graded = legs.filter((leg) => leg.outcome === 'won' || leg.outcome === 'lost' || leg.outcome === 'push');
         const hasUngraded = legs.some((leg) => leg.outcome === 'ungraded');
-        const retryableMissing = graded.length === 0 && legs.every((leg) => /no official .* gamelog entry/i.test(leg.evaluation_note ?? ''));
+        const ungraded = legs.filter((leg) => leg.outcome === 'ungraded');
+        const retryableMissing = ungraded.length > 0 && ungraded.every((leg) =>
+          /no official .* gamelog entry|game result unavailable|game is not final yet|final score is unavailable/i.test(leg.evaluation_note ?? '')
+        );
         const expired = ageDays(gameDate, now) >= EXPIRY_DAYS && attempts >= MAX_ATTEMPTS;
         const status = retryableMissing && !expired ? 'pending' : hasUngraded ? 'needs_review' : 'evaluated';
         const note = retryableMissing && !expired
