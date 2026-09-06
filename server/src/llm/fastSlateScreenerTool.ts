@@ -1,6 +1,7 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
 import * as statsHawk from '../providers/statsHawk.js';
+import * as nflverse from '../providers/nflverse.js';
 import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
@@ -24,7 +25,7 @@ type RequestedSide = 'over' | 'under';
 const SPORT_MARKETS: Record<ModelSport, string[]> = {
   mlb: ['hits', 'totalBases', 'strikeouts', 'outsRecorded'],
   nba: ['points', 'rebounds'],
-  nfl: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions'],
+  nfl: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions', 'rushingReceivingYards', 'touchdowns'],
   nhl: ['shotsOnGoal', 'hockeyPoints', 'saves'],
 };
 
@@ -65,8 +66,8 @@ function marketsFor(player: DiscoveredPlayer, sport: ModelSport, marketFilter: s
     markets = ['points', 'rebounds'];
   } else if (sport === 'nfl') {
     if (pos === 'QB') markets = ['passingYards', 'passingTouchdowns'];
-    else if (pos === 'RB' || pos === 'FB') markets = ['rushingYards', 'receptions'];
-    else markets = ['receivingYards', 'receptions'];
+    else if (pos === 'RB' || pos === 'FB') markets = ['rushingYards', 'receivingYards', 'rushingReceivingYards', 'receptions', 'touchdowns'];
+    else markets = ['receivingYards', 'receptions', 'touchdowns'];
   } else if (['G', 'GOALIE'].includes(pos)) {
     markets = ['saves'];
   } else {
@@ -110,10 +111,15 @@ function spreadEvents<T>(events: T[], limit: number): T[] {
 }
 async function statsHawkHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
   if (sport !== 'mlb' && sport !== 'nfl') return null;
-  const season = sport === 'mlb' ? mlb.CURRENT_SEASON : new Date().getUTCFullYear();
-  const log = await statsHawk.getStatsHawkGameLog(player.name, sport, season);
-  if (!log.available || !log.rows.length) return null;
-  return { source: log.source, season: { season }, games: log.rows, mode: 'statshawk' };
+  const current = sport === 'mlb' ? mlb.CURRENT_SEASON : new Date().getUTCFullYear();
+  const seasons = sport === 'nfl' ? [current, current - 1] : [current];
+  for (const season of seasons) {
+    const log = await statsHawk.getStatsHawkGameLog(player.name, sport, season);
+    if (log.available && log.rows.length) {
+      return { source: log.source, season: { season }, games: log.rows, mode: 'statshawk' };
+    }
+  }
+  return null;
 }
 
 async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
@@ -128,6 +134,12 @@ async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): P
     }
     return statsHawkHistory(player, sport);
   }
+  if (sport === 'nfl') {
+    const nv = await nflverse.getNflversePlayerHistory(player.name, 20).catch(() => null);
+    if (nv?.available && Array.isArray(nv.games) && nv.games.length >= 5) {
+      return { source: nv.source, season: { season: nv.season }, games: nv.games, mode: 'espn' };
+    }
+  }
   const s = sport as Exclude<ModelSport, 'mlb'>;
   let playerId = player.id != null ? String(player.id) : '';
   if (!playerId) {
@@ -136,7 +148,9 @@ async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): P
     playerId = found.player.id;
   }
   const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
-  if (!log.available || !Array.isArray(log.games)) return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
+  if (!log.available || !Array.isArray(log.games) || (sport === 'nfl' && log.games.length < 5)) {
+    return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
+  }
   return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
 }
 function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
