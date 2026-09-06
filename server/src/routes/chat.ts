@@ -303,7 +303,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   res.flushHeaders?.();
 
   if (!cfg.configured) {
-    sse(res, 'error', { message: 'No LLM API key configured. Add GEMINI_API_KEY or OPENAI_API_KEY to server/.env' });
+    sse(res, 'error', { message: 'No LLM API key configured. Add GROQ_API_KEY (preferred free model) or another supported non-Gemini provider key.' });
     res.end();
     return;
   }

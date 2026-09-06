@@ -74,6 +74,8 @@ async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): 
   const credentials = keys();
   if (!credentials.length) return { events: [], next: null, notice: null, rateLimited: false };
   const params = new URLSearchParams({ leagueID });
+  params.set('limit', '20');
+  params.set('includeAltLines', 'false');
   if (oddsOnly) params.set('oddsAvailable', 'true');
   if (cursor) params.set('cursor', cursor);
   const url = `${BASE}/events?${params.toString()}`;
@@ -254,6 +256,7 @@ export interface SgoSlateEvent {
   away: string;
   commenceTime: string;
   completed: boolean;
+  markets: Record<string, any>;
   props: SgoSlateProp[];
 }
 
@@ -329,6 +332,7 @@ export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<
           away: names.away,
           commenceTime: event.status?.startsAt ?? '',
           completed: Boolean(event.status?.completed),
+          markets: mapMarkets(event.odds),
           props: extractSlateProps(event.odds),
         };
       });

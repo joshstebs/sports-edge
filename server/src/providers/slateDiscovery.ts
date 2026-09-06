@@ -1,6 +1,7 @@
 import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
 import * as sharp from './sharpApi.js';
+import * as sgo from './sportsGameOdds.js';
 import { normalizeMarket } from '../models/playerPropModel.js';
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
@@ -266,6 +267,20 @@ export interface SharpPrice {
   over: number | null;
   under: number | null;
   book: string;
+  books?: string[];
+  bookCount?: number;
+  lineType?: 'primary' | 'alternate';
+  isAlternate?: boolean;
+  consensusRank?: number;
+  source?: string;
+  lineLabel?: string;
+}
+
+export interface SlatePriceResult {
+  available: boolean;
+  reason?: string;
+  byKey: Map<string, SharpPrice>;
+  alternatesByKey: Map<string, SharpPrice[]>;
 }
 
 /**
@@ -277,32 +292,92 @@ export interface SharpPrice {
 export async function getSharpSlatePrices(
   sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
   matchup?: { home: string; away: string },
-): Promise<{ available: boolean; reason?: string; byKey: Map<string, SharpPrice> }> {
+): Promise<SlatePriceResult> {
   try {
     const result = await sharp.getSharpGameOdds(matchup?.away, matchup?.home, sport);
     if (!result.available || !Array.isArray(result.props?.markets)) {
-      return { available: false, reason: result.reason ?? 'SharpApi no live props', byKey: new Map() };
+      return { available: false, reason: result.reason ?? 'SharpApi no live props', byKey: new Map(), alternatesByKey: new Map() };
+    }
+    const grouped = new Map<string, SharpPrice[]>();
+    for (const marketRow of result.props.markets as any[]) {
+      if (!marketRow?.player || marketRow.line == null) continue;
+      const market = normalizeMarket(String(marketRow.market ?? '')).toLowerCase();
+      const key = String(marketRow.player).toLowerCase() + '|' + market;
+      const price: SharpPrice = {
+        player: marketRow.player, market, line: Number(marketRow.line),
+        over: marketRow.over ?? null, under: marketRow.under ?? null,
+        book: marketRow.book ?? 'sharpapi', books: marketRow.books ?? [marketRow.book ?? 'sharpapi'],
+        bookCount: Number(marketRow.bookCount ?? (marketRow.books?.length ?? 1)),
+        lineType: marketRow.lineType === 'alternate' ? 'alternate' : 'primary',
+        isAlternate: Boolean(marketRow.isAlternate), consensusRank: Number(marketRow.consensusRank ?? 1),
+        source: 'api.sharpapi.io',
+        lineLabel: marketRow.lineType === 'alternate' ? 'ALTERNATE LINE' : 'PRIMARY MARKET LINE',
+      };
+      grouped.set(key, [...(grouped.get(key) ?? []), price]);
     }
     const byKey = new Map<string, SharpPrice>();
-    for (const m of result.props.markets as any[]) {
-      if (!m?.player || m.line == null) continue;
-      // Canonicalize BOTH sides of the lookup key through normalizeMarket:
-      // SharpApi emits labels like "Total Bases" while the screener looks up
-      // model markets like "totalBases"; the old raw-lowercase key silently
-      // mismatched every multi-word market (totalBases, homeRuns, shotsOnGoal…).
-      const market = normalizeMarket(String(m.market ?? '')).toLowerCase();
-      const key = `${String(m.player).toLowerCase()}|${market}`;
-      byKey.set(key, {
-        player: m.player,
-        market: market,
-        line: Number(m.line),
-        over: m.over ?? null,
-        under: m.under ?? null,
-        book: m.book ?? 'sharpapi',
-      });
+    const alternatesByKey = new Map<string, SharpPrice[]>();
+    for (const [key, offers] of grouped) {
+      const sorted = [...offers].sort((a, b) =>
+        Number(a.isAlternate) - Number(b.isAlternate)
+        || (b.bookCount ?? 0) - (a.bookCount ?? 0)
+        || Number(b.over != null && b.under != null) - Number(a.over != null && a.under != null)
+      );
+      if (sorted[0]) byKey.set(key, { ...sorted[0], lineType: 'primary', isAlternate: false, consensusRank: 1 });
+      if (sorted.length > 1) alternatesByKey.set(key, sorted.slice(1).map((row, index) => ({ ...row, lineType: 'alternate', isAlternate: true, consensusRank: index + 2, lineLabel: 'ALTERNATE LINE' })));
     }
-    return { available: byKey.size > 0, reason: byKey.size ? undefined : 'SharpApi no priced props', byKey };
+    return { available: byKey.size > 0, reason: byKey.size ? undefined : 'SharpApi no priced props', byKey, alternatesByKey };
   } catch (error) {
-    return { available: false, reason: `SharpApi price lookup failed: ${(error as Error).message}`, byKey: new Map() };
+    return { available: false, reason: 'SharpApi price lookup failed: ' + (error as Error).message, byKey: new Map(), alternatesByKey: new Map() };
   }
+}
+
+/** Prefer SportsGameOdds' consensus bookOverUnder line, then SharpAPI primary.
+ * Alternate lines remain attached for display/research but never displace the
+ * primary line merely because they were returned later by a provider. */
+export async function getConsensusSlatePrices(
+  sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
+): Promise<SlatePriceResult> {
+  try {
+    const result = await sgo.getSgoSlateEvents(sport, 12);
+    if (result.available && Array.isArray(result.events)) {
+      const grouped = new Map<string, Map<number, SharpPrice>>();
+      for (const event of result.events) {
+        for (const prop of event.props ?? []) {
+          if (!prop?.playerName || prop.line == null || !Number.isFinite(Number(prop.line))) continue;
+          const market = normalizeMarket(String(prop.market ?? '')).toLowerCase();
+          const key = String(prop.playerName).toLowerCase() + '|' + market;
+          const line = Number(prop.line);
+          const lineMap = grouped.get(key) ?? new Map<number, SharpPrice>();
+          const current = lineMap.get(line) ?? {
+            player: prop.playerName, market, line, over: null, under: null,
+            book: 'SportsGameOdds consensus', books: [], bookCount: 0, source: 'api.sportsgameodds.com',
+            lineType: 'primary', isAlternate: false, consensusRank: 1, lineLabel: 'PRIMARY / CONSENSUS LINE',
+          };
+          if (prop.side === 'over') current.over = prop.odds ?? current.over;
+          if (prop.side === 'under') current.under = prop.odds ?? current.under;
+          const bookNames = Object.keys(prop.byBookmaker ?? {});
+          current.books = [...new Set([...(current.books ?? []), ...bookNames])];
+          current.bookCount = Math.max(current.bookCount ?? 0, current.books.length);
+          lineMap.set(line, current); grouped.set(key, lineMap);
+        }
+      }
+      const byKey = new Map<string, SharpPrice>();
+      const alternatesByKey = new Map<string, SharpPrice[]>();
+      for (const [key, lineMap] of grouped) {
+        const offers = [...lineMap.values()].sort((a, b) =>
+          (b.bookCount ?? 0) - (a.bookCount ?? 0)
+          || Number(b.over != null && b.under != null) - Number(a.over != null && a.under != null)
+        );
+        const primary = offers[0];
+        if (!primary) continue;
+        byKey.set(key, { ...primary, lineType: 'primary', isAlternate: false, consensusRank: 1, lineLabel: 'PRIMARY / CONSENSUS LINE' });
+        if (offers.length > 1) alternatesByKey.set(key, offers.slice(1).map((row, index) => ({ ...row, lineType: 'alternate', isAlternate: true, consensusRank: index + 2, lineLabel: 'ALTERNATE LINE' })));
+      }
+      if (byKey.size) return { available: true, byKey, alternatesByKey };
+    }
+  } catch (error) {
+    console.warn('[slateDiscovery] SGO consensus props unavailable: ' + (error as Error).message);
+  }
+  return getSharpSlatePrices(sport);
 }
