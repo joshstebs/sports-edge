@@ -127,6 +127,8 @@ interface ScreenerIntent {
   market?: string;
   side?: ScreenerSide;
   sport?: 'mlb' | 'nba' | 'nfl' | 'nhl';
+  gameMarket?: 'moneyline';
+  requestKind?: 'player_prop' | 'game_market' | 'mixed';
 }
 
 function clampRequestedPicks(value: number): number | undefined {
@@ -171,8 +173,21 @@ function inferScreenerIntent(text: string): ScreenerIntent {
   for (const [pattern, market, sport] of marketPatterns) {
     if (!pattern.test(text)) continue;
     intent.market = market;
+    intent.requestKind = 'player_prop';
     if (sport) intent.sport = sport;
     break;
+  }
+
+  const explicitMoneyline = /\bmoney\s*line\b|\bmoneyline\b|\bh2h\b|(?:^|\s)ml(?:\s|$|s\b)/i.test(text);
+  if (explicitMoneyline) {
+    intent.gameMarket = 'moneyline';
+    intent.requestKind = 'game_market';
+    delete intent.market;
+    delete intent.side;
+  } else if (/\bprops?\b|\bplayer\s+(?:bet|bets|pick|picks)\b/i.test(text)) {
+    intent.requestKind ??= 'player_prop';
+  } else if (/\b(?:pick|picks|bet|bets|plays?|parlay)\b/i.test(text)) {
+    intent.requestKind ??= 'mixed';
   }
 
   if (/\bmlb\b|\bbaseball\b/i.test(lower)) intent.sport = 'mlb';
@@ -197,6 +212,8 @@ function inferConversationScreenerIntent(msgs: ChatMessage[]): ScreenerIntent {
     current.market ??= prior.market;
     current.side ??= prior.side;
     current.sport ??= prior.sport;
+    current.gameMarket ??= prior.gameMarket;
+    current.requestKind ??= prior.requestKind;
     if (current.requestedPicks == null && /\b(more|other|another|different|additional|again)\b/i.test(userTexts[userTexts.length - 1])) {
       current.requestedPicks = prior.requestedPicks;
     }
@@ -464,39 +481,79 @@ export async function runAgent(
     );
 
     let screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
+    let gameMarketCall = resp.toolCalls.find((tc) => tc.name === 'game_market_screener');
+    const currentDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const explicitGameMarket = intent.requestKind === 'game_market' || Boolean(intent.gameMarket);
+    const explicitPlayerProp = intent.requestKind === 'player_prop';
+    const genericMixed = intent.requestKind === 'mixed' && userAskedMultiPick;
 
-    // If a multi-pick request somehow reaches a model that skipped the screener,
-    // inject the tool call directly in THIS round. The old implementation pushed
-    // another user message then `continue`d, but MAX_TOOL_ROUNDS=1 meant that
-    // supposed safety net never actually executed.
-    if (userAskedMultiPick && !screenerCall) {
+    // User intent wins over model tool choice. An explicit moneyline request
+    // must never spend its only tool round on the player-prop screener.
+    if (explicitGameMarket) {
+      resp.toolCalls = resp.toolCalls.filter((tc) => tc.name !== 'slate_candidate_screener');
+      screenerCall = undefined;
+    }
+    if (explicitPlayerProp) {
+      resp.toolCalls = resp.toolCalls.filter((tc) => tc.name !== 'game_market_screener');
+      gameMarketCall = undefined;
+    }
+
+    if ((userAskedMultiPick || explicitPlayerProp) && !explicitGameMarket && !screenerCall) {
       const forcedArgs: Record<string, unknown> = {
         sport: intent.sport ?? 'mlb',
         requestedPicks: intent.requestedPicks ?? 5,
-        date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
+        date: currentDate,
       };
       if (intent.market) forcedArgs.market = intent.market;
       if (intent.side) forcedArgs.side = intent.side;
       if (wantsMore && priorNames.length) forcedArgs.exclude = priorNames;
-      const argumentsJson = JSON.stringify(forcedArgs);
       screenerCall = {
         index: resp.toolCalls.length,
-        id: `forced_screener_${Date.now()}`,
+        id: `forced_prop_screener_${Date.now()}`,
         name: 'slate_candidate_screener',
-        arguments: argumentsJson,
+        arguments: JSON.stringify(forcedArgs),
         parsed: forcedArgs,
         extra_content: null,
       };
       resp.toolCalls.push(screenerCall);
     }
 
-    // User intent is authoritative. Even if the LLM calls the screener with
-    // generic/default arguments, rewrite its parsed arguments so an explicit
-    // "OVER total bases" request can never degrade into hits or UNDER picks.
+    if ((explicitGameMarket || genericMixed) && !gameMarketCall) {
+      const forcedArgs: Record<string, unknown> = {
+        sport: intent.sport ?? 'nfl',
+        market: intent.gameMarket ?? 'moneyline',
+        requestedPicks: intent.requestedPicks ?? 5,
+        date: currentDate,
+      };
+      gameMarketCall = {
+        index: resp.toolCalls.length,
+        id: `forced_game_screener_${Date.now()}`,
+        name: 'game_market_screener',
+        arguments: JSON.stringify(forcedArgs),
+        parsed: forcedArgs,
+        extra_content: null,
+      };
+      resp.toolCalls.push(gameMarketCall);
+    }
+
+    // Explicit prop market/side remains authoritative even if the model called
+    // the generic prop screener with different/default arguments.
     if (screenerCall) {
       const patched = patchScreenerCall(screenerCall, intent, wantsMore, priorNames);
       screenerCall = patched;
       resp.toolCalls = resp.toolCalls.map((tc) => tc.id === patched.id ? patched : tc);
+    }
+
+    if (gameMarketCall && explicitGameMarket) {
+      const parsed = {
+        ...(gameMarketCall.parsed ?? {}),
+        sport: intent.sport ?? gameMarketCall.parsed?.sport ?? 'nfl',
+        market: 'moneyline',
+        requestedPicks: intent.requestedPicks ?? gameMarketCall.parsed?.requestedPicks ?? 5,
+        date: currentDate,
+      };
+      gameMarketCall = { ...gameMarketCall, parsed, arguments: JSON.stringify(parsed) };
+      resp.toolCalls = resp.toolCalls.map((tc) => tc.id === gameMarketCall!.id ? gameMarketCall! : tc);
     }
 
     endedWithTools = true;
@@ -547,15 +604,30 @@ export async function runAgent(
 
 /** Pull the candidates array out of a slate_candidate_screener tool result. */
 function extractScreenerCandidates(msgs: ChatMessage[]): any[] {
+  const rows: any[] = [];
   for (const m of msgs) {
-    if (m.role === 'tool' && typeof m.content === 'string') {
-      try {
-        const parsed = JSON.parse(m.content);
-        if (Array.isArray(parsed?.candidates) && parsed.candidates.length) return parsed.candidates;
-      } catch { /* not JSON or not the screener */ }
-    }
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    try {
+      const parsed = JSON.parse(m.content);
+      if (Array.isArray(parsed?.candidates)) rows.push(...parsed.candidates);
+    } catch { /* not JSON or not a screener payload */ }
   }
-  return [];
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      const key = [
+        row?.candidateType ?? 'player_prop',
+        row?.eventId ?? '',
+        row?.player ?? row?.team ?? '',
+        row?.market ?? '',
+        row?.side ?? '',
+        row?.marketLine ?? row?.suggestedLine ?? '',
+      ].join('|').toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(b?.confidencePct ?? 0) - Number(a?.confidencePct ?? 0));
 }
 
 /**
