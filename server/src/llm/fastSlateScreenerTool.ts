@@ -376,10 +376,14 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     const finalModel = (liveEvaluation?.chosen ?? model)!;
     const finalLine = liveLine ?? line;
     const recentValues = observations.map((row: HistoricalObservation) => row.value);
+    const hitRateAtLine = (windowSize: number): number | null | undefined => {
+      const window = featureWindow(recentValues, finalLine, windowSize);
+      return sideHitRate(window?.hitRateOverSuggestedLine, finalModel.side);
+    };
     const recentAtDisplayedLine = {
-      last5: sideHitRate(featureWindow(recentValues, finalLine, 5).hitRateOverSuggestedLine, finalModel.side),
-      last10: sideHitRate(featureWindow(recentValues, finalLine, 10).hitRateOverSuggestedLine, finalModel.side),
-      last20: sideHitRate(featureWindow(recentValues, finalLine, 20).hitRateOverSuggestedLine, finalModel.side),
+      last5: hitRateAtLine(5),
+      last10: hitRateAtLine(10),
+      last20: hitRateAtLine(20),
     };
     // A live sportsbook line is authoritative: both sides are re-scored at
     // that line, and positive value gets priority over the raw-probability
