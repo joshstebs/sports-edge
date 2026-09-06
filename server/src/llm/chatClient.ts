@@ -145,7 +145,7 @@ function inferRequestedPicks(text: string): number | undefined {
   return undefined;
 }
 
-function inferScreenerIntent(text: string): ScreenerIntent {
+export function inferScreenerIntent(text: string): ScreenerIntent {
   const lower = text.toLowerCase();
   const intent: ScreenerIntent = {};
   intent.requestedPicks = inferRequestedPicks(text);
@@ -162,9 +162,11 @@ function inferScreenerIntent(text: string): ScreenerIntent {
     [/\brebounds?\b/i, 'rebounds', 'nba'],
     [/\bpassing\s*yards?\b/i, 'passingYards', 'nfl'],
     [/\bpassing\s*(?:touchdowns?|tds?)\b/i, 'passingTouchdowns', 'nfl'],
+    [/\brushing\s*(?:\+|and)?\s*receiving\s*yards?\b/i, 'rushingReceivingYards', 'nfl'],
     [/\brushing\s*yards?\b/i, 'rushingYards', 'nfl'],
     [/\breceiving\s*yards?\b/i, 'receivingYards', 'nfl'],
     [/\breceptions?\b/i, 'receptions', 'nfl'],
+    [/\b(?:anytime\s+)?touchdowns?\b|\btd\s*scorer\b/i, 'touchdowns', 'nfl'],
     [/\bshots?\s*(?:on\s*goal|sog)\b/i, 'shotsOnGoal', 'nhl'],
     [/\bhockey\s*points?\b/i, 'hockeyPoints', 'nhl'],
     [/\bgoalie\s*saves?\b|\bsaves?\b/i, 'saves', 'nhl'],
