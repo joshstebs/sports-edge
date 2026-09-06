@@ -5,7 +5,7 @@ import { premiumProviderStatus, dataGapPriorities } from '../providers/premiumAd
 import {
   buildPlayerPropModel,
   espnObservation,
-  isRealisticLine,
+  snapToRealisticLine,
   mlbObservation,
   normalizeMarket,
   type HistoricalObservation,
@@ -147,10 +147,12 @@ function chooseBestSide(
   source: string,
   calibration: ReturnType<typeof learningCalibration>,
 ) {
-  const line = halfLine(values.map((row) => row.value));
+  const rawLine = halfLine(values.map((row) => row.value));
   // Model-derived lines can land on numbers no book offers (e.g. under 3.5
-  // hits for a hot hitter). Only bookable lines become candidates.
-  if (!isRealisticLine(sport, market, line)) return null;
+  // hits for a hot hitter). Snap to the nearest bookable line instead of
+  // dropping the candidate: the probability is recomputed honestly at the
+  // snapped line, and the confidence gate still filters hopeless sides.
+  const line = snapToRealisticLine(sport, market, rawLine);
   const over = buildPlayerPropModel({ sport, market, side: 'over', line, observations: values, source, calibration });
   const under = buildPlayerPropModel({ sport, market, side: 'under', line, observations: values, source, calibration });
   const usable = [over, under].filter((row) => row.available && row.probability != null);

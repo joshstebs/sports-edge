@@ -17,6 +17,7 @@ import * as availability from '../providers/playerAvailability.js';
 import {
   buildPlayerPropModel,
   espnObservation,
+  isRealisticLine,
   mlbObservation,
   normalizeMarket,
   type HistoricalObservation,
@@ -757,6 +758,9 @@ const playerPropModel = async (args: any): Promise<ToolOutcome> => {
   if (!player) return unavail('no player name provided');
   if (!market) return unavail('no prop market provided');
   if (!Number.isFinite(line) || line < 0) return unavail('a valid non-negative sportsbook line is required');
+  if (!isRealisticLine(sport, market, line)) {
+    return unavail(`line ${line} is not a bookable ${market} line (ask at a standard line instead)`);
+  }
 
   // Models are intentionally downstream of the mandatory live status gate.
   const status = await availability.verifyRecommendationAvailability({

@@ -23,6 +23,12 @@ function eventDate(value: string | null | undefined, fallback: string): string {
     timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d);
 }
+function shiftDate(isoDate: string, offsetDays: number): string {
+  const d = new Date(isoDate + 'T12:00:00Z');
+  if (Number.isNaN(d.getTime())) return isoDate;
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
 function implied(american: number | null): number | null {
   if (american == null || !Number.isFinite(american) || american === 0) return null;
   return american > 0 ? 100 / (american + 100) : -american / (-american + 100);
@@ -90,9 +96,16 @@ function sgoMoneylineCandidate(event: Awaited<ReturnType<typeof sgo.getSgoSlateE
 }
 
 async function espnFallback(sport: Sport, date: string, requested: number): Promise<any[]> {
-  const events = (await discoverSlateEvents(sport, date).catch(() => []))
-    .filter((event) => !/final|completed|postponed|canceled|cancelled/i.test(String(event.status ?? '')))
-    .slice(0, Math.min(8, Math.max(4, requested * 2)));
+  // ESPN scoreboards only carry the current week: if the requested date has no
+  // discovered events, scan forward day-by-day (up to 8 days) so a moneyline
+  // request mid-week still finds the next slate instead of returning empty.
+  let events: any[] = [];
+  for (let offset = 0; offset < 8 && !events.length; offset++) {
+    const day = shiftDate(date, offset);
+    events = (await discoverSlateEvents(sport, day).catch(() => []))
+      .filter((event) => !/final|completed|postponed|canceled|cancelled/i.test(String(event.status ?? '')));
+  }
+  events = events.slice(0, Math.min(8, Math.max(4, requested * 2)));
   const out: any[] = [];
   for (const event of events) {
     const odds = await espnOdds.getGameOdds(event.away.name, event.home.name, sport).catch(() => null);

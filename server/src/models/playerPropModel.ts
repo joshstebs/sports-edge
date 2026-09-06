@@ -91,6 +91,19 @@ export function isRealisticLine(sport: string, market: string, line: number): bo
   return set.some((allowed) => Math.abs(allowed - line) < 1e-9);
 }
 
+/**
+ * Snap a model-derived line to the nearest bookable line for the market.
+ * Unknown markets pass through unchanged. The caller recomputes probability
+ * at the snapped line, so a hot hitter (avg 3.2) is evaluated at over 1.5
+ * with honest book-style odds instead of vanishing or showing a 3.5.
+ */
+export function snapToRealisticLine(sport: string, market: string, line: number): number {
+  const set = REALISTIC_LINES[`${sport}|${normalizeMarket(market)}`];
+  if (!set || !set.length) return line;
+  return set.reduce((best, allowed) =>
+    Math.abs(allowed - line) < Math.abs(best - line) ? allowed : best);
+}
+
 function round(value: number, places = 3): number {
   return Math.round(value * 10 ** places) / 10 ** places;
 }
