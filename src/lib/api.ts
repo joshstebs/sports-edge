@@ -94,6 +94,18 @@ export interface PerformanceBand {
   priced: number;
 }
 
+export function displayPropMarket(value: string): string {
+  const labels: Record<string, string> = {
+    hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
+    strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
+  };
+  return labels[value] ?? value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+}
+
 export interface TopEdgePick {
   predictionId: string;
   sport: string;

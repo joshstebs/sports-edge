@@ -12,6 +12,7 @@
 //  - Free/limited keys may omit some bookmaker odds (API returns a "notice").
 
 import { normalizeName } from './http.js';
+import { canonicalPropMarket, isPlausiblePropLine } from '../models/propLineIntegrity.js';
 
 const BASE = 'https://api.sportsgameodds.com/v2';
 const SOURCE = 'api.sportsgameodds.com';
@@ -283,19 +284,19 @@ function bookmakerConsensus(raw: any): { odds: number | null; line: number | nul
   return { odds: null, line: null };
 }
 
-function extractSlateProps(odds: Record<string, any> | undefined): SgoSlateProp[] {
+function extractSlateProps(odds: Record<string, any> | undefined, sport: string): SgoSlateProp[] {
   if (!odds) return [];
   const out: SgoSlateProp[] = [];
   for (const [oddID, raw] of Object.entries(odds)) {
     if (!raw) continue;
     const parts = oddID.split('-');
-    const stat = parts[0] ?? '';
+    const stat = canonicalPropMarket(parts[0] ?? '', sport);
     const playerId = String(raw.playerID ?? raw.statEntityID ?? parts[1] ?? '');
     const side = String(raw.sideID ?? parts[4] ?? '').toLowerCase();
     const bookmaker = bookmakerConsensus(raw);
     const lineValue = raw.bookOverUnder ?? raw.fairOverUnder ?? bookmaker.line;
     const oddsValue = raw.bookOdds ?? bookmaker.odds;
-    if (!playerId || ['home', 'away', 'all'].includes(playerId.toLowerCase())) continue;
+    if (!stat || !isPlausiblePropLine(sport, stat, lineValue) || !playerId || ['home', 'away', 'all'].includes(playerId.toLowerCase())) continue;
     if (side !== 'over' && side !== 'under') continue;
     out.push({
       playerId,
@@ -333,7 +334,7 @@ export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<
           commenceTime: event.status?.startsAt ?? '',
           completed: Boolean(event.status?.completed),
           markets: mapMarkets(event.odds),
-          props: extractSlateProps(event.odds),
+          props: extractSlateProps(event.odds, league),
         };
       });
     return rows.length
@@ -386,7 +387,7 @@ function buildSgoResult(ev: SgoEvent, league: string): SgoResult {
     sport: league,
     event: { id: ev.eventID, home, away, commenceTime: ev.status?.startsAt ?? '' },
     markets: mapMarkets(ev.odds),
-    props: extractProps(ev.odds),
+    props: extractProps(ev.odds, league),
   };
 }
 
@@ -465,16 +466,19 @@ export async function warmSgoOddsCache(sport: string): Promise<{ warmed: number;
 }
 
 /** Player props = any oddID whose statEntityID is a player (not home/away/all). */
-function extractProps(odds: Record<string, any> | undefined): { available: boolean; reason?: string; markets?: any[] } {
+function extractProps(odds: Record<string, any> | undefined, sport: string): { available: boolean; reason?: string; markets?: any[] } {
   if (!odds) return { available: false, reason: 'no odds object' };
   const markets: any[] = [];
   for (const [oddID, o] of Object.entries(odds)) {
     const parts = oddID.split('-');
     const entity = parts[1];
     if (entity !== 'home' && entity !== 'away' && entity !== 'all') {
+      const market = canonicalPropMarket(parts[0], sport);
+      const line = o.bookOverUnder != null ? Number(o.bookOverUnder) : NaN;
+      if (!market || !isPlausiblePropLine(sport, market, line)) continue;
       markets.push({
         oddID,
-        name: parts[0],
+        name: market,
         player: entity,
         side: parts[4],
         bookOdds: parseAmerican(o.bookOdds),

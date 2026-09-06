@@ -4,6 +4,7 @@ import * as statsHawk from '../providers/statsHawk.js';
 import * as nflverse from '../providers/nflverse.js';
 import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
+import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
@@ -367,39 +368,28 @@ const handler = async (args: any): Promise<ToolOutcome> => {
 
   const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, observations, calibration }) => {
     const live = sharpline(player.name, market);
-    // Edge evaluation at the REAL sportsbook line (same contract as the universal
-    // screener): recompute both sides at the book line for honest edge visibility.
-    // Side selection stays max-probability; edgeOver/edgeUnder expose value.
-    let estimatedEdge: number | null = null;
-    let edgeOver: number | null = null;
-    let edgeUnder: number | null = null;
-    let edgeLine: number | null = null;
-    if (live != null && Number.isFinite(Number(live.line)) && Array.isArray(observations)) {
-      const bookLine = Number(live.line);
-      for (const s of [
-        { side: 'over' as const, odds: live.over },
-        { side: 'under' as const, odds: live.under },
-      ]) {
-        if (s.odds == null || s.odds === '' || !Number.isFinite(Number(s.odds))) continue;
-        const m = buildPlayerPropModel({
-          sport, market, side: s.side, line: bookLine,
-          observations, source: profile.sources?.[0] ?? 'unknown',
-          calibration, americanOdds: Number(s.odds),
-        });
-        if (!m.available || m.probability == null || m.estimatedEdge == null) continue;
-        const edgeFrac = m.estimatedEdge;
-        if (s.side === 'over') edgeOver = edgeFrac; else edgeUnder = edgeFrac;
-        if (s.side === model.side) {
-          estimatedEdge = edgeFrac;
-          edgeLine = bookLine;
-        }
-      }
-    }
+    const liveLine = live != null && Number.isFinite(Number(live.line)) ? Number(live.line) : null;
+    const liveEvaluation = liveLine == null ? null : evaluatePropLine({
+      sport, market, line: liveLine, observations, source: profile.sources?.[0] ?? 'unknown',
+      calibration, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
+    });
+    const finalModel = liveEvaluation?.chosen ?? model;
+    const finalLine = liveLine ?? line;
+    const recentValues = observations.map((row) => row.value);
+    const recentAtDisplayedLine = {
+      last5: sideHitRate(featureWindow(recentValues, finalLine, 5).hitRateOverSuggestedLine, finalModel.side),
+      last10: sideHitRate(featureWindow(recentValues, finalLine, 10).hitRateOverSuggestedLine, finalModel.side),
+      last20: sideHitRate(featureWindow(recentValues, finalLine, 20).hitRateOverSuggestedLine, finalModel.side),
+    };
+    // A live sportsbook line is authoritative: both sides are re-scored at
+    // that line, and positive value gets priority over the raw-probability
+    // under bias that appears when the screening line is higher than the book.
     return {
       player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
-      market, side: model.side, suggestedLine: line, confidencePct: Math.round((model.probability ?? 0) * 1000) / 10,
-      grade: model.grade, sampleSize: model.sampleSize,
-      // Real market line/odds from SharpApi when available (else null = model-derived only).
+      market, side: finalModel.side, suggestedLine: line, modelLine: line,
+      screeningSide: model.side, confidencePct: Math.round((finalModel.probability ?? 0) * 1000) / 10,
+      grade: finalModel.grade, sampleSize: finalModel.sampleSize, projection: finalModel.average ?? null,
+      marketProbability: liveLine == null ? null : finalModel.probability ?? null,
       marketLine: live?.line ?? null,
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
@@ -411,19 +401,17 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       isAlternate: Boolean(live?.isAlternate),
       lineLabel: live?.lineLabel ?? (live ? 'PRIMARY MARKET LINE' : 'MODEL SCREENING LINE'),
       alternateLines: alternateByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
-      estimatedEdge: estimatedEdge == null ? null : Math.round(estimatedEdge * 1000) / 10,
-      edgeOver: edgeOver == null ? null : Math.round(edgeOver * 1000) / 10,
-      edgeUnder: edgeUnder == null ? null : Math.round(edgeUnder * 1000) / 10,
-      edgeLine,
+      estimatedEdge: liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10,
+      edgeOver: liveEvaluation?.edgeOver == null ? null : Math.round(liveEvaluation.edgeOver * 1000) / 10,
+      edgeUnder: liveEvaluation?.edgeUnder == null ? null : Math.round(liveEvaluation.edgeUnder * 1000) / 10,
+      edgeLine: liveLine,
       availability: profile.availability,
       inLineupToday: inLineup(player),
       lineupSlot: player.lineupSlot,
-      recentHitRate: {
-        last5: sideHitRate(profile.recent?.last5?.hitRateOverSuggestedLine, model.side),
-        last10: sideHitRate(profile.recent?.last10?.hitRateOverSuggestedLine, model.side),
-        last20: sideHitRate(profile.recent?.last20?.hitRateOverSuggestedLine, model.side),
-      },
-      note: 'Fast slate-screen candidate. Verify the exact current sportsbook line/odds and final availability before treating as a final recommendation.',
+      recentHitRate: recentAtDisplayedLine,
+      note: liveLine == null
+        ? 'Model screening line only; no verified sportsbook offer was found.'
+        : 'Both sides re-scored at the exact current sportsbook line; verify final availability before treating as a recommendation.',
     };
   });
   // Rank verified-price candidates first (either side has a real edge — matches the

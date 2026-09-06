@@ -2,7 +2,7 @@ import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
 import * as sharp from './sharpApi.js';
 import * as sgo from './sportsGameOdds.js';
-import { normalizeMarket } from '../models/playerPropModel.js';
+import { canonicalPropMarket, isPlausiblePropLine } from '../models/propLineIntegrity.js';
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
 
@@ -301,10 +301,12 @@ export async function getSharpSlatePrices(
     const grouped = new Map<string, SharpPrice[]>();
     for (const marketRow of result.props.markets as any[]) {
       if (!marketRow?.player || marketRow.line == null) continue;
-      const market = normalizeMarket(String(marketRow.market ?? '')).toLowerCase();
+      const market = canonicalPropMarket(marketRow.market, sport);
+      const line = Number(marketRow.line);
+      if (!market || !isPlausiblePropLine(sport, market, line)) continue;
       const key = String(marketRow.player).toLowerCase() + '|' + market;
       const price: SharpPrice = {
-        player: marketRow.player, market, line: Number(marketRow.line),
+        player: marketRow.player, market, line,
         over: marketRow.over ?? null, under: marketRow.under ?? null,
         book: marketRow.book ?? 'sharpapi', books: marketRow.books ?? [marketRow.book ?? 'sharpapi'],
         bookCount: Number(marketRow.bookCount ?? (marketRow.books?.length ?? 1)),
@@ -345,9 +347,10 @@ export async function getConsensusSlatePrices(
       for (const event of result.events) {
         for (const prop of event.props ?? []) {
           if (!prop?.playerName || prop.line == null || !Number.isFinite(Number(prop.line))) continue;
-          const market = normalizeMarket(String(prop.market ?? '')).toLowerCase();
-          const key = String(prop.playerName).toLowerCase() + '|' + market;
+          const market = canonicalPropMarket(prop.market, sport);
           const line = Number(prop.line);
+          if (!market || !isPlausiblePropLine(sport, market, line)) continue;
+          const key = String(prop.playerName).toLowerCase() + '|' + market;
           const lineMap = grouped.get(key) ?? new Map<number, SharpPrice>();
           const current = lineMap.get(line) ?? {
             player: prop.playerName, market, line, over: null, under: null,
@@ -365,9 +368,12 @@ export async function getConsensusSlatePrices(
       const byKey = new Map<string, SharpPrice>();
       const alternatesByKey = new Map<string, SharpPrice[]>();
       for (const [key, lineMap] of grouped) {
+        const lines = [...lineMap.keys()].sort((a, b) => a - b);
+        const medianLine = lines.length ? lines[Math.floor((lines.length - 1) / 2)] : null;
         const offers = [...lineMap.values()].sort((a, b) =>
-          (b.bookCount ?? 0) - (a.bookCount ?? 0)
-          || Number(b.over != null && b.under != null) - Number(a.over != null && a.under != null)
+          Number(b.over != null && b.under != null) - Number(a.over != null && a.under != null)
+          || (b.bookCount ?? 0) - (a.bookCount ?? 0)
+          || (medianLine == null ? 0 : Math.abs(a.line - medianLine) - Math.abs(b.line - medianLine))
         );
         const primary = offers[0];
         if (!primary) continue;

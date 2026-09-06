@@ -21,6 +21,18 @@ type SportFilter = 'ALL' | 'MLB' | 'NFL' | 'NBA' | 'NHL';
 
 const SPORT_FILTERS: SportFilter[] = ['ALL', 'MLB', 'NFL', 'NBA', 'NHL'];
 
+function displayMarket(market: string): string {
+  const labels: Record<string, string> = {
+    hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
+    strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
+  };
+  return labels[market] ?? market.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+}
+
 function marketFamily(market: string): string {
   const m = market.toLowerCase();
   if (m.includes('moneyline') || m.includes('ml ') || m === 'ml') return 'Moneyline';
@@ -226,7 +238,7 @@ function BetCard({ pick, expanded, onToggle, onAdd, added }: {
         <div className="min-w-0">
           <div className="mb-1 flex items-center gap-2">
             <SportTag sport={pick.sport} />
-            <span className="truncate font-mono text-[10px] text-frost2">{pick.market}</span>
+            <span className="truncate font-mono text-[10px] text-frost2">{displayMarket(pick.market)}</span>
           </div>
           <p className="truncate text-[13px] font-semibold text-head">{pick.selection}</p>
           <p className="mt-0.5 truncate text-[11px] text-muted">{pick.matchup}</p>
