@@ -254,6 +254,7 @@ export interface SgoSlateEvent {
   away: string;
   commenceTime: string;
   completed: boolean;
+  markets: Record<string, any>;
   props: SgoSlateProp[];
 }
 
@@ -329,6 +330,7 @@ export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<
           away: names.away,
           commenceTime: event.status?.startsAt ?? '',
           completed: Boolean(event.status?.completed),
+          markets: mapMarkets(event.odds),
           props: extractSlateProps(event.odds),
         };
       });
