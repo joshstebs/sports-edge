@@ -325,6 +325,73 @@ export async function getGameDayStatus(
   }
 }
 
+// --- final event result ----------------------------------------------------
+
+export interface EspnEventResult {
+  eventId: string;
+  date: string | null;
+  completed: boolean;
+  status: string;
+  away: { id: string; name: string; score: number | null };
+  home: { id: string; name: string; score: number | null };
+}
+
+export async function getEventResult(
+  sport: EspnSport,
+  date: string,
+  eventId?: string | number | null,
+  teamA?: string | null,
+  teamB?: string | null,
+): Promise<{ available: boolean; reason?: string; source: string; result?: EspnEventResult }> {
+  const day = String(date ?? '').replace(/-/g, '');
+  if (!/^\d{8}$/.test(day)) return { available: false, reason: 'invalid event date', source: SOURCE };
+  try {
+    const scoreboard = await fetchJson(`${API}/${sport}/scoreboard?dates=${day}`);
+    const events: any[] = Array.isArray(scoreboard?.events) ? scoreboard.events : [];
+    const requestedId = eventId != null && String(eventId).trim() ? String(eventId).trim() : null;
+    let matches = requestedId
+      ? events.filter((event) => String(event?.id ?? '') === requestedId)
+      : events;
+    if (!requestedId && (teamA || teamB)) {
+      const a = normalizeName(String(teamA ?? ''));
+      const b = normalizeName(String(teamB ?? ''));
+      matches = events.filter((event) => {
+        const competitors: any[] = event?.competitions?.[0]?.competitors ?? [];
+        const names = competitors.map((row) => normalizeName(String(row?.team?.displayName ?? row?.team?.name ?? '')));
+        const hasA = !a || names.some((name) => name === a || name.includes(a) || a.includes(name));
+        const hasB = !b || names.some((name) => name === b || name.includes(b) || b.includes(name));
+        return hasA && hasB;
+      });
+    }
+    if (matches.length !== 1) {
+      return { available: false, reason: matches.length ? 'multiple matching events; exact eventId required' : 'event not found on scoreboard', source: SOURCE };
+    }
+    const event = matches[0];
+    const competitors: any[] = event?.competitions?.[0]?.competitors ?? [];
+    const away = competitors.find((row) => row?.homeAway === 'away') ?? competitors[0] ?? {};
+    const home = competitors.find((row) => row?.homeAway === 'home') ?? competitors[1] ?? {};
+    const score = (row: any): number | null => {
+      const value = Number(row?.score);
+      return Number.isFinite(value) ? value : null;
+    };
+    const type = event?.status?.type ?? {};
+    return {
+      available: true,
+      source: SOURCE,
+      result: {
+        eventId: String(event?.id ?? ''),
+        date: event?.date ?? null,
+        completed: type?.completed === true || String(type?.state ?? '').toLowerCase() === 'post',
+        status: String(type?.detail ?? type?.description ?? type?.name ?? type?.state ?? ''),
+        away: { id: String(away?.team?.id ?? ''), name: String(away?.team?.displayName ?? away?.team?.name ?? ''), score: score(away) },
+        home: { id: String(home?.team?.id ?? ''), name: String(home?.team?.displayName ?? home?.team?.name ?? ''), score: score(home) },
+      },
+    };
+  } catch (error) {
+    return { available: false, reason: 'ESPN scoreboard result failed: ' + (error as Error).message, source: SOURCE };
+  }
+}
+
 // --- gamelog ----------------------------------------------------------------
 
 export interface GameEntry {

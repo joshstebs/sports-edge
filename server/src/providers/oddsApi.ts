@@ -26,7 +26,7 @@ const SPORT_KEYS: Record<string, string> = {
 let remaining: number | null = null;
 
 export function oddsConfigured(): boolean {
-  return Boolean(process.env.ODDS_API_KEY);
+  return Boolean(process.env.THE_ODDS_API_KEY || process.env.ODDS_API_KEY);
 }
 
 export function quotaRemaining(): number | null {
@@ -34,7 +34,7 @@ export function quotaRemaining(): number | null {
 }
 
 function key(): string | null {
-  return process.env.ODDS_API_KEY ?? null;
+  return process.env.THE_ODDS_API_KEY ?? process.env.ODDS_API_KEY ?? null;
 }
 
 async function getJson(url: string): Promise<{ ok: boolean; status: number; body: any; headers: Headers }> {

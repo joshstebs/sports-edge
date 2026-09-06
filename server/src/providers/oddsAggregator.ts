@@ -10,6 +10,7 @@ export interface OddsMarket {
   odds: number;          // American odds e.g., -115
   book: string;          // e.g., 'pinnacle', 'draftkings', 'fanduel'
   lastUpdated: string;   // ISO timestamp
+  playerName?: string;    // populated for player-prop markets
 }
 
 export interface PlayerOdds {
@@ -112,24 +113,17 @@ export function impliedToAmerican(implied: number): number {
   return Math.round(((1 - implied) / implied) * 100);
 }
 
-/** Find best line across books for a specific market/side */
+/** Prefer the market's primary consensus line, then line-shop price.
+ * Historical logic incorrectly preferred a HIGHER Over line and LOWER Under
+ * line. Consensus frequency is now authoritative; alternates cannot displace it. */
 export function findBestLine(markets: OddsMarket[], market: string, side: 'over' | 'under'): OddsMarket | null {
-  const relevant = markets.filter(m => m.market === market && m.side === side);
+  const relevant = markets.filter(m => m.market === market && m.side === side && Number.isFinite(m.line));
   if (!relevant.length) return null;
-  
-  // For over: higher line is better for bettor (easier to hit)
-  // For under: lower line is better
-  // For odds: higher (less negative/more positive) is better
-  return relevant.reduce((best, current) => {
-    if (side === 'over') {
-      if (current.line > best.line) return current;
-      if (current.line === best.line && current.odds > best.odds) return current;
-    } else {
-      if (current.line < best.line) return current;
-      if (current.line === best.line && current.odds > best.odds) return current;
-    }
-    return best;
-  });
+  const counts = new Map<number, number>();
+  for (const row of relevant) counts.set(row.line, (counts.get(row.line) ?? 0) + 1);
+  const primaryLine = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
+  const primary = relevant.filter(row => row.line === primaryLine);
+  return primary.reduce((best, current) => current.odds > best.odds ? current : best);
 }
 
 /** Fetch odds from The Odds API */
@@ -211,6 +205,7 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
         for (const outcome of market.outcomes) {
           allMarkets.push({
             market: canonicalMarket,
+            playerName: String(outcome.description ?? outcome.player ?? outcome.participant ?? '').trim(),
             side: outcome.name.toLowerCase().includes('over') ? 'over' : 'under',
             line: outcome.point,
             odds: outcome.price,
@@ -222,25 +217,32 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
     }
   }
   
-  // Group player props by player
+  // Group player props by athlete. The Odds API exposes the athlete in
+  // outcome.description on player markets; grouping by market/line used to
+  // create fake "players" named after the market itself.
   const propsByPlayer = new Map<string, OddsMarket[]>();
   for (const m of allMarkets) {
-    const key = `${m.market}_${m.line}_${m.side}`; // Simplified grouping
-    if (!propsByPlayer.has(key)) propsByPlayer.set(key, []);
-    propsByPlayer.get(key)!.push(m);
+    if (!m.playerName) continue;
+    const key = m.playerName.toLowerCase();
+    propsByPlayer.set(key, [...(propsByPlayer.get(key) ?? []), m]);
   }
-  
-  // Build best lines per market
-  for (const [key, markets] of propsByPlayer) {
+  for (const markets of propsByPlayer.values()) {
     const first = markets[0];
-    const playerOdds: PlayerOdds = {
-      playerName: first.market, // Will be overridden
+    const marketNames = [...new Set(markets.map(row => row.market))];
+    const bestLines: PlayerOdds['bestLines'] = {};
+    for (const marketName of marketNames) {
+      bestLines[marketName] = {
+        over: findBestLine(markets, marketName, 'over'),
+        under: findBestLine(markets, marketName, 'under'),
+      };
+    }
+    playerProps.push({
+      playerName: first.playerName ?? '',
       sport: oddsData.sport || '',
       gameId: event.id,
       markets,
-      bestLines: {},
-    };
-    playerProps.push(playerOdds);
+      bestLines,
+    });
   }
   
   return {

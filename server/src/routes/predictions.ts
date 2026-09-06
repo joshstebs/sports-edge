@@ -48,9 +48,13 @@ evaluationRouter.get('/evaluate', async (req, res) => {
     return;
   }
   try {
-    if (!evaluationInFlight) evaluationInFlight = runPredictionEvaluation().finally(() => { evaluationInFlight = null; });
+    if (!evaluationInFlight) evaluationInFlight = runPredictionEvaluation({
+      maxPredictions: 25,
+      maxLegs: 60,
+      timeBudgetMs: 38_000,
+    }).finally(() => { evaluationInFlight = null; });
     const result = await evaluationInFlight;
-    const candidateHistory = await gradePendingCandidateHistory({ limit: 12, timeBudgetMs: 8_000 }).catch((error) => ({
+    const candidateHistory = await gradePendingCandidateHistory({ limit: 40, timeBudgetMs: 14_000 }).catch((error) => ({
       processed: 0,
       graded: 0,
       pending: -1,

@@ -22,6 +22,7 @@
   },
   "crons": [
     { "path": "/api/evaluate", "schedule": "0 10 * * *" },
+    { "path": "/api/evaluate", "schedule": "0 11 * * *" },
     { "path": "/api/cron/odds-cache?sport=mlb", "schedule": "0 18 * * *" },
     { "path": "/api/cron/odds-cache?sport=nba", "schedule": "30 19 * * *" }
   ]

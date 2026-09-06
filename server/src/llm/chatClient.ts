@@ -8,6 +8,7 @@
 // turn execute concurrently, then the model receives results in original order.
 
 import { executeToolBatch } from './toolBatch.js';
+import { renderScreenerSummaryBlocks } from './screenerRenderer.js';
 
 export interface LlmConfig {
   configured: boolean;
@@ -63,17 +64,16 @@ export function llmConfig(): LlmConfig {
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  // Priority order: OpenCode Go first (reliable — verified live; deepseek-v4-flash/
-  // pro/kimi-k3 all respond), then OpenRouter (retired 'stealth/ox-alpha' + quota
-  // — demoted to fallback), then OpenCode Zen free tiers, then Gemini, then OpenAI.
-  // OpenRouter's old 'stealth/ox-alpha' slug was decommissioned (404) and its
-  // gpt-oss-120b hit the per-key quota (403), so it is no longer a valid primary.
+  // Free-first policy, aligned with High Five. The deterministic sports model owns
+  // probabilities; the LLM only orchestrates tools and explains validated picks.
+  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
+  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
   if (opencodeGoKey) providers.push({ configured: true, provider: 'opencode-go', model: deepseekGoModels[0], models: deepseekGoModels, baseUrl: 'https://opencode.ai/zen/go/v1' });
   if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
-  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
-  if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
-  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
+  if (geminiKey && process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK === 'true') {
+    providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  }
   for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
   if (providers.length) return providers[0];
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
@@ -112,8 +112,8 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-const MODEL_TURN_TIMEOUT_MS = 35_000;
-const CLOSER_TIMEOUT_MS = 30_000;
+const MODEL_TURN_TIMEOUT_MS = 14_000;
+const CLOSER_TIMEOUT_MS = 12_000;
 const MAX_TOOL_ROUNDS = 1;
 
 function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
@@ -127,6 +127,8 @@ interface ScreenerIntent {
   market?: string;
   side?: ScreenerSide;
   sport?: 'mlb' | 'nba' | 'nfl' | 'nhl';
+  gameMarket?: 'moneyline';
+  requestKind?: 'player_prop' | 'game_market' | 'mixed';
 }
 
 function clampRequestedPicks(value: number): number | undefined {
@@ -138,12 +140,14 @@ function inferRequestedPicks(text: string): number | undefined {
   if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
   const giveMe = text.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-)\s*(\d{1,2}))?/i);
   if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
-  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets)\b/i);
+  const sportQualified = text.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
+  if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
+  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
   if (explicit) return clampRequestedPicks(Number(explicit[1]));
   return undefined;
 }
 
-function inferScreenerIntent(text: string): ScreenerIntent {
+export function inferScreenerIntent(text: string): ScreenerIntent {
   const lower = text.toLowerCase();
   const intent: ScreenerIntent = {};
   intent.requestedPicks = inferRequestedPicks(text);
@@ -160,9 +164,11 @@ function inferScreenerIntent(text: string): ScreenerIntent {
     [/\brebounds?\b/i, 'rebounds', 'nba'],
     [/\bpassing\s*yards?\b/i, 'passingYards', 'nfl'],
     [/\bpassing\s*(?:touchdowns?|tds?)\b/i, 'passingTouchdowns', 'nfl'],
+    [/\brushing\s*(?:\+|and)?\s*receiving\s*yards?\b/i, 'rushingReceivingYards', 'nfl'],
     [/\brushing\s*yards?\b/i, 'rushingYards', 'nfl'],
     [/\breceiving\s*yards?\b/i, 'receivingYards', 'nfl'],
     [/\breceptions?\b/i, 'receptions', 'nfl'],
+    [/\b(?:anytime\s+)?touchdowns?\b|\btd\s*scorer\b/i, 'touchdowns', 'nfl'],
     [/\bshots?\s*(?:on\s*goal|sog)\b/i, 'shotsOnGoal', 'nhl'],
     [/\bhockey\s*points?\b/i, 'hockeyPoints', 'nhl'],
     [/\bgoalie\s*saves?\b|\bsaves?\b/i, 'saves', 'nhl'],
@@ -171,8 +177,21 @@ function inferScreenerIntent(text: string): ScreenerIntent {
   for (const [pattern, market, sport] of marketPatterns) {
     if (!pattern.test(text)) continue;
     intent.market = market;
+    intent.requestKind = 'player_prop';
     if (sport) intent.sport = sport;
     break;
+  }
+
+  const explicitMoneyline = /\bmoney\s*line\b|\bmoneyline\b|\bh2h\b|(?:^|\s)ml(?:\s|$|s\b)/i.test(text);
+  if (explicitMoneyline) {
+    intent.gameMarket = 'moneyline';
+    intent.requestKind = 'game_market';
+    delete intent.market;
+    delete intent.side;
+  } else if (/\bprops?\b|\bplayer\s+(?:bet|bets|pick|picks)\b/i.test(text)) {
+    intent.requestKind ??= 'player_prop';
+  } else if (/\b(?:pick|picks|bet|bets|plays?|parlay)\b/i.test(text)) {
+    intent.requestKind ??= 'mixed';
   }
 
   if (/\bmlb\b|\bbaseball\b/i.test(lower)) intent.sport = 'mlb';
@@ -197,6 +216,8 @@ function inferConversationScreenerIntent(msgs: ChatMessage[]): ScreenerIntent {
     current.market ??= prior.market;
     current.side ??= prior.side;
     current.sport ??= prior.sport;
+    current.gameMarket ??= prior.gameMarket;
+    current.requestKind ??= prior.requestKind;
     if (current.requestedPicks == null && /\b(more|other|another|different|additional|again)\b/i.test(userTexts[userTexts.length - 1])) {
       current.requestedPicks = prior.requestedPicks;
     }
@@ -464,39 +485,79 @@ export async function runAgent(
     );
 
     let screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
+    let gameMarketCall = resp.toolCalls.find((tc) => tc.name === 'game_market_screener');
+    const currentDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const explicitGameMarket = intent.requestKind === 'game_market' || Boolean(intent.gameMarket);
+    const explicitPlayerProp = intent.requestKind === 'player_prop';
+    const genericMixed = intent.requestKind === 'mixed' && userAskedMultiPick;
 
-    // If a multi-pick request somehow reaches a model that skipped the screener,
-    // inject the tool call directly in THIS round. The old implementation pushed
-    // another user message then `continue`d, but MAX_TOOL_ROUNDS=1 meant that
-    // supposed safety net never actually executed.
-    if (userAskedMultiPick && !screenerCall) {
+    // User intent wins over model tool choice. An explicit moneyline request
+    // must never spend its only tool round on the player-prop screener.
+    if (explicitGameMarket) {
+      resp.toolCalls = resp.toolCalls.filter((tc) => tc.name !== 'slate_candidate_screener');
+      screenerCall = undefined;
+    }
+    if (explicitPlayerProp) {
+      resp.toolCalls = resp.toolCalls.filter((tc) => tc.name !== 'game_market_screener');
+      gameMarketCall = undefined;
+    }
+
+    if ((userAskedMultiPick || explicitPlayerProp) && !explicitGameMarket && !screenerCall) {
       const forcedArgs: Record<string, unknown> = {
         sport: intent.sport ?? 'mlb',
         requestedPicks: intent.requestedPicks ?? 5,
-        date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
+        date: currentDate,
       };
       if (intent.market) forcedArgs.market = intent.market;
       if (intent.side) forcedArgs.side = intent.side;
       if (wantsMore && priorNames.length) forcedArgs.exclude = priorNames;
-      const argumentsJson = JSON.stringify(forcedArgs);
       screenerCall = {
         index: resp.toolCalls.length,
-        id: `forced_screener_${Date.now()}`,
+        id: `forced_prop_screener_${Date.now()}`,
         name: 'slate_candidate_screener',
-        arguments: argumentsJson,
+        arguments: JSON.stringify(forcedArgs),
         parsed: forcedArgs,
         extra_content: null,
       };
       resp.toolCalls.push(screenerCall);
     }
 
-    // User intent is authoritative. Even if the LLM calls the screener with
-    // generic/default arguments, rewrite its parsed arguments so an explicit
-    // "OVER total bases" request can never degrade into hits or UNDER picks.
+    if ((explicitGameMarket || genericMixed) && !gameMarketCall) {
+      const forcedArgs: Record<string, unknown> = {
+        sport: intent.sport ?? 'nfl',
+        market: intent.gameMarket ?? 'moneyline',
+        requestedPicks: intent.requestedPicks ?? 5,
+        date: currentDate,
+      };
+      gameMarketCall = {
+        index: resp.toolCalls.length,
+        id: `forced_game_screener_${Date.now()}`,
+        name: 'game_market_screener',
+        arguments: JSON.stringify(forcedArgs),
+        parsed: forcedArgs,
+        extra_content: null,
+      };
+      resp.toolCalls.push(gameMarketCall);
+    }
+
+    // Explicit prop market/side remains authoritative even if the model called
+    // the generic prop screener with different/default arguments.
     if (screenerCall) {
       const patched = patchScreenerCall(screenerCall, intent, wantsMore, priorNames);
       screenerCall = patched;
       resp.toolCalls = resp.toolCalls.map((tc) => tc.id === patched.id ? patched : tc);
+    }
+
+    if (gameMarketCall && explicitGameMarket) {
+      const parsed = {
+        ...(gameMarketCall.parsed ?? {}),
+        sport: intent.sport ?? gameMarketCall.parsed?.sport ?? 'nfl',
+        market: 'moneyline',
+        requestedPicks: intent.requestedPicks ?? gameMarketCall.parsed?.requestedPicks ?? 5,
+        date: currentDate,
+      };
+      gameMarketCall = { ...gameMarketCall, parsed, arguments: JSON.stringify(parsed) };
+      resp.toolCalls = resp.toolCalls.map((tc) => tc.id === gameMarketCall!.id ? gameMarketCall! : tc);
     }
 
     endedWithTools = true;
@@ -512,7 +573,7 @@ export async function runAgent(
         // The slate screener legitimately needs more than the default 5s budget
         // (it fans out ~12 players x 2 Stats API calls in parallel, ~20s). Let
         // executeToolBatch's screener-aware clamp raise the window.
-        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 52_000 : 5_000,
+        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 36_000 : 5_000,
         onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );
@@ -527,7 +588,7 @@ export async function runAgent(
     // screener data to render. This guarantees the user sees real picks.
     const screenerData = extractScreenerCandidates(msgs);
     if (screenerData.length) {
-      finalText = renderScreenerSummary(screenerData, requestedCountHint(msgs));
+      finalText = renderScreenerSummaryBlocks(screenerData, requestedCountHint(msgs));
       cb.onDelta?.(finalText);
       modelUsed = modelUsed ?? 'server-template';
     } else {
@@ -547,15 +608,30 @@ export async function runAgent(
 
 /** Pull the candidates array out of a slate_candidate_screener tool result. */
 function extractScreenerCandidates(msgs: ChatMessage[]): any[] {
+  const rows: any[] = [];
   for (const m of msgs) {
-    if (m.role === 'tool' && typeof m.content === 'string') {
-      try {
-        const parsed = JSON.parse(m.content);
-        if (Array.isArray(parsed?.candidates) && parsed.candidates.length) return parsed.candidates;
-      } catch { /* not JSON or not the screener */ }
-    }
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    try {
+      const parsed = JSON.parse(m.content);
+      if (Array.isArray(parsed?.candidates)) rows.push(...parsed.candidates);
+    } catch { /* not JSON or not a screener payload */ }
   }
-  return [];
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      const key = [
+        row?.candidateType ?? 'player_prop',
+        row?.eventId ?? '',
+        row?.player ?? row?.team ?? '',
+        row?.market ?? '',
+        row?.side ?? '',
+        row?.marketLine ?? row?.suggestedLine ?? '',
+      ].join('|').toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(b?.confidencePct ?? 0) - Number(a?.confidencePct ?? 0));
 }
 
 /**
@@ -581,37 +657,4 @@ function extractPriorPickNames(msgs: ChatMessage[]): string[] {
 function requestedCountHint(msgs: ChatMessage[]): number {
   const intent = inferConversationScreenerIntent(msgs);
   return intent.requestedPicks ?? 5;
-}
-
-/** Render a concise, gate-honest parlay summary from screener candidates. */
-function renderScreenerSummary(candidates: any[], requested: number): string {
-  const top = candidates.slice(0, Math.max(requested, 5));
-  const lines: string[] = [];
-  const anyNotInLineup = top.some((c) => c.inLineupToday === false);
-  lines.push(`**Verified slate screen — ${top.length} qualified candidate${top.length === 1 ? '' : 's'} (model grades, live stats).**`);
-  if (anyNotInLineup) {
-    lines.push('');
-    lines.push('⚠️ **Today\'s batting orders are not posted yet** — some candidates below come from current rosters / probable pitchers and are not confirmable starters. Re-run closer to game time once lineups post. Picks marked 🕐 = lineup pending.');
-  }
-  lines.push('');
-  top.forEach((c, i) => {
-    const prob = c.confidencePct != null ? `${c.confidencePct}%` : 'n/a';
-    const line = c.suggestedLine != null ? ` ${c.suggestedLine}` : '';
-    const flag = c.inLineupToday === false ? ' 🕐' : c.inLineupToday === true ? '' : ' 🕐';
-    lines.push(`${i + 1}. **${c.player}** (${c.team} vs ${c.opponent ?? '?'})${flag} — ${c.market} ${c.side?.toUpperCase()}${line} · model ${prob} (Grade ${c.grade ?? '?'})`);
-    const hr = c.recentHitRate;
-    if (hr) {
-      const parts = [hr.last5 != null && `L5 ${Math.round((hr.last5 ?? 0) * 100)}%`, hr.last20 != null && `L20 ${Math.round((hr.last20 ?? 0) * 100)}%`].filter(Boolean);
-      if (parts.length) lines.push(`   _form: ${parts.join(' · ')}_`);
-    }
-    lines.push(`   _verify live line/odds + lineup before betting._`);
-  });
-  const shortfall = requested - top.length;
-  if (shortfall > 0) {
-    lines.push('');
-    lines.push(`⚠️ **Shortfall:** only ${top.length} of ${requested} requested legs cleared the ${Math.round((candidates[0]?.minConfidence ?? 0.54) * 100)}%+ screen. Remaining slots not filled with sub-threshold bets.`);
-  }
-  lines.push('');
-  lines.push('_Lines/probabilities are model screening outputs from verified-live stats (statsapi.mlb.com). Live sportsbook odds are fetched when available (The Odds API → SportsGameOdds → ESPN → keyless OddsTrader scrape) and can be confirmed via game_odds; edge is only claimed when a verified price is present. Pre-lineup: availability gate still required._');
-  return lines.join('\n');
 }

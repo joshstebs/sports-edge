@@ -55,32 +55,46 @@ function parseAmericanPrice(v: unknown): number | null {
 function groupProps(rows: any[]): any[] {
   const byKey = new Map<string, any>();
   for (const row of rows) {
-    if (row?.is_player_prop !== true) continue;
-    if (!row.player_name || row.line == null) continue;
+    if (row?.is_player_prop !== true || !row.player_name || row.line == null) continue;
     const side = String(row.selection_type || row.selection || '').toLowerCase();
-    const isOver = side === 'over';
+    if (side !== 'over' && side !== 'under') continue;
     const market = String(row.market_type || '');
     const line = Number(row.line);
     const odds = parseAmericanPrice(row.odds_american);
-    if (odds == null) continue;
-    const key = `${row.player_name}|${market}|${line}`;
+    if (!Number.isFinite(line) || odds == null) continue;
+    const book = String(row.sportsbook || 'sharpapi');
+    const key = String(row.player_name).toLowerCase() + '|' + market + '|' + line;
     const cur = byKey.get(key) ?? {
-      market: MARKET_TO_LABEL[market] ?? market,
-      player: row.player_name,
-      line,
-      over: null as number | null,
-      under: null as number | null,
-      book: row.sportsbook || 'sharpapi',
+      market: MARKET_TO_LABEL[market] ?? market, player: row.player_name, line,
+      over: null, under: null, overBook: null, underBook: null, _books: new Set<string>(),
     };
-    if (isOver) cur.over = odds;
-    else cur.under = odds;
+    cur._books.add(book);
+    if (side === 'over' && (cur.over == null || odds > cur.over)) { cur.over = odds; cur.overBook = book; }
+    if (side === 'under' && (cur.under == null || odds > cur.under)) { cur.under = odds; cur.underBook = book; }
     byKey.set(key, cur);
   }
-  return Array.from(byKey.values()).map((m) => ({
-    ...m,
-    over: m.over ?? null,
-    under: m.under ?? null,
-  }));
+
+  const rowsByMarket = new Map<string, any[]>();
+  for (const row of byKey.values()) {
+    const books = [...row._books];
+    const clean = { ...row, books, bookCount: books.length, book: row.overBook ?? row.underBook ?? books[0] ?? 'sharpapi' };
+    delete clean._books;
+    const key = String(clean.player).toLowerCase() + '|' + String(clean.market).toLowerCase();
+    rowsByMarket.set(key, [...(rowsByMarket.get(key) ?? []), clean]);
+  }
+
+  const output: any[] = [];
+  for (const offers of rowsByMarket.values()) {
+    const sorted = [...offers].sort((a, b) =>
+      (b.bookCount ?? 0) - (a.bookCount ?? 0)
+      || Number(b.over != null && b.under != null) - Number(a.over != null && a.under != null)
+      || Math.abs(Number(a.over ?? -110) + 110) - Math.abs(Number(b.over ?? -110) + 110)
+    );
+    sorted.forEach((offer, index) => output.push({
+      ...offer, lineType: index === 0 ? 'primary' : 'alternate', isAlternate: index !== 0, consensusRank: index + 1,
+    }));
+  }
+  return output;
 }
 
 /**
