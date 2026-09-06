@@ -257,13 +257,24 @@ async function evaluateEspnLeg(
 
   if (market === 'moneyline') {
     const parts = matchupParts(String(matchup ?? ''));
-    const result = await espn.getEventResult(
+    let result = await espn.getEventResult(
       ESPN_SPORTS[sport],
       gameDate,
       eventId,
       parts[0] ?? null,
       parts[1] ?? null,
     );
+    // SportsGameOdds/The Odds API event IDs are provider-specific. If the stored
+    // ID is not an ESPN ID, resolve the same game by exact matchup + date.
+    if ((!result.available || !result.result) && eventId != null && parts.length === 2) {
+      result = await espn.getEventResult(
+        ESPN_SPORTS[sport],
+        gameDate,
+        null,
+        parts[0],
+        parts[1],
+      );
+    }
     if (!result.available || !result.result) {
       return { outcome: 'ungraded', actual: null, note: `official ${sport} game result unavailable for ${gameDate}: ${result.reason ?? 'unknown reason'}` };
     }
