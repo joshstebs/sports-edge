@@ -57,6 +57,40 @@ export interface PlayerPropModelResult {
 
 const MIN_SAMPLE: Record<ModelSport, number> = { mlb: 8, nfl: 5, nba: 8, nhl: 8 };
 
+/**
+ * Realistic bookable lines per sport+market. Model-derived suggestion lines
+ * (halfLine of a player's average) can land on numbers no book offers —
+ * e.g. under 3.5 hits for a .320 hitter. Books list "total hits" ladders
+ * (0.5/1.5/2.5/...) but only the standard primary lines are bettable as
+ * single-game props. Anything outside the set is flagged unrealistic:
+ * tracked for research, never a visible pick.
+ */
+const REALISTIC_LINES: Record<string, number[]> = {
+  'mlb|hits': [0.5, 1.5],
+  'mlb|homeRuns': [0.5],
+  'mlb|totalBases': [1.5, 2.5],
+  'mlb|rbi': [0.5, 1.5],
+  'mlb|runs': [0.5, 1.5],
+  'mlb|strikeouts': [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
+  'mlb|outsRecorded': [15.5, 16.5, 17.5, 18.5],
+  'nfl|passingYards': [175.5, 199.5, 209.5, 214.5, 219.5, 224.5, 229.5, 234.5, 239.5, 244.5, 249.5, 254.5, 264.5, 274.5],
+  'nfl|rushingYards': [29.5, 39.5, 49.5, 59.5, 69.5, 79.5, 89.5, 99.5, 109.5],
+  'nfl|receivingYards': [19.5, 29.5, 39.5, 49.5, 59.5, 69.5, 79.5, 89.5, 99.5],
+  'nfl|receptions': [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5],
+  'nba|points': [9.5, 14.5, 19.5, 24.5, 29.5, 34.5],
+  'nba|rebounds': [3.5, 5.5, 7.5, 9.5, 11.5, 13.5],
+  'nba|assists': [1.5, 3.5, 5.5, 7.5, 9.5, 11.5],
+  'nba|threePointersMade': [0.5, 1.5, 2.5, 3.5, 4.5],
+  'nhl|goals': [0.5],
+  'nhl|saves': [19.5, 24.5, 29.5],
+};
+
+export function isRealisticLine(sport: string, market: string, line: number): boolean {
+  const set = REALISTIC_LINES[`${sport}|${normalizeMarket(market)}`];
+  if (!set) return true;
+  return set.some((allowed) => Math.abs(allowed - line) < 1e-9);
+}
+
 function round(value: number, places = 3): number {
   return Math.round(value * 10 ** places) / 10 ** places;
 }

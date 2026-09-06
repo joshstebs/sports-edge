@@ -1,9 +1,7 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import * as statsHawk from '../providers/statsHawk.js';
-import * as nflverse from '../providers/nflverse.js';
-import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
-import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
+import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { buildPlayerPropModel, espnObservation, isRealisticLine, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
@@ -17,7 +15,7 @@ type CachedHistory = {
   source: string;
   season: Record<string, unknown>;
   games: any[];
-  mode: 'mlb' | 'espn' | 'statshawk';
+  mode: 'mlb' | 'espn';
 };
 
 type RequestedSide = 'over' | 'under';
@@ -25,7 +23,7 @@ type RequestedSide = 'over' | 'under';
 const SPORT_MARKETS: Record<ModelSport, string[]> = {
   mlb: ['hits', 'totalBases', 'strikeouts', 'outsRecorded'],
   nba: ['points', 'rebounds'],
-  nfl: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions', 'rushingReceivingYards', 'touchdowns'],
+  nfl: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions'],
   nhl: ['shotsOnGoal', 'hockeyPoints', 'saves'],
 };
 
@@ -66,8 +64,8 @@ function marketsFor(player: DiscoveredPlayer, sport: ModelSport, marketFilter: s
     markets = ['points', 'rebounds'];
   } else if (sport === 'nfl') {
     if (pos === 'QB') markets = ['passingYards', 'passingTouchdowns'];
-    else if (pos === 'RB' || pos === 'FB') markets = ['rushingYards', 'receivingYards', 'rushingReceivingYards', 'receptions', 'touchdowns'];
-    else markets = ['receivingYards', 'receptions', 'touchdowns'];
+    else if (pos === 'RB' || pos === 'FB') markets = ['rushingYards', 'receptions'];
+    else markets = ['receivingYards', 'receptions'];
   } else if (['G', 'GOALIE'].includes(pos)) {
     markets = ['saves'];
   } else {
@@ -109,60 +107,33 @@ function spreadEvents<T>(events: T[], limit: number): T[] {
   }
   return picked;
 }
-async function statsHawkHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
-  if (sport !== 'mlb' && sport !== 'nfl') return null;
-  const currentSeason = sport === 'mlb' ? Number(mlb.CURRENT_SEASON) : new Date().getUTCFullYear();
-  if (!Number.isInteger(currentSeason)) return null;
-  const seasons: number[] = sport === 'nfl' ? [currentSeason, currentSeason - 1] : [currentSeason];
-  for (const season of seasons) {
-    const log = await statsHawk.getStatsHawkGameLog(player.name, sport, season);
-    if (log.available && log.rows.length) {
-      return { source: log.source, season: { season }, games: log.rows, mode: 'statshawk' };
-    }
-  }
-  return null;
-}
-
 async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
   if (sport === 'mlb') {
     const found = await mlb.searchPlayer(player.name);
-    if (found.available && found.data) {
-      const pitching = player.probablePitcher || String(player.position ?? '').toUpperCase().includes('P');
-      const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
-      if (log.available && Array.isArray(log.data)) {
-        return { source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON }, games: log.data, mode: 'mlb' };
-      }
-    }
-    return statsHawkHistory(player, sport);
-  }
-  if (sport === 'nfl') {
-    const nv = await nflverse.getNflversePlayerHistory(player.name, 20).catch(() => null);
-    if (nv?.available && Array.isArray(nv.games) && nv.games.length >= 5) {
-      return { source: nv.source, season: { season: nv.season }, games: nv.games, mode: 'espn' };
-    }
+    if (!found.available || !found.data) return null;
+    const pitching = player.probablePitcher || String(player.position ?? '').toUpperCase().includes('P');
+    const log = await mlb.getGameLog(found.data.id, pitching ? 'pitching' : 'hitting', mlb.CURRENT_SEASON, 20);
+    if (!log.available || !Array.isArray(log.data)) return null;
+    return { source: 'statsapi.mlb.com', season: { playerId: found.data.id, season: mlb.CURRENT_SEASON }, games: log.data, mode: 'mlb' };
   }
   const s = sport as Exclude<ModelSport, 'mlb'>;
   let playerId = player.id != null ? String(player.id) : '';
   if (!playerId) {
     const found = await espn.findPlayer(player.name, ESPN_MAP[s]);
-    if (!found.available || !found.player) return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
+    if (!found.available || !found.player) return null;
     playerId = found.player.id;
   }
   const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
-  if (!log.available || !Array.isArray(log.games) || (sport === 'nfl' && log.games.length < 5)) {
-    return sport === 'nfl' ? statsHawkHistory(player, sport) : null;
-  }
+  if (!log.available || !Array.isArray(log.games)) return null;
   return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
 }
 function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
   return history.games.map((game: any) => {
     const value = history.mode === 'mlb'
       ? mlbObservation(market, game.stat ?? {})
-      : history.mode === 'statshawk'
-        ? statsHawk.statsHawkObservation(sport as 'mlb' | 'nfl', market, game)
-        : espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
+      : espnObservation(sport as Exclude<ModelSport, 'mlb'>, market, game.stats ?? {});
     if (value == null) return null;
-    return { date: game.date ?? game.gameDate ?? game.kickoff ?? null, value };
+    return { date: game.date ?? game.gameDate ?? null, value };
   }).filter(Boolean) as HistoricalObservation[];
 }
 function halfLine(rows: HistoricalObservation[]): number {
@@ -222,8 +193,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Pull a wider pool for market/side-specific requests. Filtering to one market
   // or one direction naturally removes many generic top candidates, so screen
   // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
-  const defaultPlayers = constrained ? Math.max(16, requested * 4) : Math.max(12, requested * 3);
-  const maxPlayersCap = constrained ? 28 : 24;
+  const defaultPlayers = constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
+  const maxPlayersCap = constrained ? 22 : 14;
   const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
@@ -232,26 +203,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       : String(args?.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
   );
 
-  let events = (await discoverSlateEvents(sport, date).catch((e) => {
+  const events = (await discoverSlateEvents(sport, date).catch((e) => {
     console.warn(`[slateScreener] slate discovery failed for ${sport} ${date}: ${(e as Error).message}`);
     return [] as Awaited<ReturnType<typeof discoverSlateEvents>>;
   })).filter((event) => usableEvent(event.status));
-
-  // NFL requests commonly arrive days before the main weekly slate. If the
-  // requested day is empty, scan the next seven calendar days rather than
-  // incorrectly reporting "no NFL picks" until Sunday.
-  if (!events.length && sport === 'nfl') {
-    const start = new Date(date + 'T12:00:00Z');
-    const upcoming: Awaited<ReturnType<typeof discoverSlateEvents>> = [];
-    for (let offset = 1; offset <= 7; offset++) {
-      const day = new Date(start.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
-      const rows = await discoverSlateEvents('nfl', day).catch(() => []);
-      upcoming.push(...rows.filter((event) => usableEvent(event.status)));
-    }
-    events = upcoming;
-  }
   if (!events.length) {
-    const reason = `no upcoming ${sport.toUpperCase()} events found for ${date}${sport === 'nfl' ? ' or the next 7 days' : ''}`;
+    const reason = `no upcoming ${sport.toUpperCase()} events found for ${date}`;
     console.warn(`[slateScreener] ${reason}`);
     return unavailable(reason);
   }
@@ -259,7 +216,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
   // ignoring later games that may contain stronger requested-market candidates.
-  const defaultMaxEvents = sport === 'nfl' ? (constrained ? 12 : 10) : (constrained ? 8 : 6);
+  const defaultMaxEvents = constrained ? 8 : 6;
   const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
   const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
@@ -285,6 +242,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       const rows = observations(history, sport, market);
       if (rows.length < 5) continue;
       const line = halfLine(rows);
+      // Only bookable lines become candidates (same gate as universal screener).
+      if (!isRealisticLine(sport, market, line)) continue;
       const calibration = calibrationFor(learning, sport, normalizeMarket(market));
       const sides: RequestedSide[] = sideFilter ? [sideFilter] : ['over', 'under'];
       const models = sides
@@ -348,18 +307,17 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
-  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>
-    setTimeout(() => resolve({ available: false, reason: 'Consensus price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
+  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any> }>((resolve) =>
+    setTimeout(() => resolve({ available: false, reason: 'SharpApi price lookup timed out (3s deadline)', byKey: new Map<string, any>() }), 3_000)
   );
   const sharpPrices = await Promise.race([
-    getConsensusSlatePrices(sport),
+    getSharpSlatePrices(sport, { home: '', away: '' }),
     sharpDeadline,
-  ]).catch(() => ({ available: false, reason: 'Consensus price lookup crashed', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }));
+  ]).catch(() => ({ available: false, reason: 'SharpApi price lookup crashed', byKey: new Map<string, any>() }));
   if (!sharpPrices.available) {
     console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
   }
   const sharpByKey = sharpPrices.byKey;
-  const alternateByKey = sharpPrices.alternatesByKey ?? new Map<string, any[]>();
   const sharpline = (player: string, market: string) => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
     return match ?? null;
@@ -403,14 +361,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketLine: live?.line ?? null,
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
-      marketSource: live?.source ?? null,
+      marketSource: live ? 'api.sharpapi.io' : null,
       marketBook: live?.book ?? null,
-      books: live?.books ?? [],
-      bookCount: live?.bookCount ?? null,
-      lineType: live?.lineType ?? (live ? 'primary' : null),
-      isAlternate: Boolean(live?.isAlternate),
-      lineLabel: live?.lineLabel ?? (live ? 'PRIMARY MARKET LINE' : 'MODEL SCREENING LINE'),
-      alternateLines: alternateByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
       estimatedEdge: estimatedEdge == null ? null : Math.round(estimatedEdge * 1000) / 10,
       edgeOver: edgeOver == null ? null : Math.round(edgeOver * 1000) / 10,
       edgeUnder: edgeUnder == null ? null : Math.round(edgeUnder * 1000) / 10,

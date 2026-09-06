@@ -5,6 +5,7 @@ import { premiumProviderStatus, dataGapPriorities } from '../providers/premiumAd
 import {
   buildPlayerPropModel,
   espnObservation,
+  isRealisticLine,
   mlbObservation,
   normalizeMarket,
   type HistoricalObservation,
@@ -147,6 +148,9 @@ function chooseBestSide(
   calibration: ReturnType<typeof learningCalibration>,
 ) {
   const line = halfLine(values.map((row) => row.value));
+  // Model-derived lines can land on numbers no book offers (e.g. under 3.5
+  // hits for a hot hitter). Only bookable lines become candidates.
+  if (!isRealisticLine(sport, market, line)) return null;
   const over = buildPlayerPropModel({ sport, market, side: 'over', line, observations: values, source, calibration });
   const under = buildPlayerPropModel({ sport, market, side: 'under', line, observations: values, source, calibration });
   const usable = [over, under].filter((row) => row.available && row.probability != null);
