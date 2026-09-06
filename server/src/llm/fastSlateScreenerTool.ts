@@ -1,7 +1,7 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
 import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
-import { buildPlayerPropModel, espnObservation, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
+import { buildPlayerPropModel, espnObservation, isRealisticLine, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
@@ -242,6 +242,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       const rows = observations(history, sport, market);
       if (rows.length < 5) continue;
       const line = halfLine(rows);
+      // Only bookable lines become candidates (same gate as universal screener).
+      if (!isRealisticLine(sport, market, line)) continue;
       const calibration = calibrationFor(learning, sport, normalizeMarket(market));
       const sides: RequestedSide[] = sideFilter ? [sideFilter] : ['over', 'under'];
       const models = sides
