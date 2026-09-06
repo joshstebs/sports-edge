@@ -63,17 +63,16 @@ export function llmConfig(): LlmConfig {
   const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
 
   const providers: LlmConfig[] = [];
-  // Priority order: OpenCode Go first (reliable — verified live; deepseek-v4-flash/
-  // pro/kimi-k3 all respond), then OpenRouter (retired 'stealth/ox-alpha' + quota
-  // — demoted to fallback), then OpenCode Zen free tiers, then Gemini, then OpenAI.
-  // OpenRouter's old 'stealth/ox-alpha' slug was decommissioned (404) and its
-  // gpt-oss-120b hit the per-key quota (403), so it is no longer a valid primary.
+  // Free-first policy, aligned with High Five. The deterministic sports model owns
+  // probabilities; the LLM only orchestrates tools and explains validated picks.
+  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
+  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
   if (opencodeGoKey) providers.push({ configured: true, provider: 'opencode-go', model: deepseekGoModels[0], models: deepseekGoModels, baseUrl: 'https://opencode.ai/zen/go/v1' });
   if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
-  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
-  if (geminiKey) providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
-  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
+  if (geminiKey && process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK === 'true') {
+    providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  }
   for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
   if (providers.length) return providers[0];
   return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
@@ -112,8 +111,8 @@ interface StreamCallbacks {
   signal?: AbortSignal;
 }
 
-const MODEL_TURN_TIMEOUT_MS = 35_000;
-const CLOSER_TIMEOUT_MS = 30_000;
+const MODEL_TURN_TIMEOUT_MS = 14_000;
+const CLOSER_TIMEOUT_MS = 12_000;
 const MAX_TOOL_ROUNDS = 1;
 
 function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
@@ -512,7 +511,7 @@ export async function runAgent(
         // The slate screener legitimately needs more than the default 5s budget
         // (it fans out ~12 players x 2 Stats API calls in parallel, ~20s). Let
         // executeToolBatch's screener-aware clamp raise the window.
-        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 52_000 : 5_000,
+        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 36_000 : 5_000,
         onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );
