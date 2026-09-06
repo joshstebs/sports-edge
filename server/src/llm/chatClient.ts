@@ -140,7 +140,9 @@ function inferRequestedPicks(text: string): number | undefined {
   if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
   const giveMe = text.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-)\s*(\d{1,2}))?/i);
   if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
-  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets)\b/i);
+  const sportQualified = text.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
+  if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
+  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
   if (explicit) return clampRequestedPicks(Number(explicit[1]));
   return undefined;
 }
