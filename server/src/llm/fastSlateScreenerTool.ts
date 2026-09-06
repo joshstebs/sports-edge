@@ -231,12 +231,26 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       : String(args?.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
   );
 
-  const events = (await discoverSlateEvents(sport, date).catch((e) => {
+  let events = (await discoverSlateEvents(sport, date).catch((e) => {
     console.warn(`[slateScreener] slate discovery failed for ${sport} ${date}: ${(e as Error).message}`);
     return [] as Awaited<ReturnType<typeof discoverSlateEvents>>;
   })).filter((event) => usableEvent(event.status));
+
+  // NFL requests commonly arrive days before the main weekly slate. If the
+  // requested day is empty, scan the next seven calendar days rather than
+  // incorrectly reporting "no NFL picks" until Sunday.
+  if (!events.length && sport === 'nfl') {
+    const start = new Date(date + 'T12:00:00Z');
+    const upcoming: Awaited<ReturnType<typeof discoverSlateEvents>> = [];
+    for (let offset = 1; offset <= 7; offset++) {
+      const day = new Date(start.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
+      const rows = await discoverSlateEvents('nfl', day).catch(() => []);
+      upcoming.push(...rows.filter((event) => usableEvent(event.status)));
+    }
+    events = upcoming;
+  }
   if (!events.length) {
-    const reason = `no upcoming ${sport.toUpperCase()} events found for ${date}`;
+    const reason = `no upcoming ${sport.toUpperCase()} events found for ${date}${sport === 'nfl' ? ' or the next 7 days' : ''}`;
     console.warn(`[slateScreener] ${reason}`);
     return unavailable(reason);
   }
@@ -244,7 +258,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
   // ignoring later games that may contain stronger requested-market candidates.
-  const defaultMaxEvents = constrained ? 8 : 6;
+  const defaultMaxEvents = sport === 'nfl' ? (constrained ? 12 : 10) : (constrained ? 8 : 6);
   const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
   const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
