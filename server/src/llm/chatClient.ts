@@ -8,6 +8,7 @@
 // turn execute concurrently, then the model receives results in original order.
 
 import { executeToolBatch } from './toolBatch.js';
+import { renderScreenerSummaryBlocks } from './screenerRenderer.js';
 
 export interface LlmConfig {
   configured: boolean;
@@ -526,7 +527,7 @@ export async function runAgent(
     // screener data to render. This guarantees the user sees real picks.
     const screenerData = extractScreenerCandidates(msgs);
     if (screenerData.length) {
-      finalText = renderScreenerSummary(screenerData, requestedCountHint(msgs));
+      finalText = renderScreenerSummaryBlocks(screenerData, requestedCountHint(msgs));
       cb.onDelta?.(finalText);
       modelUsed = modelUsed ?? 'server-template';
     } else {
@@ -580,37 +581,4 @@ function extractPriorPickNames(msgs: ChatMessage[]): string[] {
 function requestedCountHint(msgs: ChatMessage[]): number {
   const intent = inferConversationScreenerIntent(msgs);
   return intent.requestedPicks ?? 5;
-}
-
-/** Render a concise, gate-honest parlay summary from screener candidates. */
-function renderScreenerSummary(candidates: any[], requested: number): string {
-  const top = candidates.slice(0, Math.max(requested, 5));
-  const lines: string[] = [];
-  const anyNotInLineup = top.some((c) => c.inLineupToday === false);
-  lines.push(`**Verified slate screen — ${top.length} qualified candidate${top.length === 1 ? '' : 's'} (model grades, live stats).**`);
-  if (anyNotInLineup) {
-    lines.push('');
-    lines.push('⚠️ **Today\'s batting orders are not posted yet** — some candidates below come from current rosters / probable pitchers and are not confirmable starters. Re-run closer to game time once lineups post. Picks marked 🕐 = lineup pending.');
-  }
-  lines.push('');
-  top.forEach((c, i) => {
-    const prob = c.confidencePct != null ? `${c.confidencePct}%` : 'n/a';
-    const line = c.suggestedLine != null ? ` ${c.suggestedLine}` : '';
-    const flag = c.inLineupToday === false ? ' 🕐' : c.inLineupToday === true ? '' : ' 🕐';
-    lines.push(`${i + 1}. **${c.player}** (${c.team} vs ${c.opponent ?? '?'})${flag} — ${c.market} ${c.side?.toUpperCase()}${line} · model ${prob} (Grade ${c.grade ?? '?'})`);
-    const hr = c.recentHitRate;
-    if (hr) {
-      const parts = [hr.last5 != null && `L5 ${Math.round((hr.last5 ?? 0) * 100)}%`, hr.last20 != null && `L20 ${Math.round((hr.last20 ?? 0) * 100)}%`].filter(Boolean);
-      if (parts.length) lines.push(`   _form: ${parts.join(' · ')}_`);
-    }
-    lines.push(`   _verify live line/odds + lineup before betting._`);
-  });
-  const shortfall = requested - top.length;
-  if (shortfall > 0) {
-    lines.push('');
-    lines.push(`⚠️ **Shortfall:** only ${top.length} of ${requested} requested legs cleared the ${Math.round((candidates[0]?.minConfidence ?? 0.54) * 100)}%+ screen. Remaining slots not filled with sub-threshold bets.`);
-  }
-  lines.push('');
-  lines.push('_Lines/probabilities are model screening outputs from verified-live stats (statsapi.mlb.com). Live sportsbook odds are fetched when available (The Odds API → SportsGameOdds → ESPN → keyless OddsTrader scrape) and can be confirmed via game_odds; edge is only claimed when a verified price is present. Pre-lineup: availability gate still required._');
-  return lines.join('\n');
 }
