@@ -74,6 +74,8 @@ async function fetchEvents(leagueID: string, oddsOnly = true, cursor?: string): 
   const credentials = keys();
   if (!credentials.length) return { events: [], next: null, notice: null, rateLimited: false };
   const params = new URLSearchParams({ leagueID });
+  params.set('limit', '20');
+  params.set('includeAltLines', 'false');
   if (oddsOnly) params.set('oddsAvailable', 'true');
   if (cursor) params.set('cursor', cursor);
   const url = `${BASE}/events?${params.toString()}`;
