@@ -111,8 +111,9 @@ function spreadEvents<T>(events: T[], limit: number): T[] {
 }
 async function statsHawkHistory(player: DiscoveredPlayer, sport: ModelSport): Promise<CachedHistory | null> {
   if (sport !== 'mlb' && sport !== 'nfl') return null;
-  const current = sport === 'mlb' ? mlb.CURRENT_SEASON : new Date().getUTCFullYear();
-  const seasons = sport === 'nfl' ? [current, current - 1] : [current];
+  const currentSeason = sport === 'mlb' ? Number(mlb.CURRENT_SEASON) : new Date().getUTCFullYear();
+  if (!Number.isInteger(currentSeason)) return null;
+  const seasons: number[] = sport === 'nfl' ? [currentSeason, currentSeason - 1] : [currentSeason];
   for (const season of seasons) {
     const log = await statsHawk.getStatsHawkGameLog(player.name, sport, season);
     if (log.available && log.rows.length) {
