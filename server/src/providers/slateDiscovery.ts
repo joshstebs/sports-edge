@@ -380,33 +380,4 @@ export async function getConsensusSlatePrices(
     console.warn('[slateDiscovery] SGO consensus props unavailable: ' + (error as Error).message);
   }
   return getSharpSlatePrices(sport);
-},
-): Promise<{ available: boolean; reason?: string; byKey: Map<string, SharpPrice> }> {
-  try {
-    const result = await sharp.getSharpGameOdds(matchup?.away, matchup?.home, sport);
-    if (!result.available || !Array.isArray(result.props?.markets)) {
-      return { available: false, reason: result.reason ?? 'SharpApi no live props', byKey: new Map() };
-    }
-    const byKey = new Map<string, SharpPrice>();
-    for (const m of result.props.markets as any[]) {
-      if (!m?.player || m.line == null) continue;
-      // Canonicalize BOTH sides of the lookup key through normalizeMarket:
-      // SharpApi emits labels like "Total Bases" while the screener looks up
-      // model markets like "totalBases"; the old raw-lowercase key silently
-      // mismatched every multi-word market (totalBases, homeRuns, shotsOnGoal…).
-      const market = normalizeMarket(String(m.market ?? '')).toLowerCase();
-      const key = `${String(m.player).toLowerCase()}|${market}`;
-      byKey.set(key, {
-        player: m.player,
-        market: market,
-        line: Number(m.line),
-        over: m.over ?? null,
-        under: m.under ?? null,
-        book: m.book ?? 'sharpapi',
-      });
-    }
-    return { available: byKey.size > 0, reason: byKey.size ? undefined : 'SharpApi no priced props', byKey };
-  } catch (error) {
-    return { available: false, reason: `SharpApi price lookup failed: ${(error as Error).message}`, byKey: new Map() };
-  }
 }
