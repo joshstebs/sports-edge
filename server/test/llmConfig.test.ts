@@ -29,32 +29,31 @@ function withKeys(enabled: readonly KeyName[], run: () => void) {
   }
 }
 
-// Chain order (2026-08-30, verified live): OpenCode Go is PRIMARY —
-// 'stealth/ox-alpha' OpenRouter was retired and its replacement slugs are
-// quota-exhausted (403), so OpenRouter is demoted to fallback. Groq is the
-// terminal fallback before the chain ends.
-test('LLM configuration creates one ordered, deduplicated provider chain', () => {
+// Free-first chain: Groq gpt-oss is primary; Gemini is opt-in only.
+test('LLM configuration creates a free-first provider chain', () => {
   withKeys(KEY_NAMES, () => {
+    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
     const cfg = llmConfig();
-    assert.equal(cfg.provider, 'opencode-go');
-    assert.equal(cfg.fallback?.provider, 'openrouter');
-    assert.equal(cfg.fallback?.fallback?.provider, 'opencode-zen');
-    assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'gemini');
+    assert.equal(cfg.provider, 'groq');
+    assert.equal(cfg.model, 'openai/gpt-oss-120b');
+    assert.equal(cfg.fallback?.provider, 'opencode-zen');
+    assert.equal(cfg.fallback?.fallback?.provider, 'opencode-go');
+    assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'openrouter');
     assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback?.provider, 'groq');
-    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
   });
-  withKeys(['GEMINI_API_KEY', 'OPENAI_API_KEY'], () => {
+  withKeys(['GEMINI_API_KEY'], () => {
+    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
     const cfg = llmConfig();
-    assert.equal(cfg.provider, 'gemini');
-    assert.equal(cfg.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback, undefined);
+    assert.equal(cfg.configured, false);
+    assert.equal(cfg.provider, 'none');
   });
-  withKeys(['OPENROUTER_API_KEY', 'OPENAI_API_KEY'], () => {
+  withKeys(['GEMINI_API_KEY', 'GROQ_API_KEY'], () => {
+    process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK = 'true';
     const cfg = llmConfig();
-    assert.equal(cfg.provider, 'openrouter');
-    assert.equal(cfg.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback, undefined);
+    assert.equal(cfg.provider, 'groq');
+    assert.equal(cfg.fallback?.provider, 'gemini');
+    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
   });
   withKeys(['OPENAI_API_KEY'], () => {
     const cfg = llmConfig();
