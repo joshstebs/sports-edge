@@ -1,8 +1,5 @@
 // OpenAI-compatible LLM chat client (raw fetch; Node 22 has fetch).
-// Provider selection (priority order):
-//   1. Ox Alpha via OpenRouter (OPENROUTER_API_KEY, stealth/ox-alpha)
-//   2. DeepSeek V4 via OpenCode Go (OPENCODE_GO_API_KEY, deepseek-v4-flash)
-//   3. Cheap/free fallback via OpenCode Zen (deepseek-v4-flash-free) and Gemini
+// Routing: Groq GPT-OSS-120B -> Gemini 3.6 Flash (verified 2026-09-07).
 // Supports streaming content deltas AND streaming tool_calls (accumulated per
 // index, partial JSON fragments concatenated). Tool calls emitted in one model
 // turn execute concurrently, then the model receives results in original order.
@@ -20,63 +17,19 @@ export interface LlmConfig {
 }
 
 export function llmConfig(): LlmConfig {
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const opencodeGoKey = process.env.OPENCODE_GO_API_KEY;
-  const opencodeZenKey = process.env.OPENCODE_ZEN_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
-  const groqKey = process.env.GROQ_API_KEY;
-
-  // OpenRouter (fallback). 'stealth/ox-alpha' was decommissioned (404) and the
-  // free slugs are gone; use valid non-free slugs. This provider is a fallback
-  // behind OpenCode Go, which is reliable.
-  const oxAlphaModels = [
-    process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct',
-    'openai/gpt-oss-120b',
-  ].filter((m, i, a) => a.indexOf(m) === i);
-
-  // 2. DeepSeek V4 via OpenCode Go. deepseek-v4-flash is primary (verified 200);
-  // deepseek-v4-pro was DISABLED upstream (401 "Model is disabled" as of 2026-09-04)
-  // so it is dropped from the list rather than wasting a round-trip per turn.
-  const deepseekGoModels = [
-    process.env.OPENCODE_GO_MODEL || 'deepseek-v4-flash',
-    'kimi-k3',
-  ].filter((m, i, a) => a.indexOf(m) === i);
-
-  // 3. Cheap/free fallback via OpenCode Zen. VERIFIED LIVE 2026-08-30:
-  //    'deepseek-v4-flash-free' -> HTTP 400 "Model is unavailable" and
-  //    'hy3-free' -> HTTP 401 "not supported". Both are dead slugs; keeping
-  //    them only wasted fallback-chain attempts. 'nemotron-3-ultra-free' is
-  //    the only live zen free model.
-  const zenModels = [
-    process.env.OPENCODE_ZEN_MODEL || 'nemotron-3-ultra-free',
-  ].filter((m, i, a) => a.indexOf(m) === i);
-
-  // Terminal fallback: Groq 'openai/gpt-oss-120b' (verified live 2026-08-30,
-  // HTTP 200 ~200ms, ~1000 req/min free tier). OpenRouter stays demoted: its
-  // per-key quota returned 403 "Key limit exceeded" on both of its slugs.
-  const groqModels = [process.env.GROQ_MODEL || 'openai/gpt-oss-120b'];
-
-  const geminiModels = [
-    process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-    'gemini-flash-latest',
-  ].filter((m, i, a) => a.indexOf(m) === i);
-  const openaiModels = [process.env.OPENAI_MODEL || 'gpt-4o-mini'];
-
+  // Only live-verified routes enter the chain. Credentials for retired providers
+  // remain stored, but do not silently re-enable those providers.
   const providers: LlmConfig[] = [];
-  // Free-first policy, aligned with High Five. The deterministic sports model owns
-  // probabilities; the LLM only orchestrates tools and explains validated picks.
-  if (groqKey) providers.push({ configured: true, provider: 'groq', model: groqModels[0], models: groqModels, baseUrl: 'https://api.groq.com/openai/v1' });
-  if (opencodeZenKey) providers.push({ configured: true, provider: 'opencode-zen', model: zenModels[0], models: zenModels, baseUrl: 'https://opencode.ai/zen/v1' });
-  if (opencodeGoKey) providers.push({ configured: true, provider: 'opencode-go', model: deepseekGoModels[0], models: deepseekGoModels, baseUrl: 'https://opencode.ai/zen/go/v1' });
-  if (openrouterKey) providers.push({ configured: true, provider: 'openrouter', model: oxAlphaModels[0], models: oxAlphaModels, baseUrl: 'https://openrouter.ai/api/v1' });
-  if (openaiKey) providers.push({ configured: true, provider: 'openai', model: openaiModels[0], models: openaiModels, baseUrl: 'https://api.openai.com/v1' });
-  if (geminiKey && process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK === 'true') {
-    providers.push({ configured: true, provider: 'gemini', model: geminiModels[0], models: geminiModels, baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  if (process.env.GROQ_API_KEY) {
+    const model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+    providers.push({ configured: true, provider: 'groq', model, models: [model], baseUrl: 'https://api.groq.com/openai/v1' });
   }
-  for (let index = 0; index < providers.length - 1; index++) providers[index].fallback = providers[index + 1];
-  if (providers.length) return providers[0];
-  return { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
+  if (process.env.GEMINI_API_KEY) {
+    const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+    providers.push({ configured: true, provider: 'gemini', model, models: [model], baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  }
+  if (providers.length > 1) providers[0].fallback = providers[1];
+  return providers[0] ?? { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
 
 export interface ChatMessage {

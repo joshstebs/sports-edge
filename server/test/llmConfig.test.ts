@@ -29,35 +29,14 @@ function withKeys(enabled: readonly KeyName[], run: () => void) {
   }
 }
 
-// Free-first chain: Groq gpt-oss is primary; Gemini is opt-in only.
-test('LLM configuration creates a free-first provider chain', () => {
+test('only verified providers are used despite retired credentials being present', () => {
   withKeys(KEY_NAMES, () => {
-    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
     const cfg = llmConfig();
     assert.equal(cfg.provider, 'groq');
     assert.equal(cfg.model, 'openai/gpt-oss-120b');
-    assert.equal(cfg.fallback?.provider, 'opencode-zen');
-    assert.equal(cfg.fallback?.fallback?.provider, 'opencode-go');
-    assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'openrouter');
-    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.provider, 'openai');
-    assert.equal(cfg.fallback?.fallback?.fallback?.fallback?.fallback, undefined);
-  });
-  withKeys(['GEMINI_API_KEY'], () => {
-    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
-    const cfg = llmConfig();
-    assert.equal(cfg.configured, false);
-    assert.equal(cfg.provider, 'none');
-  });
-  withKeys(['GEMINI_API_KEY', 'GROQ_API_KEY'], () => {
-    process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK = 'true';
-    const cfg = llmConfig();
-    assert.equal(cfg.provider, 'groq');
     assert.equal(cfg.fallback?.provider, 'gemini');
-    delete process.env.SPORTSEDGE_ALLOW_GEMINI_FALLBACK;
+    assert.equal(cfg.fallback?.fallback, undefined);
   });
-  withKeys(['OPENAI_API_KEY'], () => {
-    const cfg = llmConfig();
-    assert.equal(cfg.provider, 'openai');
-    assert.equal(cfg.fallback, undefined);
-  });
+  withKeys(['GEMINI_API_KEY'], () => assert.equal(llmConfig().provider, 'gemini'));
+  withKeys(['OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'OPENROUTER_API_KEY'], () => assert.equal(llmConfig().configured, false));
 });
