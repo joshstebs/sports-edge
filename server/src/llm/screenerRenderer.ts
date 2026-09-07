@@ -1,5 +1,16 @@
 function marketLabel(value: unknown): string {
-  return String(value ?? 'prop').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+  const key = String(value ?? '').trim();
+  const labels: Record<string, string> = {
+    hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
+    strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
+  };
+  if (labels[key]) return labels[key];
+  const pretty = key || 'prop';
+  return pretty.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^[a-z]/, (c) => c.toUpperCase());
 }
 
 function candidateLine(candidate: any): number | null {

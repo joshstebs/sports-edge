@@ -11,6 +11,7 @@ import {
   type HistoricalObservation,
   type ModelSport,
 } from '../models/playerPropModel.js';
+import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations, candidateCalibration } from '../candidates/candidateHistory.js';
 import { loadLearning } from '../lib/predictionStore.js';
@@ -353,78 +354,58 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       const mapped = qualified.slice(0, Math.max(requested * 3, 15)).map((candidate) => {
       const key = `${String(candidate.player).toLowerCase()}|${String(candidate.market).toLowerCase()}`;
       const live = sharpByKey.get(key);
-      // Edge evaluation at the REAL sportsbook line: the suggested line is a model
-      // proposal, but the bet is priced at the book's line. Recompute the CHOSEN
-      // side at the book line with the book's odds for an honest edge, and also
-      // evaluate the opposite side so over-value is visible even when the pick
-      // itself is an under. Side selection stays max-probability (preserves grade
-      // semantics); edge is informational for ranking, not a side override.
-      // This is what answers the UNDER skew honestly: on low-mean markets the
-      // under usually has the higher raw probability, and when the book
-      // overprices the over (negative over-edge), the under IS the value side.
-      let estimatedEdge: number | null = null;
-      let edgeOver: number | null = null;
-      let edgeUnder: number | null = null;
-      let edgeLine: number | null = null;
-      if (live != null && Number.isFinite(Number(live.line))) {
-        const bookLine = Number(live.line);
-        // Explicit null guard: Number(null) === 0 is finite, so a missing side
-        // would slip through as americanOdds 0 without this check.
-        for (const s of [
-          { side: 'over' as const, odds: live.over },
-          { side: 'under' as const, odds: live.under },
-        ]) {
-          if (s.odds == null || s.odds === '' || !Number.isFinite(Number(s.odds))) continue;
-          const m = buildPlayerPropModel({
-            sport, market: candidate.market, side: s.side, line: bookLine,
-            observations: candidate.observations, source: candidate.source,
-            calibration: candidate.calibration, americanOdds: Number(s.odds),
-          });
-          if (!m.available || m.probability == null || m.estimatedEdge == null) continue;
-          // Store RAW fractions here; the return converts to percent once.
-          // (m.estimatedEdge is modelProb - impliedProb, e.g. 0.073 = +7.3%.)
-          const edgeFrac = m.estimatedEdge;
-          if (s.side === 'over') edgeOver = edgeFrac; else edgeUnder = edgeFrac;
-          if (s.side === candidate.side) {
-            estimatedEdge = edgeFrac;
-            edgeLine = bookLine;
-          }
-        }
-      }
+      const liveLine = live != null && Number.isFinite(Number(live.line)) ? Number(live.line) : null;
+      const liveEvaluation = liveLine == null ? null : evaluatePropLine({
+        sport, market: candidate.market, line: liveLine, observations: candidate.observations,
+        source: candidate.source, calibration: candidate.calibration,
+        oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
+      });
+      const finalModel = liveEvaluation?.chosen ?? ({
+        side: candidate.side, probability: candidate.confidence, grade: candidate.grade,
+        sampleSize: candidate.sampleSize, modelVersion: candidate.modelVersion, estimatedEdge: null,
+        average: null,
+      } as any);
+      const finalLine = liveLine ?? candidate.line;
+      const recentValues = candidate.observations.map((row) => row.value);
+      const recent = {
+        last5: featureWindow(recentValues, finalLine, 5),
+        last10: featureWindow(recentValues, finalLine, 10),
+        last20: featureWindow(recentValues, finalLine, 20),
+      };
       return {
-      player: candidate.player,
-      team: candidate.team,
-      opponent: candidate.opponent,
-      eventId: candidate.eventId,
-      eventDate: candidate.eventDate,
-      market: candidate.market,
-      side: candidate.side,
-      suggestedLine: candidate.line,
-      confidencePct: Math.round(candidate.confidence * 1000) / 10,
-      grade: candidate.grade,
-      sampleSize: candidate.sampleSize,
-      modelVersion: candidate.modelVersion,
-      source: candidate.source,
-      fallbackUsed: candidate.fallbackUsed,
-      marketLine: live?.line ?? null,
-      marketOddsOver: live?.over ?? null,
-      marketOddsUnder: live?.under ?? null,
-      marketSource: live ? 'api.sharpapi.io' : null,
-      marketBook: live?.book ?? null,
-      // Edge vs the real book price at the real book line. Null when no book
-      // price exists (model-probability-only candidate). Positive = value.
-      // edgeOver/edgeUnder expose BOTH sides so over-value is visible even when
-      // the pick itself is an under (e.g. negative over-edge means the book
-      // overprices the over, confirming the under as the value side).
-      estimatedEdge: estimatedEdge == null ? null : Math.round(estimatedEdge * 1000) / 10,
-      edgeOver: edgeOver == null ? null : Math.round(edgeOver * 1000) / 10,
-      edgeUnder: edgeUnder == null ? null : Math.round(edgeUnder * 1000) / 10,
-      edgeLine,
-      availability: candidate.profile.availability,
-      recent: candidate.profile.recent,
-      sources: candidate.profile.sources,
-      note: 'Slate screener candidate only. Final recommendation must run player_prop_model (or MLB provisional model when appropriate) against the exact current sportsbook line and final availability gate.',
-    };});
+       player: candidate.player,
+       team: candidate.team,
+       opponent: candidate.opponent,
+       eventId: candidate.eventId,
+       eventDate: candidate.eventDate,
+       market: candidate.market,
+       side: finalModel.side,
+       suggestedLine: candidate.line,
+       modelLine: candidate.line,
+       screeningSide: candidate.side,
+       confidencePct: Math.round(Number(finalModel.probability ?? candidate.confidence) * 1000) / 10,
+       grade: finalModel.grade,
+       sampleSize: finalModel.sampleSize,
+       modelVersion: candidate.modelVersion,
+       source: candidate.source,
+       fallbackUsed: candidate.fallbackUsed,
+       marketLine: live?.line ?? null,
+       marketOddsOver: live?.over ?? null,
+       marketOddsUnder: live?.under ?? null,
+       marketSource: live ? 'api.sharpapi.io' : null,
+       marketBook: live?.book ?? null,
+       marketProbability: liveLine == null ? null : finalModel.probability ?? null,
+       estimatedEdge: liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10,
+       edgeOver: liveEvaluation?.edgeOver == null ? null : Math.round(liveEvaluation.edgeOver * 1000) / 10,
+       edgeUnder: liveEvaluation?.edgeUnder == null ? null : Math.round(liveEvaluation.edgeUnder * 1000) / 10,
+       edgeLine: liveLine,
+       availability: candidate.profile.availability,
+       recent,
+       sources: candidate.profile.sources,
+       note: liveLine == null
+         ? 'Model screening line only; no verified sportsbook offer was found.'
+         : 'Both sides re-scored at the exact current sportsbook line; verify final availability before treating as a recommendation.',
+       };});
       // Re-apply the quality gate on RECOMPUTED values (book-line probability
       // can fall below the floor when the book's line is tougher), then rank by
       // edge so value — not raw probability — orders the list. Null-edge

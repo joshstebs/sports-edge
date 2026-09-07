@@ -45,6 +45,19 @@ export interface MarketInsights {
   clv: ClvSummary;
 }
 
+function displayMarket(value: unknown): string {
+  const labels: Record<string, string> = {
+    hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
+    strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
+  };
+  const key = String(value ?? '').trim();
+  return labels[key] ?? key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+}
+
 function probability(value: unknown): number | null {
   if (value == null || String(value).trim() === '') return null;
   const n = Number(String(value).replace('%', '').trim());
@@ -106,8 +119,11 @@ function buildTopEdges(predictions: Prediction[], now: Date): TopEdgePick[] {
       const implied = odds == null ? null : americanImpliedProbability(odds);
       const edgePct = implied == null ? null : (p - implied) * 100;
       if (edgePct != null && edgePct <= 0) continue;
-      const selection = String(leg.leg_name ?? '').trim();
-      if (!selection) continue;
+      const rawSelection = String(leg.leg_name ?? '').trim();
+      if (!rawSelection) continue;
+      const market = String(leg.market ?? 'unknown');
+      const marketText = displayMarket(market);
+      const selection = rawSelection.toLowerCase().includes(marketText.toLowerCase()) ? rawSelection : `${rawSelection} ${marketText}`;
       const key = `${prediction.sport}|${prediction.matchup}|${selection}`.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -116,7 +132,7 @@ function buildTopEdges(predictions: Prediction[], now: Date): TopEdgePick[] {
         sport: prediction.sport.toUpperCase(),
         matchup: prediction.matchup,
         selection: selection.slice(0, 180),
-        market: String(leg.market ?? 'unknown'),
+        market,
         eventDate: date,
         recommendedAt: prediction.timestamp,
         confidence: Number((p * 100).toFixed(1)),
