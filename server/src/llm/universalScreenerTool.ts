@@ -405,7 +405,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
        note: liveLine == null
          ? 'Model screening line only; no verified sportsbook offer was found.'
          : 'Both sides re-scored at the exact current sportsbook line; verify final availability before treating as a recommendation.',
-       };});    };});
+       };});
       // Re-apply the quality gate on RECOMPUTED values (book-line probability
       // can fall below the floor when the book's line is tougher), then rank by
       // edge so value — not raw probability — orders the list. Null-edge
