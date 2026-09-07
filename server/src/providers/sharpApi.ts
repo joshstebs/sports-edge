@@ -9,6 +9,8 @@
 // season not yet started) it reports unavailable rather than inventing lines.
 // ============================================================================
 
+import { canonicalPropMarket, isPlausiblePropLine } from '../models/propLineIntegrity.js';
+
 const BASE = 'https://api.sharpapi.io/api/v1';
 const SOURCE = 'api.sharpapi.io';
 
@@ -17,14 +19,6 @@ const SPORT_MAP: Record<string, { sport: string; league: string }> = {
   nba: { sport: 'basketball', league: 'nba' },
   nfl: { sport: 'football', league: 'nfl' },
   nhl: { sport: 'hockey', league: 'nhl' },
-};
-
-const MARKET_TO_LABEL: Record<string, string> = {
-  player_home_runs: 'Home Runs', player_hits: 'Hits', player_total_bases: 'Total Bases',
-  player_strikeouts: 'Strikeouts', player_points: 'Points', player_rebounds: 'Rebounds',
-  player_assists: 'Assists', player_threes: '3-Pointers', player_pass_yards: 'Passing Yards',
-  player_rush_yards: 'Rushing Yards', player_reception_yards: 'Receiving Yards',
-  player_goals: 'Goals', player_shots_on_goal: 'Shots on Goal', player_saves: 'Saves',
 };
 
 export interface SharpOddsResult {
@@ -52,20 +46,22 @@ function parseAmericanPrice(v: unknown): number | null {
 }
 
 /** Group SharpApi player-prop rows into per-market arrays, one best line each. */
-function groupProps(rows: any[]): any[] {
+function groupProps(rows: any[], sport?: string): any[] {
   const byKey = new Map<string, any>();
   for (const row of rows) {
     if (row?.is_player_prop !== true || !row.player_name || row.line == null) continue;
     const side = String(row.selection_type || row.selection || '').toLowerCase();
     if (side !== 'over' && side !== 'under') continue;
-    const market = String(row.market_type || '');
+    const rawMarket = String(row.market_type || row._market || '');
+    const market = canonicalPropMarket(rawMarket, sport);
     const line = Number(row.line);
+    if (!market || !isPlausiblePropLine(sport ?? '', market, line)) continue;
     const odds = parseAmericanPrice(row.odds_american);
     if (!Number.isFinite(line) || odds == null) continue;
     const book = String(row.sportsbook || 'sharpapi');
     const key = String(row.player_name).toLowerCase() + '|' + market + '|' + line;
     const cur = byKey.get(key) ?? {
-      market: MARKET_TO_LABEL[market] ?? market, player: row.player_name, line,
+      market, player: row.player_name, line,
       over: null, under: null, overBook: null, underBook: null, _books: new Set<string>(),
     };
     cur._books.add(book);
@@ -172,7 +168,7 @@ export async function getSharpGameOdds(
       return { available: false, reason: `SharpApi unreachable for all ${markets.length} markets (HTTP errors/timeouts)`, source: SOURCE };
     }
 
-    const props = groupProps(rows);
+    const props = groupProps(rows, sportKey);
     if (props.length === 0) {
       return { available: false, reason: `SharpApi returned no live player props for ${map.league.toUpperCase()} (season not started or no props posted)`, source: SOURCE };
     }
@@ -187,7 +183,7 @@ export async function getSharpGameOdds(
           return (home === aNorm && away === bNorm) || (home === bNorm && away === aNorm);
         })
       : rows;
-    const matched = groupProps(eventRows.length ? eventRows : rows);
+    const matched = groupProps(eventRows.length ? eventRows : rows, sportKey);
     const first = rows[0];
 
     return {
