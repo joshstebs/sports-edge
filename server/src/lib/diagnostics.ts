@@ -94,9 +94,14 @@ export async function buildDiagnostics(): Promise<DiagnosticsSnapshot> {
       note: oddsApi ? 'Primary multi-book odds source.' : 'Not configured; featured odds use the ESPN sportsbook fallback when available.',
     },
     {
-      id: 'mlb-stats', label: 'MLB Stats API', configured: true, status: 'ready', primaryFor: ['MLB schedule', 'box scores', 'player stats', 'lineups'],
+      id: 'mlb-stats', label: 'MLB Stats API', configured: true, status: 'ready', primaryFor: ['MLB schedule', 'box scores', 'player stats', 'lineups', 'MLB injured-list status'],            
       fallback: 'ESPN for selected availability context', cacheTtl: '5m lineups · longer for stable history', source: 'statsapi.mlb.com',
-      note: 'Official MLB data source for core baseball facts.',
+      note: 'Official MLB data source for core baseball facts. MLB publishes no league-wide injuries endpoint, so injured-list state comes from the 40-man roster status.',
+    },
+    {
+      id: 'nflverse-injuries', label: 'nflverse injury reports', configured: true, status: 'ready', primaryFor: ['NFL weekly injury designations', 'practice participation'],
+      fallback: 'ESPN injury report', cacheTtl: '30m (weekly CSV, keyless)', source: 'github.com/nflverse/nflverse-data (injuries release)',
+      note: 'Free open-data weekly injury report: game designation (Out/Questionable) plus practice participation and primary injury.',
     },
     {
       id: 'savant', label: 'Baseball Savant', configured: true, status: 'ready', primaryFor: ['MLB advanced metrics'],
