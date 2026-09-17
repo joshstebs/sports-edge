@@ -204,3 +204,10 @@ test('model-only and explicitly unverified lines cannot enter a structured slip'
   assert.equal(result.lineBlocked.length, 1);
   assert.deepEqual(result.legs, []);
 });
+
+test('written five-to-six SGP request preserves its full count range', () => {
+  const policy = parseParlayQualityPolicy('Build a five to six leg Same Game Parlay');
+  assert.equal(policy.requestedMin, 5);
+  assert.equal(policy.requestedMax, 6);
+  assert.equal(policy.sameGameIntent, true);
+});
