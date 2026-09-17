@@ -13,7 +13,7 @@ import {
 } from '../providers/playerAvailability.js';
 import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
-import { parseParlayQualityPolicy, filterParlayQuality, requestedParlayShortfall } from '../lib/parlayQuality.js';
+import { parseParlayQualityPolicy, finalizeStructuredParlay } from '../lib/parlayQuality.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 
 export const chatRouter = Router();
@@ -508,11 +508,19 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
               game: log.matchup ?? '',
               eventDate: String(log.game_date ?? log.gameDate ?? '').slice(0, 10) || undefined,
               eventId: String(log.event_id ?? log.game_id ?? log.gamePk ?? '').trim() || undefined,
+              entity_type: l.entity_type ?? (l.player_name ? 'player' : undefined),
+              player_name: l.player_name,
+              team: l.team,
               selection: l.leg_name,
               market: l.market ?? null,
-              line: l.target_line != null ? String(l.target_line) : null,
+              side: l.side ?? (/\bunder\b/i.test(l.leg_name) ? 'under' : 'over'),
+              line: l.line ?? (l.target_line != null ? String(l.target_line) : null),
               odds: oddsNum,
               game_odds: null,
+              line_verified: l.line_verified,
+              line_source: l.line_source,
+              line_checked_at: l.line_checked_at,
+              provisional: l.provisional,
               confidence: Number.isFinite(prob)
                 ? Math.max(0, Math.min(100, prob <= 1 && prob > 0 ? Math.round(prob * 100) : Math.round(prob)))
                 : undefined,
@@ -532,38 +540,42 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const asksForRecommendation = /\b(?:give|build|make|create|recommend|suggest|find|show|add|save)\b[\s\S]{0,60}\b(?:bet|bets|pick|picks|prop|props|parlay|parlays|sgp|wager|wagers)\b/i.test(lastUserText) ||
       /\b(?:best|top)\s+(?:bet|bets|pick|picks|prop|props|parlay|parlays|wager|wagers)\b/i.test(lastUserText);
 
-    // --- Server-side parlay quality enforcement ---
-    // Apply the quality floor to both displayed picks (SGP blocks) and stored
-    // prediction learning history so D-grade legs and sub-threshold picks are
-    // never recommended or learned from. Normal requests require B (>=58%),
-    // aggressive requests may include C (>=50%) but never D (<50%).
+    // --- Server-side structured recommendation enforcement ---
+    // Pool every candidate before selection so rejected top rows can be
+    // backfilled from verified alternates. A requested multi-leg parlay is
+    // all-or-nothing: no partial slip is emitted or written to the ledger.
     const parlayPolicy = parseParlayQualityPolicy(lastUserText);
-    const qualityBlocked = new Set<string>();
-    const applyQualityFilter = (legs: any[]): any[] => {
-      const result = filterParlayQuality(legs, parlayPolicy);
-      for (const blocked of result.blocked) {
-        qualityBlocked.add(legFingerprint(blocked, ''));
-      }
-      return result.legs;
-    };
+    const pooledLegs = acceptedSgpBlocks.flatMap((block) =>
+      Array.isArray(block?.legs) ? block.legs : [],
+    );
+    const finalizedParlay = finalizeStructuredParlay(pooledLegs, parlayPolicy);
+    const qualityBlocked = new Set(
+      finalizedParlay.blocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
+    );
+    const lineBlocked = new Set(
+      finalizedParlay.lineBlocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
+    );
 
-    // Filter accepted SGP blocks (displayed picks)
-    acceptedSgpBlocks.forEach((block) => {
-      if (Array.isArray(block?.legs)) {
-        block.legs = applyQualityFilter(block.legs);
-      }
-    });
-    const hadQualitySgpLegs = acceptedSgpBlocks.some((b) => Array.isArray(b?.legs) && b.legs.length > 0);
-    if (!hadQualitySgpLegs) acceptedSgpBlocks.length = 0;
-
-    // Apply the identical quality filter to prediction learning history
-    const preQualityLogCount = filteredLogs.length;
-    for (const log of filteredLogs) {
-      if (Array.isArray(log?.legs)) {
-        log.legs = applyQualityFilter(log.legs);
-      }
+    acceptedSgpBlocks.length = 0;
+    if (finalizedParlay.complete) {
+      acceptedSgpBlocks.push({ legs: finalizedParlay.legs });
     }
-    filteredLogs = filteredLogs.filter((log) => Array.isArray(log?.legs) && log.legs.length > 0);
+
+    // Store exactly the displayed, verified picks. This prevents invisible or
+    // rejected candidates from poisoning the performance history and ensures
+    // every displayed selection has one corresponding durable ledger record.
+    const selectedLegs = new Set(
+      finalizedParlay.legs.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
+    );
+    const preQualityLogCount = filteredLogs.length;
+    filteredLogs = filteredLogs
+      .map((log) => ({
+        ...log,
+        legs: (Array.isArray(log?.legs) ? log.legs : []).filter((leg: any) =>
+          selectedLegs.has(legFingerprint(leg, log.sport)),
+        ),
+      }))
+      .filter((log) => log.legs.length > 0);
     const qualityRemovedLogs = preQualityLogCount - filteredLogs.length;
 
     const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
@@ -574,26 +586,26 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const blockedLegs = availabilityBlocked.size;
     const modelBlockedLegs = modelBlocked.size;
     const qualityBlockedLegs = qualityBlocked.size;
-    if (blockedLegs || modelBlockedLegs || qualityBlockedLegs) {
+    const lineBlockedLegs = lineBlocked.size;
+    const requestedShortfall = finalizedParlay.shortfall;
+    if (blockedLegs || modelBlockedLegs || qualityBlockedLegs || lineBlockedLegs || requestedShortfall) {
       const notes = [
         blockedLegs ? `${blockedLegs} leg${blockedLegs === 1 ? '' : 's'} failed current roster, injury, or game-day verification` : '',
         modelBlockedLegs ? `${modelBlockedLegs} leg${modelBlockedLegs === 1 ? '' : 's'} lacked an exact non-D evidence model with verified positive edge` : '',
         qualityBlockedLegs ? `${qualityBlockedLegs} leg${qualityBlockedLegs === 1 ? '' : 's'} did not meet the parlay quality threshold` : '',
+        lineBlockedLegs ? `${lineBlockedLegs} leg${lineBlockedLegs === 1 ? '' : 's'} lacked a current sportsbook line and price` : '',
+        requestedShortfall ? `only ${finalizedParlay.qualified.length} of ${parlayPolicy.requestedMin} requested legs survived verification` : '',
       ].filter(Boolean).join('; ');
       sse(res, 'delta', {
-        text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. ${acceptedSgpBlocks.length ? 'Only the verified structured picks are shown below.' : 'No bet was added to the slip.'}`,
+        text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
       });
     } else if (hadStructuredCandidates) {
       // Never display model-authored recommendation prose. It can mention
       // extra picks that were not represented in the machine-readable blocks
       // and therefore never passed availability/model verification.
-      const totalLegs = acceptedSgpBlocks.reduce((sum, block) => sum + (Array.isArray(block?.legs) ? block.legs.length : 0), 0);
-      const requestedLegs = requestedParlayShortfall(parlayPolicy, totalLegs);
-      const shortfallNote = requestedLegs > 0
-        ? ` Only ${totalLegs} of ${parlayPolicy.requestedMin ?? totalLegs} requested legs meet the quality threshold; I won't pad the parlay with weaker bets.`
-        : '';
+      const totalLegs = finalizedParlay.legs.length;
       sse(res, 'delta', {
-        text: `**Verified recommendation:** ${totalLegs} structured ${acceptedSgpBlocks.length === 1 && totalLegs === 1 ? 'leg passed' : 'legs passed'} current availability, evidence, and quality checks. Details are shown below.${shortfallNote}`,
+        text: `**Verified recommendation:** all ${totalLegs} requested structured ${totalLegs === 1 ? 'leg passed' : 'legs passed'} current availability, sportsbook-line, evidence, and quality checks. Details are shown below.`,
       });
     } else {
       sse(res, 'delta', { text: finalText });
@@ -617,6 +629,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       blocked: blockedLegs,
       modelBlocked: modelBlockedLegs,
       qualityBlocked: qualityBlockedLegs,
+      lineBlocked: lineBlockedLegs,
+      requestedShortfall,
       qualityRemovedLogs,
       ...(failed ? { error: 'Prediction history could not be saved; durable storage may not be configured.' } : {}),
     });
