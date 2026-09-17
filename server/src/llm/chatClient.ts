@@ -90,13 +90,21 @@ function clampRequestedPicks(value: number): number | undefined {
 }
 
 function inferRequestedPicks(text: string): number | undefined {
-  const range = text.match(/\b(\d{1,2})\s*(?:or|to|-)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
+  const numberWords: Record<string, string> = {
+    one: '1', two: '2', three: '3', four: '4', five: '5',
+    six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  };
+  const normalized = text.toLowerCase().replace(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+    (word) => numberWords[word],
+  );
+  const range = normalized.match(/\b(\d{1,2})\s*(?:or|to|-|–|—)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
   if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
-  const giveMe = text.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-)\s*(\d{1,2}))?/i);
+  const giveMe = normalized.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-|–|—)\s*(\d{1,2}))?/i);
   if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
-  const sportQualified = text.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
+  const sportQualified = normalized.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
   if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
-  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
+  const explicit = normalized.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
   if (explicit) return clampRequestedPicks(Number(explicit[1]));
   return undefined;
 }
