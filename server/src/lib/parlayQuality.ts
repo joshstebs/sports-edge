@@ -227,6 +227,7 @@ export function hasCurrentMarketLine(
   maxAgeMs = 15 * 60 * 1000,
 ): boolean {
   const entityType = String(leg?.entity_type ?? '').toLowerCase();
+  if (leg?.provisional === true || leg?.line_verified === false) return false;
   const odds = Number(leg?.odds ?? leg?.implied_odds);
   const source = String(leg?.line_source ?? leg?.market_source ?? leg?.quality_source ?? '').trim();
   const checkedAt = leg?.line_checked_at ?? leg?.market_checked_at ?? leg?.checked_at;
