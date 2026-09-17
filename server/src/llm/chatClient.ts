@@ -81,7 +81,9 @@ interface ScreenerIntent {
   side?: ScreenerSide;
   sport?: 'mlb' | 'nba' | 'nfl' | 'nhl';
   gameMarket?: 'moneyline';
-  requestKind?: 'player_prop' | 'game_market' | 'mixed';\n  sameGame?: boolean;\n}
+  requestKind?: 'player_prop' | 'game_market' | 'mixed';
+  sameGame?: boolean;
+}
 
 function clampRequestedPicks(value: number): number | undefined {
   return Number.isFinite(value) ? Math.min(10, Math.max(1, Math.round(value))) : undefined;
@@ -102,7 +104,8 @@ function inferRequestedPicks(text: string): number | undefined {
 export function inferScreenerIntent(text: string): ScreenerIntent {
   const lower = text.toLowerCase();
   const intent: ScreenerIntent = {};
-  intent.requestedPicks = inferRequestedPicks(text);\n  intent.sameGame = /\\b(?:same[- ]?game|sgp)\\b/i.test(text);
+  intent.requestedPicks = inferRequestedPicks(text);
+  intent.sameGame = /\b(?:same[- ]?game|sgp)\b/i.test(text);
 
   const hasOver = /\bover(?:s)?\b/i.test(text);
   const hasUnder = /\bunder(?:s)?\b/i.test(text);
@@ -169,7 +172,8 @@ function inferConversationScreenerIntent(msgs: ChatMessage[]): ScreenerIntent {
     current.side ??= prior.side;
     current.sport ??= prior.sport;
     current.gameMarket ??= prior.gameMarket;
-    current.requestKind ??= prior.requestKind;\n    current.sameGame ||= prior.sameGame;
+    current.requestKind ??= prior.requestKind;
+    current.sameGame ||= prior.sameGame;
     if (current.requestedPicks == null && /\b(more|other|another|different|additional|again)\b/i.test(userTexts[userTexts.length - 1])) {
       current.requestedPicks = prior.requestedPicks;
     }
@@ -188,7 +192,8 @@ function patchScreenerCall(
   if (intent.sport) parsed.sport = intent.sport;
   if (intent.requestedPicks != null) parsed.requestedPicks = intent.requestedPicks;
   if (intent.market) parsed.market = intent.market;
-  if (intent.side) parsed.side = intent.side;\n  if (intent.sameGame) parsed.sameGame = true;
+  if (intent.side) parsed.side = intent.side;
+  if (intent.sameGame) parsed.sameGame = true;
   if (wantsMore && priorNames.length) {
     const already = new Set<string>([
       ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
@@ -458,7 +463,10 @@ export async function runAgent(
       const forcedArgs: Record<string, unknown> = {
         sport: intent.sport ?? 'mlb',
         requestedPicks: intent.requestedPicks ?? 5,
-        date: currentDate,\n        ...(intent.sameGame ? { sameGame: true } : {}),\n      };\n      if (intent.market) forcedArgs.market = intent.market;
+        date: currentDate,
+        ...(intent.sameGame ? { sameGame: true } : {}),
+      };
+      if (intent.market) forcedArgs.market = intent.market;
       if (intent.side) forcedArgs.side = intent.side;
       if (wantsMore && priorNames.length) forcedArgs.exclude = priorNames;
       screenerCall = {
