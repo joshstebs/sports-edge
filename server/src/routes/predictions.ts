@@ -24,16 +24,9 @@ function cronAuthorized(header: string | undefined): boolean {
   return suppliedBuffer.length === expectedBuffer.length && timingSafeEqual(suppliedBuffer, expectedBuffer);
 }
 
-function torontoHour(now = new Date()): number {
-  const hour = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Toronto', hour: '2-digit', hour12: false,
-  }).formatToParts(now).find((part) => part.type === 'hour')?.value;
-  return Number(hour);
-}
-
-// Vercel Cron schedules are UTC. vercel.json invokes this at both 10:00 and
-// 11:00 UTC so one invocation always lands at 06:00 America/Toronto across
-// daylight-saving changes. The other invocation is an authenticated no-op.
+// The cron endpoint is idempotent because the evaluator reads pending rows
+// only. Do not reject a valid invocation based on an exact local-clock hour:
+// scheduler jitter and daylight-saving boundaries must not skip a day's grades.
 evaluationRouter.get('/evaluate', async (req, res) => {
   if (!process.env.CRON_SECRET) {
     res.status(503).json({ ok: false, code: 'CRON_NOT_CONFIGURED', error: 'CRON_SECRET is required' });
@@ -43,11 +36,9 @@ evaluationRouter.get('/evaluate', async (req, res) => {
     res.status(401).json({ ok: false, code: 'UNAUTHORIZED', error: 'Invalid cron authorization' });
     return;
   }
-  if (torontoHour() !== 6) {
-    res.json({ ok: true, skipped: true, reason: 'outside 06:00 America/Toronto evaluation window' });
-    return;
-  }
   try {
+    const requestedAt = new Date().toISOString();
+    console.info('[prediction-evaluation] starting', { requestedAt, storage: storageStatus() });
     if (!evaluationInFlight) evaluationInFlight = runPredictionEvaluation({
       maxPredictions: 25,
       maxLegs: 60,
@@ -60,8 +51,19 @@ evaluationRouter.get('/evaluate', async (req, res) => {
       pending: -1,
       error: (error as Error).message,
     }));
+    console.info('[prediction-evaluation] completed', {
+      requestedAt,
+      finishedAt: result.finishedAt,
+      processed: result.processed,
+      evaluated: result.evaluated,
+      needsReview: result.needsReview,
+      deferred: result.deferred,
+      remainingPending: result.remainingPending,
+      candidateHistory,
+    });
     res.json({ ok: true, storage: storageStatus(), candidateHistory, ...result });
   } catch (error) {
+    console.error('[prediction-evaluation] failed', error);
     const unavailable = error instanceof StorageNotConfiguredError;
     res.status(unavailable ? 503 : 500).json({ ok: false, code: unavailable ? error.code : 'EVALUATION_ERROR', error: (error as Error).message });
   }
