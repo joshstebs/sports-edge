@@ -163,6 +163,5 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
   for (const log of logs) {
     output.push(''); output.push('[PREDICTION_LOG]'); output.push(JSON.stringify(log));
   }
-  return output.join('
-');
+  return output.join('\n');
 }
