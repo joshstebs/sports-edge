@@ -46,7 +46,7 @@ function lineLabel(candidate: any): string {
  * graded the next morning.
  */
 export function renderScreenerSummaryBlocks(candidates: any[], requested: number): string {
-  const top = candidates.slice(0, Math.max(1, requested));
+  // Keep a wider structured pool so server-side availability, line, and quality\n  // gates can backfill rejected top rows without asking the model to invent more.\n  const poolSize = Math.max(1, requested * 2, requested + 4);\n  const top = candidates.slice(0, poolSize);
   const output: string[] = [];
   const timestamp = new Date().toISOString();
   const anyProvisional = top.some((candidate) => String(candidate?.sport ?? '').toLowerCase() === 'mlb' && candidate?.inLineupToday === false);
@@ -102,14 +102,12 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
       if (parts.length) output.push('   _form: ' + parts.join(' · ') + '_');
     }
 
-    const qualitySource = String(candidate?.qualitySource ?? candidate?.source ?? '').trim() || null;
-    sgpLegs.push({
+    const qualitySource = String(candidate?.qualitySource ?? candidate?.source ?? '').trim() || null;\n    const lineSource = String(candidate?.marketSource ?? candidate?.source ?? '').trim() || null;\n    const lineVerified = Boolean(odds != null && lineSource && (gameMarket || candidate?.marketLine != null));\n    sgpLegs.push({
       entity_type: gameMarket ? 'team' : 'player',
       ...(gameMarket ? { team: candidate.team, quality_source: qualitySource } : { player_name: candidate.player }),
       sport, game: matchup, game_date: candidate.eventDate, event_id: candidate.eventId, selection,
       market: candidate.market, side: gameMarket ? null : candidate.side, line: gameMarket ? null : line,
-      odds, game_odds: null,
-      justification: gameMarket
+      odds, game_odds: null, line_verified: lineVerified, line_source: lineSource, line_checked_at: timestamp,\n      justification: gameMarket
         ? label + '; ' + String(candidate.modelVersion ?? 'market-consensus-v1') + ' no-vig probability ' + prob
         : label + '; deterministic ' + String(candidate.modelVersion ?? 'model') + ' ' + prob,
       risk: qualityTier === 'core' ? 'Medium' : 'Medium-High', correlation: 'Neutral',
@@ -135,8 +133,7 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
           model_version: candidate.modelVersion ?? null,
           model_sample_size: gameMarket ? null : (candidate.sampleSize ?? null),
           model_source: qualitySource,
-          implied_odds: odds,
-          key_metric_used: gameMarket ? 'two-sided no-vig market consensus probability' : label,
+          implied_odds: odds,\n          line_verified: lineVerified,\n          line_source: lineSource,\n          line_checked_at: timestamp,\n          key_metric_used: gameMarket ? 'two-sided no-vig market consensus probability' : label,
         }],
         recommended_units: qualityTier === 'core' ? '0.5' : '0.25',
       });
