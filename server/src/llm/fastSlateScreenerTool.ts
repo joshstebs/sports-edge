@@ -190,11 +190,13 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const rawSide = String(args?.side ?? '').trim();
   const sideFilter = requestedSide(rawSide);
   if (rawSide && !sideFilter) return unavailable(`unsupported side ${rawSide}; expected over or under`);
-  const constrained = Boolean(marketFilter || sideFilter);\n  const sameGame = args?.sameGame === true;
+  const constrained = Boolean(marketFilter || sideFilter);
+  const sameGame = args?.sameGame === true;
   // Pull a wider pool for market/side-specific requests. Filtering to one market
   // or one direction naturally removes many generic top candidates, so screen
   // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
-  const defaultPlayers = sameGame ? Math.max(16, requested * 3) : constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);\n  const maxPlayersCap = sameGame || constrained ? 22 : 14;
+  const defaultPlayers = sameGame ? Math.max(16, requested * 3) : constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
+  const maxPlayersCap = sameGame || constrained ? 22 : 14;
   const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
@@ -216,7 +218,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
   // ignoring later games that may contain stronger requested-market candidates.
-  // An SGP must draw every leg from one event. Scope discovery before player\n  // balancing so a five-leg SGP is not diluted to one or two players per game.\n  const defaultMaxEvents = sameGame ? 1 : constrained ? 8 : 6;
+  // An SGP must draw every leg from one event. Scope discovery before player
+  // balancing so a five-leg SGP is not diluted to one or two players per game.
+  const defaultMaxEvents = sameGame ? 1 : constrained ? 8 : 6;
   const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
   const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
@@ -306,7 +310,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
-  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>\n    setTimeout(() => resolve({ available: false, reason: 'live price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
+  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>
+    setTimeout(() => resolve({ available: false, reason: 'live price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
   );
   const sharpPrices = await Promise.race([
     getConsensusSlatePrices(sport),
@@ -315,7 +320,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   if (!sharpPrices.available) {
     console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
   }
-  const sharpByKey = sharpPrices.byKey;\n  const alternatesByKey = sharpPrices.alternatesByKey;
+  const sharpByKey = sharpPrices.byKey;
+  const alternatesByKey = sharpPrices.alternatesByKey;
   const sharpline = (player: string, market: string) => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
     return match ?? null;
@@ -352,7 +358,13 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketLine: live?.line ?? null,
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
-      marketSource: live?.source ?? null,\n      marketBook: live?.book ?? null,\n      bookCount: live?.bookCount ?? null,\n      lineType: live?.lineType ?? null,\n      isAlternate: live?.isAlternate ?? false,\n      lineLabel: live?.lineLabel ?? null,\n      alternateLines: alternatesByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
+      marketSource: live?.source ?? null,
+      marketBook: live?.book ?? null,
+      bookCount: live?.bookCount ?? null,
+      lineType: live?.lineType ?? null,
+      isAlternate: live?.isAlternate ?? false,
+      lineLabel: live?.lineLabel ?? null,
+      alternateLines: alternatesByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
       estimatedEdge: liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10,
       edgeOver: liveEvaluation?.edgeOver == null ? null : Math.round(liveEvaluation.edgeOver * 1000) / 10,
       edgeUnder: liveEvaluation?.edgeUnder == null ? null : Math.round(liveEvaluation.edgeUnder * 1000) / 10,
@@ -405,7 +417,8 @@ export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
       side: { type: 'string', enum: ['over', 'under'], description: 'Optional requested direction. If the user asks for OVER bets, pass over; if UNDER, pass under. Never omit an explicit user direction.' },
       exclude: { type: 'array', items: { type: 'string' }, description: 'Optional player names to exclude, especially for more/other/different follow-ups.' },
       maxPlayers: { type: 'number', description: '8-22 players; constrained market/side requests automatically screen a wider pool' },
-      maxEvents: { type: 'number', description: 'Screen at most this many events (forced to one for same-game parlays)' },\n      sameGame: { type: 'boolean', description: 'True for Same Game Parlay/SGP requests; scopes every candidate to one event' },
+      maxEvents: { type: 'number', description: 'Screen at most this many events (forced to one for same-game parlays)' },
+      sameGame: { type: 'boolean', description: 'True for Same Game Parlay/SGP requests; scopes every candidate to one event' },
       minConfidence: { type: 'number', description: 'Decimal; default 0.54' },
     },
     required: ['sport'],
