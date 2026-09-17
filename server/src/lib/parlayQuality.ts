@@ -1,3 +1,5 @@
+import { propLineIntegrity } from '../models/propLineIntegrity.js';
+
 export interface ParlayQualityPolicy {
   aggressive: boolean;
   sameGameIntent: boolean;
@@ -177,6 +179,138 @@ export function filterParlayQuality<T extends Record<string, any>>(
     blocked: [...blocked, ...unusedSupplemental],
     coreCount: capped.filter((leg: any) => leg?.quality_tier !== 'supplemental').length,
     supplementalCount: capped.filter((leg: any) => leg?.quality_tier === 'supplemental').length,
+  };
+}
+
+
+export interface StructuredParlayResult<T = any> {
+  legs: T[];
+  qualified: T[];
+  blocked: T[];
+  lineBlocked: T[];
+  complete: boolean;
+  shortfall: number;
+  requestedMin: number | null;
+  requestedMax: number | null;
+}
+
+function normalizedSelection(leg: Record<string, any>): string {
+  return String(leg?.selection ?? leg?.leg_name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9.+-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function structuredLegKey(leg: Record<string, any>): string {
+  return [
+    eventKey(leg),
+    normalizedSelection(leg),
+    String(leg?.market ?? '').toLowerCase(),
+    String(leg?.side ?? '').toLowerCase(),
+    String(leg?.line ?? leg?.target_line ?? ''),
+  ].join('|');
+}
+
+function currentTimestamp(value: unknown, nowMs: number, maxAgeMs: number): boolean {
+  const parsed = Date.parse(String(value ?? ''));
+  return Number.isFinite(parsed) && parsed <= nowMs + 60_000 && nowMs - parsed <= maxAgeMs;
+}
+
+/**
+ * A final structured leg must identify a real, recently checked market.
+ * Model-only screening lines are intentionally not bettable.
+ */
+export function hasCurrentMarketLine(
+  leg: Record<string, any>,
+  nowMs = Date.now(),
+  maxAgeMs = 15 * 60 * 1000,
+): boolean {
+  const entityType = String(leg?.entity_type ?? '').toLowerCase();
+  const odds = Number(leg?.odds ?? leg?.implied_odds);
+  const source = String(leg?.line_source ?? leg?.market_source ?? leg?.quality_source ?? '').trim();
+  const checkedAt = leg?.line_checked_at ?? leg?.market_checked_at ?? leg?.checked_at;
+  if (!Number.isFinite(odds) || odds === 0 || !source || !currentTimestamp(checkedAt, nowMs, maxAgeMs)) return false;
+
+  if (entityType === 'team' || entityType === 'game') return true;
+
+  const sport = String(leg?.sport ?? '').toLowerCase();
+  const side = String(leg?.side ?? '').toLowerCase();
+  const line = leg?.line ?? leg?.target_line;
+  return (side === 'over' || side === 'under') && propLineIntegrity(sport, leg?.market, line).valid;
+}
+
+function confidenceOf(leg: Record<string, any>): number {
+  return toConfidence(leg?.confidence ?? leg?.model_probability) ?? 0;
+}
+
+function bestSameGamePool<T extends Record<string, any>>(
+  legs: T[],
+  policy: ParlayQualityPolicy,
+): QualityFilterResult<T> {
+  const groups = new Map<string, T[]>();
+  for (const leg of legs) {
+    const key = eventKey(leg);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), leg]);
+  }
+
+  const ranked = [...groups.values()]
+    .map((group) => filterParlayQuality(group, policy))
+    .sort((a, b) =>
+      Number(b.legs.length >= (policy.requestedMin ?? 1)) - Number(a.legs.length >= (policy.requestedMin ?? 1))
+      || b.legs.length - a.legs.length
+      || b.legs.reduce((sum, leg) => sum + confidenceOf(leg), 0)
+        - a.legs.reduce((sum, leg) => sum + confidenceOf(leg), 0)
+    );
+  return ranked[0] ?? { legs: [], blocked: [], coreCount: 0, supplementalCount: 0 };
+}
+
+/**
+ * Final all-or-nothing parlay gate. It pools every structured candidate,
+ * rejects stale/model-only lines, deduplicates legs, backfills from ranked
+ * alternates, and emits no slip unless the requested minimum is satisfied.
+ */
+export function finalizeStructuredParlay<T extends Record<string, any>>(
+  rawLegs: T[],
+  policy: ParlayQualityPolicy,
+  nowMs = Date.now(),
+): StructuredParlayResult<T> {
+  const unique: T[] = [];
+  const duplicates: T[] = [];
+  const seen = new Set<string>();
+  for (const leg of Array.isArray(rawLegs) ? rawLegs : []) {
+    const key = structuredLegKey(leg);
+    if (!normalizedSelection(leg) || seen.has(key)) {
+      duplicates.push(leg);
+      continue;
+    }
+    seen.add(key);
+    unique.push(leg);
+  }
+
+  const current: T[] = [];
+  const lineBlocked: T[] = [];
+  for (const leg of unique) {
+    if (hasCurrentMarketLine(leg, nowMs)) current.push(leg);
+    else lineBlocked.push(leg);
+  }
+
+  const quality = policy.sameGameIntent
+    ? bestSameGamePool(current, policy)
+    : filterParlayQuality(current, policy);
+  const shortfall = requestedParlayShortfall(policy, quality.legs.length);
+  const complete = quality.legs.length > 0 && shortfall === 0;
+
+  return {
+    legs: complete ? quality.legs : [],
+    qualified: quality.legs,
+    blocked: [...duplicates, ...quality.blocked],
+    lineBlocked,
+    complete,
+    shortfall,
+    requestedMin: policy.requestedMin,
+    requestedMax: policy.requestedMax,
   };
 }
 
