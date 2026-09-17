@@ -44,7 +44,14 @@ function isExplicitlyNegativeCorrelation(leg: Record<string, any>): boolean {
 }
 
 export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
-  const normalized = String(text ?? '').toLowerCase();
+  const numberWords: Record<string, string> = {
+    one: '1', two: '2', three: '3', four: '4', five: '5',
+    six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  };
+  const normalized = String(text ?? '').toLowerCase().replace(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+    (word) => numberWords[word],
+  );
   const aggressive = /\b(?:aggressive|high[- ]?risk|long[- ]?shot|lottery|moonshot)\b/i.test(normalized);
   const sameGameIntent = /\b(?:same[- ]?game|sgp)\b/i.test(normalized);
 
