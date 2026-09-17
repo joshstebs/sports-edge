@@ -126,7 +126,22 @@ async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): P
   }
   const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
   if (!log.available || !Array.isArray(log.games)) return null;
-  return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
+  let games = log.games;
+  let usedPriorSeason = false;
+  if (games.length < 5) {
+    const prior = await espn.getGamelog(playerId, ESPN_MAP[s], 20, new Date().getUTCFullYear() - 1);
+    if (prior.available && Array.isArray(prior.games)) {
+      const seen = new Set(games.map((game) => String(game.gameId)));
+      games = [...games, ...prior.games.filter((game) => !seen.has(String(game.gameId)))].slice(0, 20);
+      usedPriorSeason = games.length > log.games.length;
+    }
+  }
+  return {
+    source: usedPriorSeason ? 'site.web.api.espn.com (current + prior season)' : 'site.web.api.espn.com',
+    season: { season: log.season ?? null, priorSeasonFallback: usedPriorSeason },
+    games,
+    mode: 'espn',
+  };
 }
 function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
   return history.games.map((game: any) => {
