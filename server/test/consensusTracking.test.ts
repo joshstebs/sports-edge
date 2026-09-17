@@ -121,3 +121,9 @@ test('same-game intent is passed to the structured slate screener', () => {
   assert.equal(intent.sameGame, true);
   assert.equal(intent.requestedPicks, 6);
 });
+
+test('written five-to-six range requests six screener candidates', () => {
+  const intent = inferScreenerIntent('Build a five to six leg NFL SGP');
+  assert.equal(intent.requestedPicks, 6);
+  assert.equal(intent.sameGame, true);
+});
