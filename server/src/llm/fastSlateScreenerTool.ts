@@ -1,6 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, getSharpSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, snapToRealisticLine, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
@@ -126,7 +126,22 @@ async function loadPlayerHistory(player: DiscoveredPlayer, sport: ModelSport): P
   }
   const log = await espn.getGamelog(playerId, ESPN_MAP[s], 20);
   if (!log.available || !Array.isArray(log.games)) return null;
-  return { source: 'site.web.api.espn.com', season: { season: log.season ?? null }, games: log.games, mode: 'espn' };
+  let games = log.games;
+  let usedPriorSeason = false;
+  if (games.length < 5) {
+    const prior = await espn.getGamelog(playerId, ESPN_MAP[s], 20, new Date().getUTCFullYear() - 1);
+    if (prior.available && Array.isArray(prior.games)) {
+      const seen = new Set(games.map((game) => String(game.gameId)));
+      games = [...games, ...prior.games.filter((game) => !seen.has(String(game.gameId)))].slice(0, 20);
+      usedPriorSeason = games.length > log.games.length;
+    }
+  }
+  return {
+    source: usedPriorSeason ? 'site.web.api.espn.com (current + prior season)' : 'site.web.api.espn.com',
+    season: { season: log.season ?? null, priorSeasonFallback: usedPriorSeason },
+    games,
+    mode: 'espn',
+  };
 }
 function observations(history: CachedHistory, sport: ModelSport, market: string): HistoricalObservation[] {
   return history.games.map((game: any) => {
@@ -191,11 +206,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const sideFilter = requestedSide(rawSide);
   if (rawSide && !sideFilter) return unavailable(`unsupported side ${rawSide}; expected over or under`);
   const constrained = Boolean(marketFilter || sideFilter);
+  const sameGame = args?.sameGame === true;
   // Pull a wider pool for market/side-specific requests. Filtering to one market
   // or one direction naturally removes many generic top candidates, so screen
   // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
-  const defaultPlayers = constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
-  const maxPlayersCap = constrained ? 22 : 14;
+  const defaultPlayers = sameGame ? Math.max(16, requested * 3) : constrained ? Math.max(12, requested * 3) : Math.max(8, requested * 2);
+  const maxPlayersCap = sameGame || constrained ? 22 : 14;
   const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
@@ -217,7 +233,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
   // ignoring later games that may contain stronger requested-market candidates.
-  const defaultMaxEvents = constrained ? 8 : 6;
+  // An SGP must draw every leg from one event. Scope discovery before player
+  // balancing so a five-leg SGP is not diluted to one or two players per game.
+  const defaultMaxEvents = sameGame ? 1 : constrained ? 8 : 6;
   const maxEvents = Math.min(Number(args?.maxEvents ?? defaultMaxEvents) || defaultMaxEvents, events.length);
   const scopedEvents = spreadEvents(events, maxEvents);
   const groups = await mapConcurrent(scopedEvents, 4, async (event) =>
@@ -307,17 +325,18 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
-  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any> }>((resolve) =>
-    setTimeout(() => resolve({ available: false, reason: 'SharpApi price lookup timed out (3s deadline)', byKey: new Map<string, any>() }), 3_000)
+  const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>
+    setTimeout(() => resolve({ available: false, reason: 'live price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
   );
   const sharpPrices = await Promise.race([
-    getSharpSlatePrices(sport, { home: '', away: '' }),
+    getConsensusSlatePrices(sport),
     sharpDeadline,
-  ]).catch(() => ({ available: false, reason: 'SharpApi price lookup crashed', byKey: new Map<string, any>() }));
+  ]).catch(() => ({ available: false, reason: 'live price lookup crashed', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }));
   if (!sharpPrices.available) {
     console.warn(`[slateScreener] live market prices unavailable (${sharpPrices.reason ?? 'unknown'}) — candidates carry model-derived lines only`);
   }
   const sharpByKey = sharpPrices.byKey;
+  const alternatesByKey = sharpPrices.alternatesByKey;
   const sharpline = (player: string, market: string) => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
     return match ?? null;
@@ -354,8 +373,13 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketLine: live?.line ?? null,
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
-      marketSource: live ? 'api.sharpapi.io' : null,
+      marketSource: live?.source ?? null,
       marketBook: live?.book ?? null,
+      bookCount: live?.bookCount ?? null,
+      lineType: live?.lineType ?? null,
+      isAlternate: live?.isAlternate ?? false,
+      lineLabel: live?.lineLabel ?? null,
+      alternateLines: alternatesByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? [],
       estimatedEdge: liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10,
       edgeOver: liveEvaluation?.edgeOver == null ? null : Math.round(liveEvaluation.edgeOver * 1000) / 10,
       edgeUnder: liveEvaluation?.edgeUnder == null ? null : Math.round(liveEvaluation.edgeUnder * 1000) / 10,
@@ -408,7 +432,8 @@ export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
       side: { type: 'string', enum: ['over', 'under'], description: 'Optional requested direction. If the user asks for OVER bets, pass over; if UNDER, pass under. Never omit an explicit user direction.' },
       exclude: { type: 'array', items: { type: 'string' }, description: 'Optional player names to exclude, especially for more/other/different follow-ups.' },
       maxPlayers: { type: 'number', description: '8-22 players; constrained market/side requests automatically screen a wider pool' },
-      maxEvents: { type: 'number', description: 'Screen at most this many events (default 6 generic, 8 when market/side constrained) sampled across the slate' },
+      maxEvents: { type: 'number', description: 'Screen at most this many events (forced to one for same-game parlays)' },
+      sameGame: { type: 'boolean', description: 'True for Same Game Parlay/SGP requests; scopes every candidate to one event' },
       minConfidence: { type: 'number', description: 'Decimal; default 0.54' },
     },
     required: ['sport'],

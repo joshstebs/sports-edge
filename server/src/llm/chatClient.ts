@@ -82,6 +82,7 @@ interface ScreenerIntent {
   sport?: 'mlb' | 'nba' | 'nfl' | 'nhl';
   gameMarket?: 'moneyline';
   requestKind?: 'player_prop' | 'game_market' | 'mixed';
+  sameGame?: boolean;
 }
 
 function clampRequestedPicks(value: number): number | undefined {
@@ -89,13 +90,21 @@ function clampRequestedPicks(value: number): number | undefined {
 }
 
 function inferRequestedPicks(text: string): number | undefined {
-  const range = text.match(/\b(\d{1,2})\s*(?:or|to|-)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
+  const numberWords: Record<string, string> = {
+    one: '1', two: '2', three: '3', four: '4', five: '5',
+    six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  };
+  const normalized = text.toLowerCase().replace(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+    (word) => numberWords[word],
+  );
+  const range = normalized.match(/\b(\d{1,2})\s*(?:or|to|-|–|—)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
   if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
-  const giveMe = text.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-)\s*(\d{1,2}))?/i);
+  const giveMe = normalized.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-|–|—)\s*(\d{1,2}))?/i);
   if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
-  const sportQualified = text.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
+  const sportQualified = normalized.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
   if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
-  const explicit = text.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
+  const explicit = normalized.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
   if (explicit) return clampRequestedPicks(Number(explicit[1]));
   return undefined;
 }
@@ -104,6 +113,7 @@ export function inferScreenerIntent(text: string): ScreenerIntent {
   const lower = text.toLowerCase();
   const intent: ScreenerIntent = {};
   intent.requestedPicks = inferRequestedPicks(text);
+  intent.sameGame = /\b(?:same[- ]?game|sgp)\b/i.test(text);
 
   const hasOver = /\bover(?:s)?\b/i.test(text);
   const hasUnder = /\bunder(?:s)?\b/i.test(text);
@@ -171,6 +181,7 @@ function inferConversationScreenerIntent(msgs: ChatMessage[]): ScreenerIntent {
     current.sport ??= prior.sport;
     current.gameMarket ??= prior.gameMarket;
     current.requestKind ??= prior.requestKind;
+    current.sameGame ||= prior.sameGame;
     if (current.requestedPicks == null && /\b(more|other|another|different|additional|again)\b/i.test(userTexts[userTexts.length - 1])) {
       current.requestedPicks = prior.requestedPicks;
     }
@@ -190,6 +201,7 @@ function patchScreenerCall(
   if (intent.requestedPicks != null) parsed.requestedPicks = intent.requestedPicks;
   if (intent.market) parsed.market = intent.market;
   if (intent.side) parsed.side = intent.side;
+  if (intent.sameGame) parsed.sameGame = true;
   if (wantsMore && priorNames.length) {
     const already = new Set<string>([
       ...(Array.isArray(parsed.exclude) ? parsed.exclude.map(String) : []),
@@ -460,6 +472,7 @@ export async function runAgent(
         sport: intent.sport ?? 'mlb',
         requestedPicks: intent.requestedPicks ?? 5,
         date: currentDate,
+        ...(intent.sameGame ? { sameGame: true } : {}),
       };
       if (intent.market) forcedArgs.market = intent.market;
       if (intent.side) forcedArgs.side = intent.side;

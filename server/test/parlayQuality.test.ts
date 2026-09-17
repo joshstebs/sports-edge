@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   filterParlayQuality,
+  finalizeStructuredParlay,
   parseParlayQualityPolicy,
   requestedParlayShortfall,
 } from '../src/lib/parlayQuality.js';
@@ -127,4 +128,86 @@ test('reports requested-count shortfall after target-fill candidates are exhaust
   const policy = parseParlayQualityPolicy('Give me 6 picks');
   assert.equal(requestedParlayShortfall(policy, 4), 2);
   assert.equal(requestedParlayShortfall(policy, 6), 0);
+});
+
+
+const NOW_MS = Date.parse('2026-09-17T16:00:00.000Z');
+
+function liveNflLeg(player: string, eventId: string, confidence = 60, extra: Record<string, unknown> = {}) {
+  return {
+    entity_type: 'player',
+    sport: 'NFL',
+    event_id: eventId,
+    player_name: player,
+    selection: `${player} OVER 49.5 Receiving Yards`,
+    market: 'receivingYards',
+    side: 'over',
+    line: 49.5,
+    odds: -110,
+    line_verified: true,
+    line_source: 'sportsbook-consensus',
+    line_checked_at: '2026-09-17T15:55:00.000Z',
+    confidence,
+    ...extra,
+  };
+}
+
+test('structured parlay backfills a rejected top row and returns the full requested count', () => {
+  const policy = parseParlayQualityPolicy('Build a 5-6 leg SGP');
+  const candidates = [
+    liveNflLeg('Stale Player', 'game-a', 75, { line_checked_at: '2026-09-17T14:00:00.000Z' }),
+    ...Array.from({ length: 6 }, (_, index) => liveNflLeg(`Player ${index + 1}`, 'game-a', 68 - index)),
+  ];
+  const result = finalizeStructuredParlay(candidates, policy, NOW_MS);
+  assert.equal(result.complete, true);
+  assert.equal(result.legs.length, 6);
+  assert.equal(result.lineBlocked.length, 1);
+  assert.ok(result.legs.every((leg) => leg.event_id === 'game-a'));
+});
+
+test('structured parlay emits no partial slip when requested minimum cannot be filled', () => {
+  const policy = parseParlayQualityPolicy('Build a 5-6 leg SGP');
+  const result = finalizeStructuredParlay(
+    Array.from({ length: 4 }, (_, index) => liveNflLeg(`Player ${index + 1}`, 'game-a')),
+    policy,
+    NOW_MS,
+  );
+  assert.equal(result.complete, false);
+  assert.equal(result.qualified.length, 4);
+  assert.equal(result.shortfall, 1);
+  assert.deepEqual(result.legs, []);
+});
+
+test('same-game finalization never mixes events', () => {
+  const policy = parseParlayQualityPolicy('Build a 3-leg SGP');
+  const result = finalizeStructuredParlay([
+    liveNflLeg('A1', 'game-a', 70),
+    liveNflLeg('A2', 'game-a', 68),
+    liveNflLeg('B1', 'game-b', 72),
+    liveNflLeg('B2', 'game-b', 69),
+    liveNflLeg('B3', 'game-b', 67),
+  ], policy, NOW_MS);
+  assert.equal(result.complete, true);
+  assert.equal(result.legs.length, 3);
+  assert.ok(result.legs.every((leg) => leg.event_id === 'game-b'));
+});
+
+test('model-only and explicitly unverified lines cannot enter a structured slip', () => {
+  const policy = parseParlayQualityPolicy('Give me 1 pick');
+  const result = finalizeStructuredParlay([
+    liveNflLeg('Model Line', 'game-a', 70, {
+      line_verified: false,
+      line_source: 'model-derived',
+    }),
+  ], policy, NOW_MS);
+  assert.equal(result.complete, false);
+  assert.equal(result.lineBlocked.length, 1);
+  assert.deepEqual(result.legs, []);
+});
+
+test('written five-to-six SGP request preserves its full count range', () => {
+  const policy = parseParlayQualityPolicy('Build a five to six leg Same Game Parlay');
+  assert.equal(policy.requestedMin, 5);
+  assert.equal(policy.requestedMax, 6);
+  assert.equal(policy.sameGameIntent, true);
 });

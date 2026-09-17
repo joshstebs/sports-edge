@@ -407,10 +407,11 @@ export interface GameEntry {
 export async function getGamelog(
   espnId: string,
   sport: EspnSport,
-  limit = 10
+  limit = 10,
+  season?: number,
 ): Promise<{ available: boolean; reason?: string; season?: string; games?: GameEntry[] }> {
   try {
-    const url = `${V3}/${sport}/athletes/${espnId}/gamelog`;
+    const url = `${V3}/${sport}/athletes/${espnId}/gamelog${season ? `?season=${season}` : ''}`;
     // Bounded fetch: this gamelog feeds the NBA/NFL/NHL screener directly.
     const j = await (await fetch(url, { headers: { 'User-Agent': UA() }, signal: AbortSignal.timeout(8000) })).json();
     const names: string[] = j?.names ?? [];

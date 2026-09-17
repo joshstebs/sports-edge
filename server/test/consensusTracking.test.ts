@@ -36,6 +36,9 @@ test('fast screener renderer uses live primary line and emits prediction log', (
   assert.match(text, /Alternate lines available but deprioritized: 2\.5/);
   assert.match(text, /\`\`\`sgp/);
   assert.match(text, /\[PREDICTION_LOG\]/);
+  assert.match(text, /"implied_odds":-110/);
+  assert.match(text, /"line_verified":true/);
+  assert.match(text, /"line_checked_at":"/);
   assert.doesNotMatch(text, /OVER 2\.5 total Bases/i);
 });
 
@@ -109,4 +112,18 @@ test('moneyline renderer emits team leg and tracked prediction', () => {
   assert.match(text, /"quality_source":"market-consensus-v1"/);
   assert.match(text, /\[PREDICTION_LOG\]/);
   assert.match(text, /"bet_type":"MONEYLINE"/);
+});
+
+
+test('same-game intent is passed to the structured slate screener', () => {
+  const intent = inferScreenerIntent('Build me a 5-6 leg NFL Same Game Parlay');
+  assert.equal(intent.sport, 'nfl');
+  assert.equal(intent.sameGame, true);
+  assert.equal(intent.requestedPicks, 6);
+});
+
+test('written five-to-six range requests six screener candidates', () => {
+  const intent = inferScreenerIntent('Build a five to six leg NFL SGP');
+  assert.equal(intent.requestedPicks, 6);
+  assert.equal(intent.sameGame, true);
 });
