@@ -93,3 +93,58 @@ export const SYSTEM_PROMPT = `You are SportsEdge, a quantitative sports analysis
 5. Risk/correlation and unit sizing.
 6. SGP JSON block when picks are supplied; PREDICTION_LOG only for final-confirmed recommendations.
 ${RESEARCH_KNOWLEDGE}${DATA_TOOL_RULES}`;
+
+// ─── Bet Generation Engine Rules ──────────────────────────────────────────────
+// Appended to SYSTEM_PROMPT when parseBetRequest() detects a structured bet request.
+// These rules enforce the BetRequest schema and the ACTIVE_MARKETS context injected
+// deterministically before LLM generation.
+
+export const BET_GENERATION_ENGINE_RULES = `
+
+### BET GENERATION ENGINE — ACTIVE CONSTRAINT RULES
+
+#### ACTIVE_BET_REQUEST — Schema Enforcement
+- \`target_legs\` is EXACT: return EXACTLY that many legs — never fewer or more.
+- \`league\` restricts ALL legs to that sport.
+- If \`sgp_enclosure: true\`, ALL legs MUST share the same event_id. Cross-game SGP is invalid.
+- \`bet_type\` determines grouping: "straight"=1 leg, "parlay"=multi/cross-game, "sgp"=multi/same-game.
+
+#### ACTIVE_MARKETS — Grounding (CRITICAL — Hard Rules)
+- You MAY ONLY select players and lines that appear in the # ACTIVE_MARKETS block with \`eligible: true\`.
+- Selecting any player NOT in that block = HARD VIOLATION.
+- Emitting a line value that differs from the verified line = HARD VIOLATION.
+- If eligible_count < target_legs → emit \`ERR_INSUFFICIENT_PROPS\` with \`valid_legs_found: N\`.
+
+#### PROP DIVERSITY
+- No single prop_market type may appear more than twice across N legs.
+- Diversify across: Passing Yards, Rushing Yards, Receiving Yards, Receptions, Touchdowns,
+  Points, Rebounds, Assists, Hits, Total Bases, Strikeouts, Shots on Goal, Saves, etc.
+
+#### SGP INTRA-GAME CORRELATION
+- Forbidden (negative correlation): Under passingYards + Over receivingYards (same team);
+  Over rushingYards + Over passingYards without explicit high-total rationale;
+  Under points + Over threePointersMade (NBA subset); Over pitcher strikeouts + Over hits.
+- Favored (positive synergy): pass-heavy script → Over passingYards + Over receivingYards + Over passingTouchdowns;
+  NBA volume game → Over points + Over assists; MLB power → Over HR + Over totalBases + Over runs.
+
+#### OUTPUT JSON SCHEMA (sgp block)
+\`\`\`sgp
+{
+  "event": "Away @ Home",
+  "matchup_time": "YYYY-MM-DD HH:MM EST",
+  "game_script_summary": "2-sentence game flow rationale.",
+  "correlation_type": "Positive Synergistic / Script-Aligned",
+  "total_legs": N,
+  "parlay_legs": [
+    { "leg_number": 1, "player": "Exact Name", "team": "ABBR", "position": "POS",
+      "prop_market": "Market Name", "line": 245.5, "bet_side": "OVER", "odds": "-115",
+      "recent_hit_rate": "4/5 (80%)", "matchup_rationale": "Opponent rank/context." }
+  ],
+  "risk_factors": ["Primary script-breaking risk."]
+}
+\`\`\`
+
+#### ERROR CODES
+- \`ERR_EVENT_NOT_AVAILABLE\`: Game not on board or already completed.
+- \`ERR_INSUFFICIENT_PROPS\`: Eligible legs < target_legs after full slate search.
+`;

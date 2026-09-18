@@ -1,7 +1,7 @@
 // POST /api/chat — SSE stream. Streams meta, tool, delta, sgp and done events.
 
 import { Router, Request, Response } from 'express';
-import { SYSTEM_PROMPT } from '../prompt/systemPrompt.js';
+import { SYSTEM_PROMPT, BET_GENERATION_ENGINE_RULES } from '../prompt/systemPrompt.js';
 import { llmConfig, runAgent, ChatMessage } from '../llm/chatClient.js';
 import { getToolSchemas } from '../llm/toolRegistry.js';
 import { addPrediction, learningPromptBlock, loadModelEvidence, type ModelEvidence } from '../lib/predictionStore.js';
@@ -15,6 +15,7 @@ import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
 import { parseParlayQualityPolicy, finalizeStructuredParlay } from '../lib/parlayQuality.js';
 import { SPORTS } from '../providers/sportsConfig.js';
+import { parseBetRequest, serializeBetRequestContext } from '../models/betRequest.js';
 
 export const chatRouter = Router();
 
@@ -323,11 +324,25 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   try {
     sse(res, 'meta', { model: cfg.model, sport, llmConfigured: true, provider: cfg.provider });
 
+    // ── Bet Generation Engine: parse the latest user message for a BetRequest ──
+    // This runs deterministically BEFORE the LLM sees any messages.
+    // If valid, we inject BET_GENERATION_ENGINE_RULES + the ACTIVE_BET_REQUEST
+    // context block into the system prompt so the model knows exact constraints.
+    const latestUserMessage = rawMessages
+      .filter((m: any) => m.role === 'user')
+      .slice(-1)[0]?.content ?? '';
+    const betRequestParsed = parseBetRequest(latestUserMessage);
+    const betEngineInjection = betRequestParsed.valid && betRequestParsed.request
+      ? BET_GENERATION_ENGINE_RULES + '\n\n' + serializeBetRequestContext(betRequestParsed.request)
+      : '';
+
     const messages: ChatMessage[] = [
       {
         role: 'system',
         content:
           SYSTEM_PROMPT +
+          // Bet generation engine rules (injected only when a structured BetRequest is detected)
+          betEngineInjection +
           // Learning context is optional enrichment: a corrupt/hanging Redis read
           // must degrade to "no learning context", never 500 the whole chat SSE
           // (previously an unguarded await killed the request before any token
