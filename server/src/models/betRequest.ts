@@ -65,13 +65,11 @@ function extractTargetLegs(text: string): number {
   );
   const explicit = lower.match(/\b(\d{1,2})[- ]?(?:leg|legs|prop|props|pick|picks|game|games|way)\b/);
   if (explicit) {
-    const n = Number(explicit[1]);
-    if (n >= 1 && n <= 12) return n;
+    return Number(explicit[1]);
   }
   const generic = lower.match(/(?:build|give|want|make|create)(?:\s+me)?\s+(?:a\s+)?(\d{1,2})\b/);
   if (generic) {
-    const n = Number(generic[1]);
-    if (n >= 1 && n <= 12) return n;
+    return Number(generic[1]);
   }
   return 6;
 }
