@@ -26,7 +26,7 @@ function liveTooltip(health: HealthState, info: HealthInfo | null): string {
 
 function EdgeMark() {
   return (
-    <div className="relative h-7 w-8 shrink-0" aria-hidden="true">
+    <div className="relative h-7 w-8 shrink-0 min-w-[32px]" aria-hidden="true">
       <span className="absolute left-0 top-0 h-2 w-7 skew-x-[-28deg] rounded-sm bg-edge" />
       <span className="absolute left-1 top-2 h-2 w-6 skew-x-[-28deg] rounded-sm bg-edge2" />
       <span className="absolute left-0 top-4 h-2 w-7 skew-x-[-28deg] rounded-sm bg-edge" />
