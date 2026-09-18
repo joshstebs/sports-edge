@@ -11,7 +11,6 @@
 
 import type { BetRequest } from './betRequest.js';
 import { checkPlayerAvailability } from '../providers/playerAvailability.js';
-import { getOddsForGame } from '../providers/oddsAggregator.js';
 
 export interface ActiveMarketLeg {
   player: string;
