@@ -8,7 +8,33 @@
  *  - serializeBetRequestContext: output structure
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+function expect(actual: any) {
+  return {
+    toBe(expected: any) {
+      assert.equal(actual, expected);
+    },
+    toBeGreaterThan(expected: number) {
+      assert.ok(actual > expected);
+    },
+    toContain(expected: any) {
+      assert.ok(actual?.includes?.(expected), `Expected value to contain ${String(expected)}`);
+    },
+    toHaveLength(expected: number) {
+      assert.equal(actual?.length, expected);
+    },
+    toBeDefined() {
+      assert.notEqual(actual, undefined);
+    },
+    not: {
+      toContain(expected: any) {
+        assert.ok(!actual?.includes?.(expected), `Expected value not to contain ${String(expected)}`);
+      },
+    },
+  };
+}
 import { parseBetRequest, serializeBetRequestContext } from '../src/models/betRequest.js';
 import {
   validateSgpOutput,
