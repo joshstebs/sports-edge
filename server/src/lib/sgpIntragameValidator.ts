@@ -19,7 +19,7 @@ import {
   type SgpCorrelationAnalysis,
 } from '../lib/sgpCorrelation.js';
 import type { CandidateLeg } from '../candidates/candidateTypes.js';
-import type { ActiveMarketsPayload } from './activeMarketsContext.js';
+import type { ActiveMarketsPayload } from '../models/activeMarketsContext.js';
 
 export type ValidationError =
   | 'ERR_EVENT_NOT_AVAILABLE'
