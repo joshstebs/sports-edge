@@ -238,3 +238,93 @@ button:not(:disabled):active {
 
 .md-body th {
   background: #15191d;
+  color: var(--color-frost);
+  font-weight: 600;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--color-line);
+  padding: 0.38rem 0.55rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.md-body tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.md-body hr {
+  margin: 0.9rem 0;
+  border-color: var(--color-line);
+}
+
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.cursor-blink {
+  display: inline-block;
+  width: 5px;
+  height: 1em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--color-edge);
+  vertical-align: text-bottom;
+  animation: cursor-blink 0.9s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active {
+    transform: none;
+  }
+
+  .animate-spin,
+  .animate-ping,
+  .animate-bounce {
+    animation: none !important;
+  }
+}
+
+/* Light theme — overrides the dark-first palette above. Applied via
+   [data-theme="light"] on <html>; toggled in src/lib/theme.ts. The same
+   Tailwind color tokens (bg-ink, text-head, border-line, …) recolor. */
+[data-theme='light'] {
+  --color-ink: #f4f6f8;
+  --color-panel: #ffffff;
+  --color-panel2: #eef1f4;
+  --color-card: #ffffff;
+  --color-line: #dce1e7;
+  --color-line-strong: #c3cbd3;
+  --color-edge: #0f8f5e;
+  --color-edge2: #128a63;
+  --color-teal3: #0f8f5e;
+  --color-aqua: #1f6f99;
+  --color-sky2: #1f7fb0;
+  --color-danger: #d23b56;
+  --color-warn: #9a6a14;
+  --color-frost: #2c343b;
+  --color-frost2: #5b656e;
+  --color-muted: #6b757e;
+  --color-head: #11161a;
+}
+
+[data-theme='light'] html,
+[data-theme='light'] body {
+  background: #f4f6f8;
+  color: #11161a;
+}
+
+[data-theme='light'] ::selection {
+  background: rgba(15, 143, 94, 0.18);
+  color: #0b0f12;
+}
+
+[data-theme='light'] *::-webkit-scrollbar-thumb {
+  background: #c3cbd3;
+}
+
+[data-theme='light'] *::-webkit-scrollbar-thumb:hover {
+  background: #aeb8c1;
+}
