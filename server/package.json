@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "probe": "tsx scripts/probe.ts",
     "eval": "tsx scripts/evaluate.ts",
+    "backtest": "tsx scripts/walk-forward.ts",
     "auth:generate": "tsx scripts/generate-auth-users.ts",
     "test:auth": "node --import tsx --test test/auth.test.ts",
     "test:evaluator": "node --import tsx scripts/evaluator.test.ts",
