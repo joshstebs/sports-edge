@@ -107,13 +107,19 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
 
     const qualitySource = String(candidate?.qualitySource ?? candidate?.source ?? '').trim() || null;
     const lineSource = String(candidate?.marketSource ?? candidate?.source ?? '').trim() || null;
-    const lineVerified = Boolean(odds != null && lineSource && (gameMarket || candidate?.marketLine != null));
+    // The render time says nothing about when the sportsbook offer was checked.
+    // An unknown or expired quote stays visible as analysis, never a bettable slip.
+    const lineCheckedAt = candidate?.marketCheckedAt ?? null;
+    const checkedMs = Date.parse(String(lineCheckedAt ?? ''));
+    const lineVerified = Boolean(odds != null && lineSource &&
+      (gameMarket || candidate?.marketLine != null) &&
+      Number.isFinite(checkedMs) && checkedMs <= Date.now() + 60_000 && Date.now() - checkedMs <= 15 * 60_000);
     sgpLegs.push({
       entity_type: gameMarket ? 'team' : 'player',
       ...(gameMarket ? { team: candidate.team, quality_source: qualitySource } : { player_name: candidate.player }),
       sport, game: matchup, game_date: candidate.eventDate, event_id: candidate.eventId, selection,
       market: candidate.market, side: gameMarket ? null : candidate.side, line: gameMarket ? null : line,
-      odds, game_odds: null, line_verified: lineVerified, line_source: lineSource, line_checked_at: timestamp,
+      odds, game_odds: null, line_verified: lineVerified, line_source: lineSource, line_checked_at: lineCheckedAt,
       justification: gameMarket
         ? label + '; ' + String(candidate.modelVersion ?? 'market-consensus-v1') + ' no-vig probability ' + prob
         : label + '; deterministic ' + String(candidate.modelVersion ?? 'model') + ' ' + prob,
@@ -143,7 +149,7 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
           implied_odds: odds,
           line_verified: lineVerified,
           line_source: lineSource,
-          line_checked_at: timestamp,
+          line_checked_at: lineCheckedAt,
           key_metric_used: gameMarket ? 'two-sided no-vig market consensus probability' : label,
         }],
         recommended_units: qualityTier === 'core' ? '0.5' : '0.25',
