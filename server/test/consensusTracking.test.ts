@@ -27,6 +27,7 @@ test('fast screener renderer uses live primary line and emits prediction log', (
     player: 'Example Player', team: 'Away', opponent: 'Home', sport: 'mlb',
     eventDate: '2026-09-06', eventId: 123, market: 'totalBases', side: 'over',
     suggestedLine: 2.5, marketLine: 1.5, marketOddsOver: -110, marketOddsUnder: -120,
+    marketSource: 'sportsbook-consensus', marketCheckedAt: new Date().toISOString(),
     lineLabel: 'PRIMARY / CONSENSUS LINE', alternateLines: [{ line: 2.5 }],
     confidencePct: 61, grade: 'B', sampleSize: 20, modelVersion: 'empirical-beta-v1',
     source: 'statsapi.mlb.com', inLineupToday: true,
@@ -53,6 +54,18 @@ test('provisional MLB screener rows are shown but not persisted', () => {
   assert.match(text, /provisional/i);
   assert.match(text, /\`\`\`sgp/);
   assert.doesNotMatch(text, /\[PREDICTION_LOG\]/);
+});
+
+test('renderer does not refresh an old sportsbook quote by stamping render time', () => {
+  const text = renderScreenerSummaryBlocks([{
+    player: 'Old Quote', team: 'Away', opponent: 'Home', sport: 'nfl',
+    eventDate: '2026-09-22', eventId: 'game-old', market: 'receivingYards', side: 'over',
+    marketLine: 49.5, marketOddsOver: -110, marketSource: 'sportsbook-consensus',
+    marketCheckedAt: new Date(Date.now() - 20 * 60_000).toISOString(), confidencePct: 65,
+  }], 1);
+  assert.match(text, /"line_verified":false/);
+  assert.match(text, /"line_checked_at":"\d{4}-/);
+  assert.equal(JSON.parse(/```sgp\s*([\s\S]*?)```/.exec(text)![1]).legs[0].line_verified, false);
 });
 
 
