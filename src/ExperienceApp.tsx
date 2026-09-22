@@ -88,6 +88,7 @@ export default function ExperienceApp() {
             setLastTool(summary || `${event.name}: ${event.status}`);
           }
           if (event.type === 'sgp') setLegs((prev) => mergeSgpLegs(prev, event.legs));
+          if (event.type === 'log' && event.failed) setLastAnswer((prev) => `${prev}\n\n⚠️ ${event.failed} prediction${event.failed === 1 ? '' : 's'} could not be saved to history. Verify the pick in My Picks before relying on tracking.`);
           if (event.type === 'error') setLastAnswer(event.message);
           if (event.type === 'done') setLastTool('Analysis complete');
         },
