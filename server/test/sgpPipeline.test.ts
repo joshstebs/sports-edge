@@ -19,6 +19,7 @@ function candidate(index: number, marketLine: number | null) {
     marketOddsOver: -110,
     marketOddsUnder: -110,
     marketSource: marketLine == null ? null : 'sportsbook-consensus',
+    marketCheckedAt: marketLine == null ? null : new Date().toISOString(),
     confidencePct: 70 - index,
     grade: 'B',
     sampleSize: 20,
