@@ -60,6 +60,7 @@ export async function buildActiveMarketsContext(
     line: number;
     bet_side: 'OVER' | 'UNDER';
     odds: string | null;
+    line_checked_at?: string | null;
   }>,
 ): Promise<ActiveMarketsPayload> {
   const now = new Date().toISOString();
@@ -77,8 +78,11 @@ export async function buildActiveMarketsContext(
           req.league.toLowerCase() as 'nfl' | 'nba' | 'mlb' | 'nhl',
         );
         const statusLower = (avail.playingStatus ?? 'unknown').toLowerCase();
+        const checkedMs = Date.parse(String(c.line_checked_at ?? ''));
+        const freshLine = c.odds != null && Number.isFinite(checkedMs) && checkedMs <= Date.now() + 60_000
+          && Date.now() - checkedMs <= 15 * 60_000;
         const eligible = avail.recommendationEligible === true
-          && !INELIGIBLE_STATUSES.has(statusLower);
+          && !INELIGIBLE_STATUSES.has(statusLower) && freshLine;
 
         legs.push({
           player: c.player,
@@ -93,12 +97,12 @@ export async function buildActiveMarketsContext(
           bet_side: c.bet_side,
           odds: c.odds ?? 'N/A',
           line_source: 'oddsAggregator',
-          line_checked_at: now,
+          line_checked_at: c.line_checked_at ?? '',
           availability_verified: avail.statusVerified,
           injury_status: avail.playingStatus,
           eligible,
           ineligible_reason: eligible ? undefined
-            : `Player status: ${avail.playingStatus} — ${avail.reason}`,
+            : !freshLine ? 'Sportsbook quote is missing or older than 15 minutes.' : `Player status: ${avail.playingStatus} — ${avail.reason}`,
         });
       } catch (err) {
         // Fail closed: if availability check throws, mark ineligible
@@ -115,7 +119,7 @@ export async function buildActiveMarketsContext(
           bet_side: c.bet_side,
           odds: c.odds ?? 'N/A',
           line_source: 'oddsAggregator',
-          line_checked_at: now,
+          line_checked_at: c.line_checked_at ?? '',
           availability_verified: false,
           injury_status: 'unknown',
           eligible: false,
