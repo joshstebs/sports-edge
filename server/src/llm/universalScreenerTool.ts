@@ -393,6 +393,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
        marketOddsOver: live?.over ?? null,
        marketOddsUnder: live?.under ?? null,
        marketSource: live ? 'api.sharpapi.io' : null,
+       marketCheckedAt: live?.checkedAt ?? null,
        marketBook: live?.book ?? null,
        marketProbability: liveLine == null ? null : finalModel.probability ?? null,
        estimatedEdge: liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10,
