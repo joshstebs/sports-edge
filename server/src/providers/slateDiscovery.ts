@@ -273,6 +273,7 @@ export interface SharpPrice {
   isAlternate?: boolean;
   consensusRank?: number;
   source?: string;
+  checkedAt?: string;
   lineLabel?: string;
 }
 
@@ -295,6 +296,7 @@ export async function getSharpSlatePrices(
 ): Promise<SlatePriceResult> {
   try {
     const result = await sharp.getSharpGameOdds(matchup?.away, matchup?.home, sport);
+    const checkedAt = result.checkedAt;
     if (!result.available || !Array.isArray(result.props?.markets)) {
       return { available: false, reason: result.reason ?? 'SharpApi no live props', byKey: new Map(), alternatesByKey: new Map() };
     }
@@ -313,6 +315,7 @@ export async function getSharpSlatePrices(
         lineType: marketRow.lineType === 'alternate' ? 'alternate' : 'primary',
         isAlternate: Boolean(marketRow.isAlternate), consensusRank: Number(marketRow.consensusRank ?? 1),
         source: 'api.sharpapi.io',
+        checkedAt: marketRow.checkedAt ?? checkedAt,
         lineLabel: marketRow.lineType === 'alternate' ? 'ALTERNATE LINE' : 'PRIMARY MARKET LINE',
       };
       grouped.set(key, [...(grouped.get(key) ?? []), price]);
@@ -355,8 +358,10 @@ export async function getConsensusSlatePrices(
           const current = lineMap.get(line) ?? {
             player: prop.playerName, market, line, over: null, under: null,
             book: 'SportsGameOdds consensus', books: [], bookCount: 0, source: 'api.sportsgameodds.com',
+            checkedAt: result.checkedAt,
             lineType: 'primary', isAlternate: false, consensusRank: 1, lineLabel: 'PRIMARY / CONSENSUS LINE',
           };
+          if (prop.checkedAt && (!current.checkedAt || Date.parse(prop.checkedAt) < Date.parse(current.checkedAt))) current.checkedAt = prop.checkedAt;
           if (prop.side === 'over') current.over = prop.odds ?? current.over;
           if (prop.side === 'under') current.under = prop.odds ?? current.under;
           const bookNames = Object.keys(prop.byBookmaker ?? {});
