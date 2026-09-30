@@ -61,6 +61,7 @@ export async function buildBetGenerationContext(
     line: number;
     bet_side: 'OVER' | 'UNDER';
     odds: string | null;
+    line_checked_at?: string | null;
   }>,
 ): Promise<{ context: BetGenerationContext | null; errors: string[]; errorCode: string | null }> {
   // Stage 1: Parse & validate the BetRequest

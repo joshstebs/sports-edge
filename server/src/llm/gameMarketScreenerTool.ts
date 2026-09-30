@@ -40,7 +40,7 @@ function roundPct(p: number): number {
   return Math.round(p * 1000) / 10;
 }
 
-function sgoMoneylineCandidate(event: Awaited<ReturnType<typeof sgo.getSgoSlateEvents>>['events'][number], date: string): any | null {
+function sgoMoneylineCandidate(event: Awaited<ReturnType<typeof sgo.getSgoSlateEvents>>['events'][number], date: string, checkedAt?: string): any | null {
   const rows: any[] = Array.isArray(event.markets?.h2h) ? event.markets.h2h : [];
   const home = rows.find((row) => row?.teamSide === 'home');
   const away = rows.find((row) => row?.teamSide === 'away');
@@ -86,6 +86,7 @@ function sgoMoneylineCandidate(event: Awaited<ReturnType<typeof sgo.getSgoSlateE
     qualitySource: 'market-consensus-v1',
     source: 'api.sportsgameodds.com',
     marketSource: 'api.sportsgameodds.com',
+    marketCheckedAt: checkedAt,
     marketBook: 'SportsGameOdds consensus',
     books: bookNames,
     bookCount: bookNames.length,
@@ -171,7 +172,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   let candidates: any[] = [];
   const live = await sgo.getSgoSlateEvents(sport, 12).catch(() => null);
   if (live?.available) {
-    candidates = live.events.map((event) => sgoMoneylineCandidate(event, date)).filter(Boolean);
+    candidates = live.events.map((event) => sgoMoneylineCandidate(event, date, live.checkedAt)).filter(Boolean);
   }
   let provider = 'SportsGameOdds consensus';
   if (!candidates.length) {

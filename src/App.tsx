@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Composer from './components/Composer';
 import Header from './components/Header';
 import LoginScreen from './components/LoginScreen';
@@ -25,12 +25,12 @@ import { getStoredTheme, toggleTheme, type ThemeMode } from './lib/theme';
 import type { View } from './lib/nav';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
-import Today from './components/Today';
-import BestBetsPage from './components/BestBets';
-import ParlayBuilder from './components/ParlayBuilder';
-import MyPicks from './components/MyPicks';
-import Results from './components/Results';
-import ModelLab from './components/ModelLab';
+const Today = lazy(() => import('./components/Today'));
+const BestBetsPage = lazy(() => import('./components/BestBets'));
+const ParlayBuilder = lazy(() => import('./components/ParlayBuilder'));
+const MyPicks = lazy(() => import('./components/MyPicks'));
+const Results = lazy(() => import('./components/Results'));
+const ModelLab = lazy(() => import('./components/ModelLab'));
 
 const CHAT_STORAGE_KEY = 'sports-edge:chat:v2';
 const SLIP_STORAGE_KEY = 'sports-edge:betslip:v2';
@@ -457,8 +457,9 @@ function Workspace({
                 setSlipLegs((prev) => mergeSgpLegs(prev, ev.legs));
                 break;
               case 'log':
-                // Prediction-log acknowledgement. Explicit bet tracking has
-                // separate feedback in the parlay slip.
+                if (ev.failed) setMessages((prev) => prev.map((m) => m.id === assistantId
+                  ? { ...m, content: `${m.content}\n\n⚠️ ${ev.failed} prediction${ev.failed === 1 ? '' : 's'} could not be saved to history. Verify your pick in My Picks before relying on tracking.` }
+                  : m));
                 break;
               case 'done':
                 setMessages((prev) =>
@@ -729,7 +730,7 @@ function Workspace({
       </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto md:pb-0 pb-[env(safe-area-inset-bottom)]">
-          {renderView()}
+        <Suspense fallback={<div role="status" className="p-6 text-sm text-muted">Loading view…</div>}>{renderView()}</Suspense>
         </div>
       )}
       </div>

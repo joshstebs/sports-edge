@@ -23,6 +23,7 @@ const SPORT_MAP: Record<string, { sport: string; league: string }> = {
 
 export interface SharpOddsResult {
   available: boolean;
+  checkedAt?: string;
   reason?: string;
   source: string;
   sport?: string;
@@ -45,6 +46,13 @@ function parseAmericanPrice(v: unknown): number | null {
   return Number.isFinite(n) && n !== 0 ? n : null;
 }
 
+function quoteCheckedAt(row: any): string | undefined {
+  const raw = row?.last_updated ?? row?.lastUpdated ?? row?.updated_at ?? row?.updatedAt;
+  if (raw == null) return undefined;
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
 /** Group SharpApi player-prop rows into per-market arrays, one best line each. */
 function groupProps(rows: any[], sport?: string): any[] {
   const byKey = new Map<string, any>();
@@ -64,6 +72,8 @@ function groupProps(rows: any[], sport?: string): any[] {
       market, player: row.player_name, line,
       over: null, under: null, overBook: null, underBook: null, _books: new Set<string>(),
     };
+    const sourceTime = quoteCheckedAt(row);
+    if (sourceTime && (!cur.checkedAt || Date.parse(sourceTime) < Date.parse(cur.checkedAt))) cur.checkedAt = sourceTime;
     cur._books.add(book);
     if (side === 'over' && (cur.over == null || odds > cur.over)) { cur.over = odds; cur.overBook = book; }
     if (side === 'under' && (cur.under == null || odds > cur.under)) { cur.under = odds; cur.underBook = book; }
@@ -184,10 +194,13 @@ export async function getSharpGameOdds(
         })
       : rows;
     const matched = groupProps(eventRows.length ? eventRows : rows, sportKey);
+    const fetchedAt = new Date().toISOString();
+    for (const prop of matched) prop.checkedAt ??= fetchedAt;
     const first = rows[0];
 
     return {
       available: true,
+      checkedAt: fetchedAt,
       source: SOURCE,
       sport: sportKey,
       event: first

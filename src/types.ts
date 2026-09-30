@@ -78,7 +78,7 @@ export type ChatEvent =
   | { type: 'tool'; name: string; status: ToolEvent['status']; summary?: string }
   | { type: 'delta'; text: string }
   | { type: 'sgp'; legs: SgpLeg[] }
-  | { type: 'log'; stored?: number }
+  | { type: 'log'; stored?: number; failed?: number; error?: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
 

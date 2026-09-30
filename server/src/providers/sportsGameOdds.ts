@@ -248,6 +248,7 @@ export interface SgoSlateProp {
   fairOdds: number | null;
   oddID: string;
   byBookmaker: Record<string, any>;
+  checkedAt?: string;
 }
 
 export interface SgoSlateEvent {
@@ -308,13 +309,18 @@ function extractSlateProps(odds: Record<string, any> | undefined, sport: string)
       fairOdds: parseAmerican(raw.fairOdds),
       oddID,
       byBookmaker: raw.byBookmaker ?? {},
+      checkedAt: (() => {
+        const updated = raw.lastUpdated ?? raw.updatedAt ?? raw.last_updated ?? raw.updated_at;
+        const parsed = Date.parse(String(updated ?? ''));
+        return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+      })(),
     });
   }
   return out;
 }
 
 /** Bulk live slate feed: one bounded provider request window per sport. */
-export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<{ available: boolean; reason?: string; source: string; events: SgoSlateEvent[]; notice?: string | null }> {
+export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<{ available: boolean; reason?: string; source: string; events: SgoSlateEvent[]; checkedAt?: string; notice?: string | null }> {
   const k = key();
   const league = LEAGUE_IDS[sport?.toLowerCase() ?? ''];
   if (!k) return { available: false, reason: 'SPORTSGAMEODDS_API_KEY not configured', source: SOURCE, events: [] };
@@ -338,7 +344,7 @@ export async function getSgoSlateEvents(sport: string, maxEvents = 10): Promise<
         };
       });
     return rows.length
-      ? { available: true, source: SOURCE, events: rows, notice: lastNotice }
+      ? { available: true, source: SOURCE, events: rows, checkedAt: new Date().toISOString(), notice: lastNotice }
       : { available: false, reason: rateLimited ? 'rate limited (free-tier quota)' : `no upcoming ${league} events with props`, source: SOURCE, events: [], notice: lastNotice };
   } catch (error) {
     return { available: false, reason: `SportsGameOdds slate fetch failed: ${(error as Error).message}`, source: SOURCE, events: [] };

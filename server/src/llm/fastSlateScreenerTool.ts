@@ -374,6 +374,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       marketOddsOver: live?.over ?? null,
       marketOddsUnder: live?.under ?? null,
       marketSource: live?.source ?? null,
+      marketCheckedAt: live?.checkedAt ?? null,
       marketBook: live?.book ?? null,
       bookCount: live?.bookCount ?? null,
       lineType: live?.lineType ?? null,
