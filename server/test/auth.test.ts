@@ -7,6 +7,37 @@ import { authenticateRequest, requireAuth, requireRole } from '../src/auth/middl
 import { hashPassword, verifyPassword } from '../src/auth/password.js';
 import { AUTH_COOKIE_NAME, createSessionToken, verifySessionToken } from '../src/auth/session.js';
 
+test('admin password recovery preserves tester credentials and account identities', async () => {
+  const oldPassword = 'old-admin-password-123';
+  const newPassword = 'new-admin-password-456';
+  const testerPassword = 'unchanged-tester-password';
+  const oldHash = await hashPassword(oldPassword);
+  const newHash = await hashPassword(newPassword);
+  const testerHash = await hashPassword(testerPassword);
+  const env = {
+    NODE_ENV: 'production', APP_ORIGIN: 'https://sports.example',
+    AUTH_SESSION_SECRET: randomBytes(48).toString('base64url'),
+    AUTH_USERS_JSON: JSON.stringify([
+      { id: 'admin-1', username: 'admin', role: 'admin', passwordHash: oldHash },
+      { id: 'tester-1', username: 'tester', role: 'tester', passwordHash: testerHash },
+    ]),
+  };
+  const original = loadAuthConfig(env);
+  assert.equal(original.users.get('admin')?.passwordHash, oldHash);
+  const recovered = loadAuthConfig({ ...env, AUTH_ADMIN_PASSWORD_HASH: newHash });
+  const admin = recovered.users.get('admin')!;
+  assert.equal(admin.id, 'admin-1');
+  assert.equal(admin.role, 'admin');
+  assert.equal(await verifyPassword(newPassword, admin.passwordHash), true);
+  assert.equal(await verifyPassword(oldPassword, admin.passwordHash), false);
+  assert.deepEqual(recovered.users.get('tester'), original.users.get('tester'));
+  assert.equal(await verifyPassword(testerPassword, recovered.users.get('tester')!.passwordHash), true);
+  assert.equal(loadAuthConfig({ ...env, AUTH_ADMIN_PASSWORD_HASH: '' }).users.get('admin')?.passwordHash, oldHash);
+  assert.throws(() => loadAuthConfig({ ...env, AUTH_ADMIN_PASSWORD_HASH: 'plaintext-password' }), /scrypt password record/);
+  const renamedUsers = env.AUTH_USERS_JSON.replace('"username":"admin"', '"username":"owner"');
+  assert.throws(() => loadAuthConfig({ ...env, AUTH_USERS_JSON: renamedUsers, AUTH_ADMIN_PASSWORD_HASH: newHash }), /existing admin account named admin/);
+});
+
 test('scrypt password records verify the right password only', async () => {
   const password = 'correct horse battery staple';
   const record = await hashPassword(password, { N: 16_384, r: 8, p: 1 });

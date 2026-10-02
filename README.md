@@ -56,6 +56,8 @@ npm run auth:generate --prefix server -- --admin josh-admin --tester sportsedge-
 
 Copy the generated `AUTH_USERS_JSON` and `AUTH_SESSION_SECRET` values into the local environment and the Vercel project environment. In the Vercel dashboard, paste the raw value after `=` and omit the dotenv-only outer single quotes. Set `APP_ORIGIN` to the exact deployed HTTPS origin (for example, `https://sports-edge-kohl.vercel.app`). `.env.auth` is ignored by Git. Rotate either password by re-running the generator and replacing both environment values.
 
+For an admin-only password reset when the original sensitive `AUTH_USERS_JSON` cannot be read back, set `AUTH_ADMIN_PASSWORD_HASH` to a newly generated scrypt record and redeploy. This replaces the password hash only for the existing account named `admin` with role `admin`; all user ids, roles, tester credentials, and the session secret are preserved. Include every official login address in the comma-separated `APP_ORIGIN` list. Removing the override restores the original admin password hash.
+
 ## Setup
 ```bash
 # 1. Install the frontend and backend dependencies
