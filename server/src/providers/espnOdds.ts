@@ -80,7 +80,8 @@ export async function getGameOdds(
   teamA?: string,
   teamB?: string,
   sportKey = 'mlb',
-  _markets?: string[]
+  _markets?: string[],
+  event?: { id: string; away: string; home: string }
 ): Promise<EspnOddsResult> {
   const sport = SPORT_PATHS[sportKey.toLowerCase()];
   const bad: EspnOddsResult = {
@@ -90,7 +91,7 @@ export async function getGameOdds(
   };
   if (!sport) return { ...bad, reason: `unsupported sport "${sportKey}" (use mlb, nfl, nba or nhl)` };
   try {
-    const events = await getScoreboard(sport);
+    const events = event ? [event] : await getScoreboard(sport);
     if (!events.length) return { ...bad, reason: 'no events on scoreboard' };
 
     let ev = events[0];

@@ -6,6 +6,7 @@
 
 import { executeToolBatch } from './toolBatch.js';
 import { renderScreenerSummaryBlocks } from './screenerRenderer.js';
+import { resolveSlateDate } from './slateDate.js';
 
 export interface LlmConfig {
   configured: boolean;
@@ -434,12 +435,6 @@ export async function runAgent(
     if (resp.modelUsed) modelUsed = resp.modelUsed;
     finalText = resp.content;
 
-    if (!resp.toolCalls.length) {
-      endedWithTools = false;
-      if (turnText) cb.onDelta?.(turnText);
-      break;
-    }
-
     const lastUser = msgs.filter((m) => m.role === 'user' && typeof m.content === 'string').pop()?.content;
     const lastUserText = typeof lastUser === 'string' ? lastUser : '';
     const intent = inferConversationScreenerIntent(msgs);
@@ -452,9 +447,10 @@ export async function runAgent(
     let screenerCall = resp.toolCalls.find((tc) => tc.name === 'slate_candidate_screener');
     let gameMarketCall = resp.toolCalls.find((tc) => tc.name === 'game_market_screener');
     const currentDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const slateDate = resolveSlateDate(lastUserText);
     const explicitGameMarket = intent.requestKind === 'game_market' || Boolean(intent.gameMarket);
     const explicitPlayerProp = intent.requestKind === 'player_prop';
-    const genericMixed = intent.requestKind === 'mixed' && userAskedMultiPick;
+    const genericMixed = intent.requestKind === 'mixed';
 
     // User intent wins over model tool choice. An explicit moneyline request
     // must never spend its only tool round on the player-prop screener.
@@ -467,7 +463,7 @@ export async function runAgent(
       gameMarketCall = undefined;
     }
 
-    if ((userAskedMultiPick || explicitPlayerProp) && !explicitGameMarket && !screenerCall) {
+    if ((userAskedMultiPick || explicitPlayerProp || genericMixed) && !explicitGameMarket && !screenerCall) {
       const forcedArgs: Record<string, unknown> = {
         sport: intent.sport ?? 'mlb',
         requestedPicks: intent.requestedPicks ?? 5,
@@ -510,22 +506,31 @@ export async function runAgent(
     // the generic prop screener with different/default arguments.
     if (screenerCall) {
       const patched = patchScreenerCall(screenerCall, intent, wantsMore, priorNames);
+      patched.parsed = { ...patched.parsed, ...slateDate };
+      patched.arguments = JSON.stringify(patched.parsed);
       screenerCall = patched;
       resp.toolCalls = resp.toolCalls.map((tc) => tc.id === patched.id ? patched : tc);
     }
 
-    if (gameMarketCall && explicitGameMarket) {
+    if (gameMarketCall) {
       const parsed = {
         ...(gameMarketCall.parsed ?? {}),
         sport: intent.sport ?? gameMarketCall.parsed?.sport ?? 'nfl',
         market: 'moneyline',
         requestedPicks: intent.requestedPicks ?? gameMarketCall.parsed?.requestedPicks ?? 5,
-        date: currentDate,
+        ...slateDate,
       };
       gameMarketCall = { ...gameMarketCall, parsed, arguments: JSON.stringify(parsed) };
       resp.toolCalls = resp.toolCalls.map((tc) => tc.id === gameMarketCall!.id ? gameMarketCall! : tc);
     }
 
+    // Enforce research even when the model answers a betting request without
+    // any tool call. Ordinary non-betting conversation still returns directly.
+    if (!resp.toolCalls.length) {
+      endedWithTools = false;
+      if (turnText) cb.onDelta?.(turnText);
+      break;
+    }
     endedWithTools = true;
     msgs.push({
       role: 'assistant',
@@ -539,7 +544,7 @@ export async function runAgent(
         // The slate screener legitimately needs more than the default 5s budget
         // (it fans out ~12 players x 2 Stats API calls in parallel, ~20s). Let
         // executeToolBatch's screener-aware clamp raise the window.
-        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener') ? 36_000 : 5_000,
+        timeoutMs: resp.toolCalls.some((tc) => tc.name === 'slate_candidate_screener' || tc.name === 'game_market_screener') ? 36_000 : 5_000,
         onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
       },
     );
