@@ -116,8 +116,25 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     throw new Error(`AUTH_SESSION_TTL_SECONDS must be an integer from 300 to ${MAX_TTL_SECONDS}.`);
   }
 
+  const users = new Map(parseUsers(usersJson));
+  // Vercel sensitive variables cannot be read back. Keep the original account
+  // records intact when recovering the owner's password, including tester
+  // credentials, user ids, and roles. Login still uses normal scrypt verification.
+  const adminPasswordHash = env.AUTH_ADMIN_PASSWORD_HASH;
+  if (adminPasswordHash) {
+    if (!nonEmptyString(adminPasswordHash, 512) ||
+        !adminPasswordHash.startsWith('scrypt$') || adminPasswordHash.split('$').length !== 6) {
+      throw new Error('AUTH_ADMIN_PASSWORD_HASH must contain a scrypt password record.');
+    }
+    const admin = users.get('admin');
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('AUTH_ADMIN_PASSWORD_HASH requires an existing admin account named admin.');
+    }
+    users.set('admin', Object.freeze({ ...admin, passwordHash: adminPasswordHash }));
+  }
+
   return Object.freeze({
-    users: parseUsers(usersJson),
+    users,
     sessionSecret,
     sessionTtlSeconds,
     allowedOrigins: parseAllowedOrigins(env.APP_ORIGIN, production),
