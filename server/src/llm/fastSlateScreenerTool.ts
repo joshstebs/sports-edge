@@ -1,6 +1,6 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
-import { discoverPlayersForEvent, discoverSlateEvents, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
+import { discoverPlayersForEvent, discoverSlateEvents, discoverUpcomingNflSlate, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
 import { buildPlayerPropModel, espnObservation, snapToRealisticLine, mlbObservation, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
@@ -195,7 +195,7 @@ function calibrationFor(learning: Awaited<ReturnType<typeof loadLearning>>, spor
 const handler = async (args: any): Promise<ToolOutcome> => {
   const sport = String(args?.sport ?? 'mlb').toLowerCase() as ModelSport;
   if (!['mlb', 'nba', 'nfl', 'nhl'].includes(sport)) return unavailable(`unsupported sport ${sport}`);
-  const date = requestedDate(args?.date);
+  let date = requestedDate(args?.date);
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
   const rawMarket = String(args?.market ?? '').trim();
   const marketFilter = requestedMarket(rawMarket, sport);
@@ -220,7 +220,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       : String(args?.exclude ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean),
   );
 
-  const events = (await discoverSlateEvents(sport, date).catch((e) => {
+  const discovery = sport === 'nfl' && (args?.searchUpcoming ?? !args?.date)
+    ? discoverUpcomingNflSlate(date) : discoverSlateEvents(sport, date);
+  const events = (await discovery.catch((e) => {
     console.warn(`[slateScreener] slate discovery failed for ${sport} ${date}: ${(e as Error).message}`);
     return [] as Awaited<ReturnType<typeof discoverSlateEvents>>;
   })).filter((event) => usableEvent(event.status));
@@ -229,6 +231,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     console.warn(`[slateScreener] ${reason}`);
     return unavailable(reason);
   }
+  date = events[0].date;
   console.log(`[slateScreener] ${sport} ${date}: ${events.length} scheduled events found`);
   // Bound slate scope while sampling across the entire day instead of only the
   // first games. This keeps the same timeout discipline without systematically
@@ -428,6 +431,7 @@ export const FAST_SLATE_SCREENER_TOOL: ToolDef = {
     properties: {
       sport: { type: 'string', enum: ['mlb', 'nba', 'nfl', 'nhl'] },
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
+      searchUpcoming: { type: 'boolean', description: 'For undated NFL requests, find the next upcoming slate within 7 days. False for an explicitly requested day.' },
       requestedPicks: { type: 'number', description: 'How many picks the user asked for' },
       market: { type: 'string', description: 'Optional exact requested prop market. Preserve the user request; e.g. total bases -> totalBases, hits -> hits, strikeouts -> strikeouts.' },
       side: { type: 'string', enum: ['over', 'under'], description: 'Optional requested direction. If the user asks for OVER bets, pass over; if UNDER, pass under. Never omit an explicit user direction.' },

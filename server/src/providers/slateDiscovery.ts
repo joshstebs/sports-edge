@@ -68,6 +68,7 @@ function flattenRoster(athletes: any[]): Array<{ id: string; name: string; posit
 export async function discoverSlateEvents(
   sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
   date: string,
+  currentWeek = false,
 ): Promise<SlateEvent[]> {
   if (sport === 'mlb') {
     const result = await mlb.getSchedule(date, date);
@@ -87,7 +88,7 @@ export async function discoverSlateEvents(
 
   const espnSport = ESPN_MAP[sport];
   const day = date.replace(/-/g, '');
-  const payload = await fetchJson(`${ESPN_BASE}/${espnSport}/scoreboard?dates=${day}`);
+  const payload = await fetchJson(`${ESPN_BASE}/${espnSport}/scoreboard${currentWeek ? '' : `?dates=${day}`}`);
   const events: any[] = Array.isArray(payload?.events) ? payload.events : [];
   return events.map((event) => {
     const competitors: any[] = event?.competitions?.[0]?.competitors ?? [];
@@ -96,13 +97,27 @@ export async function discoverSlateEvents(
     return {
       sport,
       eventId: String(event?.id ?? ''),
-      date: isoDate(event?.date) || date,
+      date: event?.date ? new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date(event.date)) : date,
       away: { id: away?.team?.id != null ? String(away.team.id) : null, name: String(away?.team?.displayName ?? away?.team?.name ?? '') },
       home: { id: home?.team?.id != null ? String(home.team.id) : null, name: String(home?.team?.displayName ?? home?.team?.name ?? '') },
       venue: event?.competitions?.[0]?.venue?.fullName ?? null,
       status: event?.status?.type?.name ?? event?.status?.type?.description ?? null,
     };
   }).filter((event) => event.eventId && event.away.name && event.home.name);
+}
+
+/** One bounded scoreboard read finds the next NFL slate on off-days. */
+export async function discoverUpcomingNflSlate(date: string): Promise<SlateEvent[]> {
+  const end = new Date(date + 'T12:00:00Z');
+  end.setUTCDate(end.getUTCDate() + 7);
+  const endDate = end.toISOString().slice(0, 10);
+  // ESPN NFL's default scoreboard is weekly; date ranges return HTTP 400.
+  const events = (await discoverSlateEvents('nfl', date, true))
+    .filter((event) => event.date >= date && event.date <= endDate && !/final|completed|postponed|canceled|cancelled|in_progress|halftime/i.test(String(event.status ?? '')))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return events.filter((event) => event.date === events[0]?.date);
 }
 
 async function espnTeamIdByName(sport: espn.EspnSport, teamName: string): Promise<string | null> {

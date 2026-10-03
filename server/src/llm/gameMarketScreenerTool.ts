@@ -1,7 +1,7 @@
 import type { ToolDef, ToolOutcome } from './tools.js';
 import * as sgo from '../providers/sportsGameOdds.js';
 import * as espnOdds from '../providers/espnOdds.js';
-import { discoverSlateEvents } from '../providers/slateDiscovery.js';
+import { discoverSlateEvents, discoverUpcomingNflSlate } from '../providers/slateDiscovery.js';
 
 type Sport = 'mlb' | 'nfl' | 'nba' | 'nhl';
 
@@ -96,12 +96,12 @@ function sgoMoneylineCandidate(event: Awaited<ReturnType<typeof sgo.getSgoSlateE
   };
 }
 
-async function espnFallback(sport: Sport, date: string, requested: number): Promise<any[]> {
-  // ESPN scoreboards only carry the current week: if the requested date has no
-  // discovered events, scan forward day-by-day (up to 8 days) so a moneyline
-  // request mid-week still finds the next slate instead of returning empty.
+async function espnFallback(sport: Sport, date: string, requested: number, searchUpcoming: boolean): Promise<any[]> {
+  // NFL's weekly scoreboard finds the next slate in one read. Exact dates
+  // remain exact; other undated sports retain their bounded forward scan.
   let events: any[] = [];
-  for (let offset = 0; offset < 8 && !events.length; offset++) {
+  if (sport === 'nfl' && searchUpcoming) events = await discoverUpcomingNflSlate(date).catch(() => []);
+  for (let offset = 0; offset < (searchUpcoming && sport !== 'nfl' ? 8 : 1) && !events.length; offset++) {
     const day = shiftDate(date, offset);
     events = (await discoverSlateEvents(sport, day).catch(() => []))
       .filter((event) => !/final|completed|postponed|canceled|cancelled/i.test(String(event.status ?? '')));
@@ -109,7 +109,9 @@ async function espnFallback(sport: Sport, date: string, requested: number): Prom
   events = events.slice(0, Math.min(8, Math.max(4, requested * 2)));
   const out: any[] = [];
   for (const event of events) {
-    const odds = await espnOdds.getGameOdds(event.away.name, event.home.name, sport).catch(() => null);
+    const odds = await espnOdds.getGameOdds(event.away.name, event.home.name, sport, undefined, {
+      id: String(event.eventId), away: event.away.name, home: event.home.name,
+    }).catch(() => null);
     if (!odds?.available || !odds.moneyline) continue;
     const homeOdds = espnOdds.parseAmerican(odds.moneyline.home);
     const awayOdds = espnOdds.parseAmerican(odds.moneyline.away);
@@ -147,6 +149,7 @@ async function espnFallback(sport: Sport, date: string, requested: number): Prom
       qualitySource: 'single-book-no-vig-v1',
       source: odds.source,
       marketSource: odds.source,
+      marketCheckedAt: odds.retrievedAt,
       marketBook: odds.provider ?? 'ESPN sportsbook',
       books: odds.provider ? [odds.provider] : [],
       bookCount: odds.provider ? 1 : 0,
@@ -168,15 +171,24 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(args?.date ?? '')) ? String(args.date) : todayToronto();
   const requested = Math.min(10, Math.max(1, Number(args?.requestedPicks ?? 5) || 5));
   const minConfidence = Math.max(0.5, Math.min(0.8, Number(args?.minConfidence ?? 0.54) || 0.54));
+  const searchUpcoming = args?.searchUpcoming ?? !args?.date;
 
   let candidates: any[] = [];
   const live = await sgo.getSgoSlateEvents(sport, 12).catch(() => null);
   if (live?.available) {
-    candidates = live.events.map((event) => sgoMoneylineCandidate(event, date, live.checkedAt)).filter(Boolean);
+    candidates = live.events
+      .filter((event) => eventDate(event.commenceTime, date) >= date &&
+        (searchUpcoming || eventDate(event.commenceTime, date) === date) &&
+        (!event.commenceTime || Date.parse(event.commenceTime) > Date.now()))
+      .map((event) => sgoMoneylineCandidate(event, date, live.checkedAt)).filter(Boolean);
+    if (sport === 'nfl' && searchUpcoming && candidates.length) {
+      const nextDate = candidates.map((candidate) => candidate.eventDate).sort()[0];
+      candidates = candidates.filter((candidate) => candidate.eventDate === nextDate);
+    }
   }
   let provider = 'SportsGameOdds consensus';
   if (!candidates.length) {
-    candidates = await espnFallback(sport, date, requested);
+    candidates = await espnFallback(sport, date, requested, searchUpcoming);
     provider = 'ESPN sportsbook fallback';
   }
   const qualified = candidates
@@ -212,6 +224,7 @@ export const GAME_MARKET_SCREENER_TOOL: ToolDef = {
       sport: { type: 'string', enum: ['mlb', 'nfl', 'nba', 'nhl'] },
       market: { type: 'string', enum: ['moneyline', 'ml', 'h2h'] },
       date: { type: 'string', description: 'YYYY-MM-DD; defaults to today in America/Toronto' },
+      searchUpcoming: { type: 'boolean', description: 'Search the next slate for undated requests; false for an explicit date.' },
       requestedPicks: { type: 'number', description: 'How many moneyline plays the user requested' },
       minConfidence: { type: 'number', description: 'Minimum no-vig market probability; default 0.54' },
     },
