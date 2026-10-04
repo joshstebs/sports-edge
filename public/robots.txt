@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sports-edge-kohl.vercel.app/sitemap.xml
