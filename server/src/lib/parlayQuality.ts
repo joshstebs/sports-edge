@@ -48,7 +48,7 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
     one: '1', two: '2', three: '3', four: '4', five: '5',
     six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
   };
-  const normalized = String(text ?? '').toLowerCase().replace(
+  const normalized = String(text ?? '').toLowerCase().replace(/\b\d{4}-\d{2}-\d{2}\b/g, '').replace(
     /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
     (word) => numberWords[word],
   );
