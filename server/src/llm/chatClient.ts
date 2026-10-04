@@ -1,5 +1,5 @@
 // OpenAI-compatible LLM chat client (raw fetch; Node 22 has fetch).
-// Routing: Groq GPT-OSS-120B -> Gemini 3.6 Flash (verified 2026-09-07).
+// OpenCode Zen DeepSeek Flash is primary when configured.
 // Supports streaming content deltas AND streaming tool_calls (accumulated per
 // index, partial JSON fragments concatenated). Tool calls emitted in one model
 // turn execute concurrently, then the model receives results in original order.
@@ -15,12 +15,18 @@ export interface LlmConfig {
   model: string;
   models: string[];
   baseUrl: string;
+  reasoningEffort?: 'high';
   fallback?: LlmConfig;
 }
 
 export function llmConfig(): LlmConfig {
-  // Only live-verified routes enter the chain. Credentials for retired providers
-  // remain stored, but do not silently re-enable those providers.
+  // Zen supports application traffic; Go's subscription is for coding agents.
+  // Do not fall back to the known-broken Groq/Gemini credentials when Zen is set.
+  if (process.env.OPENCODE_ZEN_API_KEY) {
+    const model = process.env.OPENCODE_ZEN_MODEL || 'deepseek-v4.1-flash';
+    return { configured: true, provider: 'opencode-zen', model, models: [model],
+      baseUrl: 'https://opencode.ai/zen/v1', reasoningEffort: 'high' };
+  }
   const providers: LlmConfig[] = [];
   if (process.env.GROQ_API_KEY) {
     const model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
@@ -39,6 +45,7 @@ export interface ChatMessage {
   content?: string | null | Array<{ type: string; [k: string]: unknown }>;
   tool_calls?: any[];
   tool_call_id?: string;
+  reasoning_content?: string;
 }
 
 export interface ToolSchema {
@@ -57,6 +64,7 @@ export interface ToolCallFragment {
 
 export interface OneShotResult {
   content: string;
+  reasoningContent?: string;
   modelUsed?: string;
   toolCalls: Array<{ index: number; id: string; name: string; arguments: string; parsed: any; extra_content?: any | null }>;
 }
@@ -284,14 +292,12 @@ async function tryModel(
   const url = `${pc.baseUrl}/chat/completions`;
   const apiKey = pc.provider === 'gemini' ? process.env.GEMINI_API_KEY : pc.provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : pc.provider === 'opencode-go' ? process.env.OPENCODE_GO_API_KEY : pc.provider === 'opencode-zen' ? process.env.OPENCODE_ZEN_API_KEY : pc.provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
 
-  // x-opencode-session: OpenCode requires this header (mandatory from 2026-09-06 —
-  // requests without it error). It pins one conversation to one upstream backend so
-  // the provider's prompt cache stays warm. Value must be stable per conversation;
-  // caller passes a conversation-scoped id via env-compatible session key.
+  // Identify application traffic honestly and keep routing/cache affinity stable.
   const extraHeaders: Record<string, string> = {};
   if (pc.provider === 'opencode-go' || pc.provider === 'opencode-zen') {
     const sessionKey = process.env.OPENCODE_SESSION_KEY || 'sportsedge-single-tenant';
     extraHeaders['x-opencode-session'] = `${sessionKey}-${new Date().toISOString().slice(0, 10)}`;
+    extraHeaders['User-Agent'] = 'SportsEdge/0.2';
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -299,7 +305,10 @@ async function tryModel(
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...extraHeaders },
-        body: JSON.stringify({ model, messages, tools, temperature: 0.6, stream: true }),
+        body: JSON.stringify({ model, messages, ...(tools.length ? { tools } : {}), stream: true,
+          ...(pc.reasoningEffort ? { reasoning_effort: pc.reasoningEffort,
+            thinking: { type: 'enabled' }, max_tokens: 4096 } : { temperature: 0.6 }),
+        }),
         signal: cb.signal ?? AbortSignal.timeout(MODEL_TURN_TIMEOUT_MS),
       });
 
@@ -340,6 +349,7 @@ async function readStream(res: Response, cb: StreamCallbacks): Promise<OneShotRe
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let content = '';
+  let reasoningContent = '';
   const toolCalls = new Map<string, ToolCallFragment>();
   const keyByIndex = new Map<number, string>();
   let sawKey = false;
@@ -399,6 +409,9 @@ async function readStream(res: Response, cb: StreamCallbacks): Promise<OneShotRe
         try { json = JSON.parse(payload); } catch { continue; }
         const delta = json?.choices?.[0]?.delta;
         if (!delta) continue;
+        // DeepSeek requires this private context on subsequent tool turns.
+        // Keep it in memory only; never stream it to the client or persist it.
+        if (typeof delta.reasoning_content === 'string') reasoningContent += delta.reasoning_content;
         if (typeof delta.content === 'string') { sawKey = true; content += delta.content; cb.onDelta?.(delta.content); }
         const tcFrags: any[] = delta.tool_calls ?? json?.choices?.[0]?.message?.tool_calls ?? [];
         for (const f of tcFrags) {
@@ -426,7 +439,7 @@ async function readStream(res: Response, cb: StreamCallbacks): Promise<OneShotRe
     try { parsed = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch { parsed = null; }
     return { index: tc.index ?? 0, id: tc.id ?? `call_${tc.index ?? 0}`, name: tc.name ?? '', arguments: tc.arguments ?? '', parsed, extra_content: tc.extra_content ?? null };
   }).filter((c) => c.name);
-  return { content, toolCalls: calls };
+  return { content, toolCalls: calls, ...(reasoningContent ? { reasoningContent } : {}) };
 }
 
 export interface ToolEvent { name: string; status: 'running' | 'done' | 'error'; summary?: string; data?: any; }
@@ -588,6 +601,7 @@ export async function runAgent(
     msgs.push({
       role: 'assistant',
       content: resp.content || null,
+      ...(resp.reasoningContent ? { reasoning_content: resp.reasoningContent } : {}),
       tool_calls: resp.toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments || '{}' }, ...(tc.extra_content ? { extra_content: tc.extra_content } : {}) })),
     });
 

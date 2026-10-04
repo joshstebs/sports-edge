@@ -304,7 +304,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   res.flushHeaders?.();
 
   if (!cfg.configured && !deterministicScreenerCalls(rawMessages, sport).length) {
-    sse(res, 'error', { message: 'No LLM API key configured. Add GROQ_API_KEY (preferred free model) or another supported non-Gemini provider key.' });
+    sse(res, 'error', { message: 'No LLM API key configured. Add OPENCODE_ZEN_API_KEY to enable DeepSeek Flash with high reasoning.' });
     res.end();
     return;
   }

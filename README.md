@@ -22,7 +22,7 @@ A sports analytics chat platform where an AI betting analyst answers matchup, pr
 | site.web.api.espn.com | MLB/NFL/NBA/NHL rosters, injury reports, gamelogs where available, team efficiency, news, **DraftKings odds** (via summary payload) | none |
 | api.open-meteo.com | Game-time weather + 30-park venue table | none |
 | api.the-odds-api.com | Multi-book odds (FanDuel, Bet365, BetMGM...) | `ODDS_API_KEY` (optional) |
-| LLM (Gemini/OpenAI) | Chat brain — tool-calling agent | `GEMINI_API_KEY` or `OPENAI_API_KEY` |
+| LLM (OpenCode Zen) | DeepSeek V4.1 Flash, high reasoning; tool-calling agent | `OPENCODE_ZEN_API_KEY` (`OPENCODE_ZEN_MODEL` override) |
 
 ## Predictive engine
 The deterministic `player_prop_model` supports MLB, NFL, NBA, and NHL player markets. It requires the exact sportsbook side and line, runs the live availability gate first, and derives probability from 5–20 official recent game records:

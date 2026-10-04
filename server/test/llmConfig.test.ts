@@ -29,8 +29,19 @@ function withKeys(enabled: readonly KeyName[], run: () => void) {
   }
 }
 
-test('only verified providers are used despite retired credentials being present', () => {
+test('OpenCode Zen with high reasoning takes priority over broken legacy providers', () => {
   withKeys(KEY_NAMES, () => {
+    const cfg = llmConfig();
+    assert.equal(cfg.provider, 'opencode-zen');
+    assert.equal(cfg.model, 'deepseek-v4.1-flash');
+    assert.equal(cfg.reasoningEffort, 'high');
+    assert.equal(cfg.baseUrl, 'https://opencode.ai/zen/v1');
+    assert.equal(cfg.fallback, undefined);
+  });
+});
+
+test('legacy providers remain available when Zen is absent; Go is not used for sports traffic', () => {
+  withKeys(['GROQ_API_KEY', 'GEMINI_API_KEY'], () => {
     const cfg = llmConfig();
     assert.equal(cfg.provider, 'groq');
     assert.equal(cfg.model, 'openai/gpt-oss-120b');
