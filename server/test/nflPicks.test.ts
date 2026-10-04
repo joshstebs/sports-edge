@@ -5,7 +5,7 @@ import { discoverSlateEvents, discoverUpcomingNflSlate } from '../src/providers/
 import { GAME_MARKET_SCREENER_TOOL } from '../src/llm/gameMarketScreenerTool.js';
 import { renderScreenerSummaryBlocks } from '../src/llm/screenerRenderer.js';
 import { finalizeStructuredParlay, parseParlayQualityPolicy } from '../src/lib/parlayQuality.js';
-import { runAgent } from '../src/llm/chatClient.js';
+import { runAgent, deterministicScreenerCalls } from '../src/llm/chatClient.js';
 
 test('undated NFL requests find the next slate; explicit Toronto dates stay exact', () => {
   const now = new Date('2026-10-04T00:30:00Z'); // Saturday evening in Toronto
@@ -80,8 +80,26 @@ test('off-day discovery and ESPN fallback survive the real renderer/verification
     assert.ok(events.includes('game_market_screener'));
     assert.match(agent.content, /Buffalo Bills ML/);
     assert.doesNotMatch(agent.content, /Unresearched model answer/);
+    assert.equal(agent.modelUsed, 'deterministic-live-data');
+    assert.equal(urls.filter((url) => url.includes('llm.test')).length, 0, 'pick discovery never calls an AI provider');
+    const withoutAI = await runAgent({
+      configured: false, provider: 'none', model: '', models: [], baseUrl: '',
+    }, [{ role: 'user', content: 'Best NFL moneyline bets 2026-10-04' }], []);
+    assert.match(withoutAI.content, /Buffalo Bills ML/);
   } finally {
     globalThis.fetch = originalFetch;
     keys.forEach((key, i) => { if (saved[i] == null) delete process.env[key]; else process.env[key] = saved[i]; });
   }
+});
+
+test('deterministic routing respects selected sport and explicit prop/game intent', () => {
+  const calls = (text: string) => deterministicScreenerCalls([{ role: 'user', content: text }], 'NFL');
+  assert.equal(calls('Best bets tomorrow').length, 2);
+  assert.equal(calls('5 NFL passing yards props')[0].name, 'slate_candidate_screener');
+  assert.equal(calls('5 NFL passing yards props').length, 1);
+  assert.equal(calls('Best NFL moneyline bets')[0].name, 'game_market_screener');
+  assert.equal(calls('Best NFL moneyline bets').length, 1);
+  assert.equal(calls('Build a 5-leg NFL SGP').length, 1);
+  assert.equal(calls('Best NFL spread bets').length, 0);
+  assert.equal(calls('Explain what moneyline means').length, 0);
 });

@@ -368,6 +368,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     // that line, and positive value gets priority over the raw-probability
     // under bias that appears when the screening line is higher than the book.
     return {
+      sport, modelVersion: finalModel.modelVersion, source: profile.sources?.[0] ?? 'unknown',
       player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
       market, side: finalModel.side, suggestedLine: line, modelLine: line,
       screeningSide: model.side, confidencePct: Math.round((finalModel.probability ?? 0) * 1000) / 10,

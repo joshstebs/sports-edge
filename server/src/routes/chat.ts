@@ -2,7 +2,7 @@
 
 import { Router, Request, Response } from 'express';
 import { SYSTEM_PROMPT, BET_GENERATION_ENGINE_RULES } from '../prompt/systemPrompt.js';
-import { llmConfig, runAgent, ChatMessage } from '../llm/chatClient.js';
+import { llmConfig, runAgent, deterministicScreenerCalls, ChatMessage } from '../llm/chatClient.js';
 import { getToolSchemas } from '../llm/toolRegistry.js';
 import { addPrediction, learningPromptBlock, loadModelEvidence, type ModelEvidence } from '../lib/predictionStore.js';
 import {
@@ -303,7 +303,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   });
   res.flushHeaders?.();
 
-  if (!cfg.configured) {
+  if (!cfg.configured && !deterministicScreenerCalls(rawMessages, sport).length) {
     sse(res, 'error', { message: 'No LLM API key configured. Add GROQ_API_KEY (preferred free model) or another supported non-Gemini provider key.' });
     res.end();
     return;
@@ -385,6 +385,19 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       onToolEvent: (ev) => {
         if (ev.name === 'player_prop_model' && ev.status === 'done' && ev.data && Number.isFinite(ev.data.probability)) {
           modelEvidence.push(ev.data as ModelEvidence);
+        }
+        if (ev.name === 'slate_candidate_screener' && ev.status === 'done' && Array.isArray(ev.data?.candidates)) {
+          for (const candidate of ev.data.candidates) {
+            if (candidate.marketLine == null || candidate.marketProbability == null || candidate.estimatedEdge == null) continue;
+            modelEvidence.push({
+              player: candidate.player, sport: candidate.sport, market: candidate.market,
+              side: candidate.side, line: Number(candidate.marketLine),
+              probability: Number(candidate.marketProbability), grade: candidate.grade,
+              estimatedEdge: Number(candidate.estimatedEdge) / 100,
+              modelVersion: candidate.modelVersion, sampleSize: candidate.sampleSize,
+              source: candidate.source, eventDate: candidate.eventDate, eventId: String(candidate.eventId),
+            });
+          }
         }
         sse(res, 'tool', {
           name: ev.name,
@@ -602,7 +615,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const modelBlockedLegs = modelBlocked.size;
     const qualityBlockedLegs = qualityBlocked.size;
     const lineBlockedLegs = lineBlocked.size;
-    const requestedShortfall = finalizedParlay.shortfall;
+    const requestedShortfall = hadStructuredCandidates ? finalizedParlay.shortfall : 0;
     if (blockedLegs || modelBlockedLegs || qualityBlockedLegs || lineBlockedLegs || requestedShortfall) {
       const notes = [
         blockedLegs ? `${blockedLegs} leg${blockedLegs === 1 ? '' : 's'} failed current roster, injury, or game-day verification` : '',

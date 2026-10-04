@@ -4,9 +4,10 @@
 // index, partial JSON fragments concatenated). Tool calls emitted in one model
 // turn execute concurrently, then the model receives results in original order.
 
-import { executeToolBatch } from './toolBatch.js';
+import { executeToolBatch, type BatchToolCall } from './toolBatch.js';
 import { renderScreenerSummaryBlocks } from './screenerRenderer.js';
 import { resolveSlateDate } from './slateDate.js';
+import { hasCurrentMarketLine } from '../lib/parlayQuality.js';
 
 export interface LlmConfig {
   configured: boolean;
@@ -103,7 +104,7 @@ function inferRequestedPicks(text: string): number | undefined {
   if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
   const giveMe = normalized.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-|–|—)\s*(\d{1,2}))?/i);
   if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
-  const sportQualified = normalized.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
+  const sportQualified = normalized.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:[a-z]+\s+){0,4}(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
   if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
   const explicit = normalized.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
   if (explicit) return clampRequestedPicks(Number(explicit[1]));
@@ -213,6 +214,34 @@ function patchScreenerCall(
   }
   const argumentsJson = JSON.stringify(parsed);
   return { ...call, arguments: argumentsJson, parsed };
+}
+
+/** Broad pick requests are data jobs; an LLM outage must not prevent research. */
+export function deterministicScreenerCalls(msgs: ChatMessage[], focusSport?: string | null): BatchToolCall[] {
+  const text = msgs.filter((m) => m.role === 'user' && typeof m.content === 'string').pop()?.content;
+  if (typeof text !== 'string') return [];
+  const intent = inferConversationScreenerIntent(msgs);
+  const recommendation = /\b(?:best|top|give|show|find|build|make|create|recommend|suggest)\b[\s\S]{0,80}\b(?:bets?|picks?|props?|parlay|sgp|plays?)\b/i.test(text)
+    || /\b(?:mlb|nfl|nba|nhl)\s+(?:picks?|bets?|props?)\b/i.test(text)
+    || /\b\d+\s*(?:leg|pick|prop|bet)s?\b/i.test(text)
+    || (intent.requestedPicks != null && intent.requestKind != null);
+  // These game markets require dedicated tools, not moneyline substitutes.
+  if (!recommendation || /\b(?:spread|spreads|totals|ats|nrfi|yrfi)\b/i.test(text)) return [];
+  const systemFocus = msgs.find((m) => m.role === 'system' && typeof m.content === 'string')?.content;
+  const sport = intent.sport ?? focusSport?.toLowerCase()
+    ?? (typeof systemFocus === 'string' ? /Focus analysis on (MLB|NFL|NBA|NHL)/i.exec(systemFocus)?.[1].toLowerCase() : undefined);
+  if (!sport || !['mlb', 'nfl', 'nba', 'nhl'].includes(sport)) return [];
+  const args = { sport, requestedPicks: intent.requestedPicks ?? 5, ...resolveSlateDate(text) };
+  const calls: BatchToolCall[] = [];
+  if (intent.requestKind !== 'game_market' && !intent.gameMarket) {
+    const call = patchScreenerCall({ index: 0, id: 'deterministic_props', name: 'slate_candidate_screener',
+      arguments: JSON.stringify(args), parsed: args }, intent, /\b(more|other|another|different|additional|again)\b/i.test(text), extractPriorPickNames(msgs));
+    calls.push({ id: call.id, name: call.name, parsed: call.parsed });
+  }
+  if (!intent.sameGame && (intent.requestKind !== 'player_prop' || intent.gameMarket)) {
+    calls.push({ id: 'deterministic_games', name: 'game_market_screener', parsed: { ...args, market: 'moneyline' } });
+  }
+  return calls;
 }
 
 export async function streamChatOnce(
@@ -410,6 +439,30 @@ export async function runAgent(
   cb: AgentCallbacks = {}
 ): Promise<{ content: string; iterations: number; modelUsed: string | null }> {
   const msgs: ChatMessage[] = [...messages];
+  const deterministicCalls = deterministicScreenerCalls(msgs);
+  if (deterministicCalls.length) {
+    const results = await executeToolBatch(deterministicCalls, {
+      timeoutMs: 36_000,
+      onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
+    });
+    for (const result of results) msgs.push({ role: 'tool', tool_call_id: result.call.id, content: result.outcome.json });
+    // Research-only, model-derived lines must not crowd real offers out of the
+    // bounded structured pool before the final route checks run.
+    const candidates = extractScreenerCandidates(msgs).filter((candidate) => {
+      const game = candidate.candidateType === 'game_market';
+      return hasCurrentMarketLine({
+        entity_type: game ? 'team' : 'player', sport: candidate.sport,
+        market: candidate.market, side: candidate.side, line: candidate.marketLine,
+        odds: game ? candidate.marketOdds : candidate.side === 'under' ? candidate.marketOddsUnder : candidate.marketOddsOver,
+        line_source: candidate.marketSource, line_checked_at: candidate.marketCheckedAt,
+      });
+    });
+    const content = candidates.length
+      ? renderScreenerSummaryBlocks(candidates, requestedCountHint(msgs))
+      : '**No verified candidates found.** No current sportsbook offers were returned that can be recommended. ' + results.map((result) => result.outcome.summary).join('; ');
+    cb.onDelta?.(content);
+    return { content, iterations: 0, modelUsed: 'deterministic-live-data' };
+  }
   // Fast, cheap models for the optional research turn. These slugs are Gemini
   // family and only valid on the Gemini provider — VERIFIED LIVE 2026-08-30:
   // sending them to opencode-go returned 401 ModelError for all three, wasting
