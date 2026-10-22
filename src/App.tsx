@@ -10,6 +10,8 @@ import { fetchHealth, fetchLedger, saveLedgerTicket, type HealthInfo } from './l
 import { fetchSession, signOut, type AuthUser } from './lib/auth';
 import { clearBillingSession, completeCheckout, fetchBillingStatus } from './lib/billing';
 import { legKey } from './lib/odds';
+import { edgePickToLeg } from './lib/research';
+import type { TopEdgePick } from './lib/api';
 import {
   collectMessageLegs,
   ledgerKeysFromPicks,
@@ -31,6 +33,8 @@ const ParlayBuilder = lazy(() => import('./components/ParlayBuilder'));
 const MyPicks = lazy(() => import('./components/MyPicks'));
 const Results = lazy(() => import('./components/Results'));
 const ModelLab = lazy(() => import('./components/ModelLab'));
+const ResearchDesk = lazy(() => import('./components/ResearchDesk'));
+const ExperienceApp = lazy(() => import('./ExperienceApp'));
 
 const CHAT_STORAGE_KEY = 'sports-edge:chat:v2';
 const SLIP_STORAGE_KEY = 'sports-edge:betslip:v2';
@@ -161,7 +165,7 @@ export default function App() {
 
   return (
     <>
-      <Workspace
+      {new URLSearchParams(window.location.search).get('experiences') === '1' ? <Suspense fallback={<div role="status">Loading experiences…</div>}><ExperienceApp key={auth.user.id} user={auth.user} /></Suspense> : <Workspace
         key={auth.user.id}
         user={auth.user}
         onSessionExpired={() => setAuth({ status: 'signed-out', user: null, error: 'Your session expired. Please sign in again.' })}
@@ -178,7 +182,7 @@ export default function App() {
             setAuth({ status: 'signed-out', user: null, error: null });
           }
         }}
-      />
+      />}
       {showUpgrade && (
         <UpgradeModal
           onClose={() => setShowUpgrade(false)}
@@ -588,25 +592,17 @@ function Workspace({
     [sendMessage],
   );
 
-  const addTopEdgeToSlip = useCallback((pick: {
-    sport?: string; matchup?: string; selection?: string; market?: string;
-    odds?: number | null; confidence?: number;
-  }) => {
-    const leg: SgpLeg = {
-      sport: pick.sport,
-      game: pick.matchup,
-      selection: pick.selection,
-      market: pick.market,
-      odds: typeof pick.odds === 'number' ? pick.odds : null,
-      confidence: typeof pick.confidence === 'number' ? pick.confidence : undefined,
-    };
+  const addTopEdgeToSlip = useCallback((pick: TopEdgePick) => {
+    const leg = edgePickToLeg(pick);
     setSlipLegs((prev) => mergeSgpLegs(prev, [leg]));
   }, []);
 
   const renderView = () => {
     switch (view) {
       case 'today':
-        return <Today onAsk={goAsk} onAddLegText={addTopEdgeToSlip} slipCount={slipLegs.length} />;
+        return <Today onAsk={goAsk} onNavigate={setView} onAddLeg={addTopEdgeToSlip} slipLegs={slipLegs} />;
+      case 'research':
+        return <ResearchDesk onAsk={goAsk} />;
       case 'best-bets':
         return (
           <BestBetsPage
@@ -614,7 +610,8 @@ function Workspace({
             loading={false}
             error={null}
             onAddLeg={addTopEdgeToSlip}
-            addedKeys={new Set()}
+            slipLegs={slipLegs}
+            onResearch={() => setView('research')}
           />
         );
       case 'parlays':
@@ -660,7 +657,7 @@ function Workspace({
         theme={theme}
         onToggleTheme={() => setTheme(toggleTheme())}
         onLogout={onLogout}
-        onNewChat={newChat}
+        onNewChat={() => { newChat(); setView('chat'); }}
         onOpenPerformance={() => setView((v) => (v === 'results' ? 'chat' : 'results'))}
       />
       {chatActive && <SportSelector sports={SPORTS} active={sport} onChange={setSport} />}

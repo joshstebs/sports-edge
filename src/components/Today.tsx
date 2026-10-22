@@ -2,16 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   fetchPerformance,
   type PerformanceSummary,
+  type TopEdgePick,
 } from '../lib/api';
 import { formatAmerican } from '../lib/odds';
 import BestBets, { addKeyFor } from './BestBets';
 import { EmptyHint, GradePill, Section, Skeleton, SportTag, Stat } from './ui/primitives';
-import { gradeForConfidence } from '../lib/odds';
+import type { View } from '../lib/nav';
+import type { SgpLeg } from '../types';
 
 interface TodayProps {
   onAsk: (text: string) => void;
-  onAddLegText: (leg: { sport?: string; game?: string; selection?: string; market?: string; odds?: number | null; confidence?: number }) => void;
-  slipCount: number;
+  onAddLeg: (pick: TopEdgePick) => void;
+  onNavigate: (view: View) => void;
+  slipLegs: SgpLeg[];
 }
 
 function todayLabel(): string {
@@ -20,7 +23,8 @@ function todayLabel(): string {
   }).format(new Date());
 }
 
-export default function Today({ onAsk, onAddLegText, slipCount }: TodayProps) {
+export default function Today({ onAsk, onAddLeg, onNavigate, slipLegs }: TodayProps) {
+  const slipCount = slipLegs.length;
   const [data, setData] = useState<PerformanceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,12 +58,13 @@ export default function Today({ onAsk, onAddLegText, slipCount }: TodayProps) {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-3 py-4 pb-24 sm:px-5 md:pb-8">
-      <header className="mb-4">
+      <header className="desk-heading mb-5">
         <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-frost2">{todayLabel()}</p>
-        <h2 className="mt-0.5 text-xl font-bold tracking-tight text-head">Today at SportsEdge</h2>
+        <h2 className="mt-2 text-3xl font-bold tracking-tight text-head">Find your edge.<br/><span className="text-edge">Keep the receipts.</span></h2>
         <p className="mt-0.5 max-w-2xl text-[12px] leading-relaxed text-muted">
-          Real recommendations only — every pick below was logged with a verified price and positive model edge. Empty panels mean the evidence isn’t there yet, not that the app is broken.
+          Research the player, challenge the price and track the result. One workspace from first question to final whistle.
         </p>
+        <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => onNavigate('research')} className="min-h-11 rounded-lg bg-edge px-4 text-xs font-bold text-ink">Research a prop</button><button type="button" onClick={() => onNavigate('best-bets')} className="min-h-11 rounded-lg border border-line px-4 text-xs font-semibold text-head">Open Edge Desk →</button><button type="button" onClick={() => onNavigate('my-picks')} className="min-h-11 rounded-lg border border-line px-4 text-xs font-semibold text-head">Your tracked picks</button></div>
       </header>
 
       {/* Ask input */}
@@ -141,17 +146,9 @@ export default function Today({ onAsk, onAddLegText, slipCount }: TodayProps) {
               performance={data}
               loading={false}
               error={null}
-              onAddLeg={(pick) =>
-                onAddLegText({
-                  sport: pick.sport,
-                  game: pick.matchup,
-                  selection: pick.selection,
-                  market: pick.market,
-                  odds: pick.odds,
-                  confidence: pick.confidence,
-                })
-              }
-              addedKeys={new Set()}
+              onAddLeg={onAddLeg}
+              slipLegs={slipLegs}
+              onResearch={() => onNavigate('research')}
             />
           </div>
 
@@ -163,8 +160,6 @@ export default function Today({ onAsk, onAddLegText, slipCount }: TodayProps) {
               ) : (
                 <ul className="space-y-2">
                   {recent.slice(0, 6).map((r) => {
-                    const g = gradeForConfidence(70);
-                    void g;
                     const won = r.outcome === 'won';
                     const lost = r.outcome === 'lost';
                     return (
@@ -197,7 +192,7 @@ export default function Today({ onAsk, onAddLegText, slipCount }: TodayProps) {
               ) : (
                 <p className="text-[12px] text-frost2">
                   <span className="font-mono font-bold text-edge">{slipCount}</span> leg{slipCount === 1 ? '' : 's'} selected.
-                  Open the <button type="button" className="text-edge underline-offset-2 hover:underline" onClick={() => onAsk('')}>Parlays</button> view to manage.
+                  Open the <button type="button" className="text-edge underline-offset-2 hover:underline" onClick={() => onNavigate('parlays')}>Parlays</button> view to manage.
                 </p>
               )}
             </Section>

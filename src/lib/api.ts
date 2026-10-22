@@ -107,6 +107,7 @@ export function displayPropMarket(value: string): string {
 }
 
 export interface TopEdgePick {
+  line?: string | number | null;
   predictionId: string;
   sport: string;
   matchup: string;

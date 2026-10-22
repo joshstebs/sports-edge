@@ -136,7 +136,7 @@ export async function getGameLog(
   season: string = CURRENT_SEASON,
   limit?: number
 ): Promise<ProviderResult<any[]>> {
-  const cacheKey = `${playerId}:${group}:${season}`;
+  const cacheKey = `${playerId}:${group}:${season}:${limit ?? 'all'}`;
   const cached = GAME_LOG_CACHE.get(cacheKey);
   if (cached) return cached;
   const task = (async (): Promise<ProviderResult<any[]>> => {

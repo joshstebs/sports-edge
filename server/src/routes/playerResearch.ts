@@ -47,7 +47,7 @@ playerResearchRouter.get('/player-research', async (req: Request, res: Response)
         return [{
           date: game.date ?? null,
           value,
-          opponent: game.opponent ?? game.opponentName ?? null,
+          opponent: typeof game.opponent === 'string' ? game.opponent : game.opponent?.name ?? game.opponentName ?? null,
           result: game.result ?? null,
           gameId: game.gamePk != null ? String(game.gamePk) : null,
         }];
