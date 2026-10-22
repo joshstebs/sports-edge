@@ -7,6 +7,7 @@ export type View =
   | 'today'
   | 'chat'
   | 'best-bets'
+  | 'research'
   | 'parlays'
   | 'my-picks'
   | 'results'
@@ -24,7 +25,8 @@ export interface NavItem {
 export function navItems(adminOnly: boolean): NavItem[] {
   const base: Array<Omit<NavItem, 'icon'>> = [
     { id: 'today', label: 'Today', short: 'Home' },
-    { id: 'best-bets', label: 'Best Bets', short: 'Picks' },
+    { id: 'best-bets', label: 'Edge Desk', short: 'Picks' },
+    { id: 'research', label: 'Prop Research', short: 'Research' },
     { id: 'chat', label: 'Ask SportsEdge', short: 'Ask' },
     { id: 'parlays', label: 'Parlays', short: 'Slip' },
     { id: 'my-picks', label: 'My Picks', short: 'Bets' },
@@ -49,6 +51,7 @@ function pathStroke(id: View): { d: string; extra?: string } {
     case 'results':
       return { d: 'M3 3v18h18', extra: 'M7 14l3-4 3 3 4-6' };
     case 'model-lab':
+    case 'research':
       return { d: 'M10 3v4l-5 9a2 2 0 001.8 3h10.4a2 2 0 001.8-3l-5-9V3', extra: 'M8.5 3h7M9 15h6' };
   }
 }

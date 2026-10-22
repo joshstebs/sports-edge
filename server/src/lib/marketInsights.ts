@@ -1,6 +1,7 @@
 import type { Prediction, PredictionLeg } from './predictionStore.js';
 
 export interface TopEdgePick {
+  line?: string | number | null;
   predictionId: string;
   sport: string;
   matchup: string;
@@ -68,9 +69,9 @@ function probability(value: unknown): number | null {
 
 function americanOdds(value: unknown): number | null {
   if (value == null || String(value).trim() === '') return null;
-  const normalized = String(value).replace(/−/g, '-').match(/[+-]?\d+/)?.[0];
-  const n = normalized == null ? NaN : Number(normalized);
-  return Number.isFinite(n) && n !== 0 ? n : null;
+  const normalized = String(value).replace(/−/g, '-').trim();
+  const n = /^[+-]?\d+$/.test(normalized) ? Number(normalized) : NaN;
+  return Number.isSafeInteger(n) && Math.abs(n) >= 100 ? n : null;
 }
 
 export function americanImpliedProbability(odds: number): number {
@@ -94,7 +95,7 @@ function eventDate(prediction: Prediction): string | null {
 }
 
 function legOdds(leg: PredictionLeg): number | null {
-  return americanOdds((leg as PredictionLeg & { game_odds?: unknown }).game_odds) ?? americanOdds(leg.implied_odds);
+  return americanOdds(leg.implied_odds);
 }
 
 function closingOdds(leg: PredictionLeg): number | null {
@@ -107,15 +108,17 @@ function buildTopEdges(predictions: Prediction[], now: Date): TopEdgePick[] {
   const rows: TopEdgePick[] = [];
   const seen = new Set<string>();
 
-  for (const prediction of predictions) {
+  for (const prediction of [...predictions].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))) {
     if (prediction.status !== 'pending') continue;
     const date = eventDate(prediction);
     if (date !== today) continue;
 
     for (const leg of prediction.legs) {
+      if (leg.outcome) continue;
       const p = probability(leg.model_probability);
       if (p == null || p < 0.58) continue;
       const odds = legOdds(leg);
+      if (odds == null) continue;
       const implied = odds == null ? null : americanImpliedProbability(odds);
       const edgePct = implied == null ? null : (p - implied) * 100;
       if (edgePct != null && edgePct <= 0) continue;
@@ -128,6 +131,7 @@ function buildTopEdges(predictions: Prediction[], now: Date): TopEdgePick[] {
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({
+        line: leg.line ?? leg.target_line,
         predictionId: prediction.prediction_id,
         sport: prediction.sport.toUpperCase(),
         matchup: prediction.matchup,

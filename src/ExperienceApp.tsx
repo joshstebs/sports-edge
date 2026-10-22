@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ExperienceHub from './components/ExperienceHub';
 import type { SlipSaveStatus } from './components/ParlaySlip';
 import { fetchHealth, fetchLedger, saveLedgerTicket, type HealthInfo } from './lib/api';
@@ -6,20 +6,9 @@ import { legKey } from './lib/odds';
 import { ledgerKeysFromPicks, ledgerLegKey, ledgerTicketBatches, ledgerTicketKey, mergeSgpLegs } from './lib/slip';
 import { streamChat } from './lib/sse';
 import type { HealthState, SgpLeg } from './types';
+import type { AuthUser } from './lib/auth';
 
 const SLIP_PREFIX = 'sports-edge:betslip:v2:';
-
-function discoverSlipKey(): string {
-  try {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(SLIP_PREFIX)) return key;
-    }
-  } catch {
-    // storage unavailable
-  }
-  return `${SLIP_PREFIX}experience`;
-}
 
 function loadSlip(key: string): SgpLeg[] {
   try {
@@ -32,8 +21,8 @@ function loadSlip(key: string): SgpLeg[] {
   }
 }
 
-export default function ExperienceApp() {
-  const slipKey = useMemo(discoverSlipKey, []);
+export default function ExperienceApp({ user }: { user: AuthUser }) {
+  const slipKey = `${SLIP_PREFIX}${user.id}`;
   const [legs, setLegs] = useState<SgpLeg[]>(() => loadSlip(slipKey));
   const [tracked, setTracked] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<HealthState>('checking');

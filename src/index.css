@@ -68,6 +68,9 @@
   --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
+.desk-heading { border-top: 2px solid var(--color-edge); padding-top: 1rem; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--color-edge); outline-offset: 3px; }
+
 html,
 body,
 #root {
