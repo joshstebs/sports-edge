@@ -150,6 +150,18 @@ export default function App() {
     );
   }
   if (!auth.user) {
+    // Dev-only shell when the auth service itself is unreachable. Production
+    // builds drop this branch. A normal signed-out response still shows login.
+    if (import.meta.env.DEV && auth.error) {
+      return (
+        <Workspace
+          user={{ id: 'dev-preview', username: 'Design preview', role: 'admin' }}
+          onSessionExpired={() => setAuth({ status: 'signed-out', user: null, error: null })}
+          onUpgradeRequired={() => setShowUpgrade(true)}
+          onLogout={async () => setAuth({ status: 'signed-out', user: null, error: null })}
+        />
+      );
+    }
     return (
       <>
         <LoginScreen
@@ -695,6 +707,9 @@ function Workspace({
         }}
       />
       <div className="flex min-w-0 flex-1 flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
+      {user.id === 'dev-preview' && (
+        <p className="border-b border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-warn">Preview only. The sign-in service is unreachable, so this is not a session. No sample games or prices are filled in.</p>
+      )}
       <Header
         model={model}
         health={health}
