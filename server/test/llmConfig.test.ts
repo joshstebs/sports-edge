@@ -29,25 +29,38 @@ function withKeys(enabled: readonly KeyName[], run: () => void) {
   }
 }
 
-test('OpenCode Zen with high reasoning takes priority over broken legacy providers', () => {
+test('configured independent providers form an ordered fallback chain', () => {
   withKeys(KEY_NAMES, () => {
-    const cfg = llmConfig();
-    assert.equal(cfg.provider, 'opencode-zen');
-    assert.equal(cfg.model, 'deepseek-v4.1-flash');
-    assert.equal(cfg.reasoningEffort, 'high');
-    assert.equal(cfg.baseUrl, 'https://opencode.ai/zen/v1');
-    assert.equal(cfg.fallback, undefined);
-  });
-});
-
-test('legacy providers remain available when Zen is absent; Go is not used for sports traffic', () => {
-  withKeys(['GROQ_API_KEY', 'GEMINI_API_KEY'], () => {
     const cfg = llmConfig();
     assert.equal(cfg.provider, 'groq');
     assert.equal(cfg.model, 'openai/gpt-oss-120b');
     assert.equal(cfg.fallback?.provider, 'gemini');
+    assert.equal(cfg.fallback?.fallback?.provider, 'openrouter');
+    assert.equal(cfg.fallback?.fallback?.fallback?.provider, 'opencode-zen');
+    assert.equal(cfg.fallback?.fallback?.fallback?.reasoningEffort, 'high');
+    assert.equal(cfg.fallback?.fallback?.fallback?.fallback, undefined);
+  });
+});
+
+test('Zen alone is valid but cannot suppress independent providers', () => {
+  withKeys(['OPENCODE_ZEN_API_KEY'], () => {
+    assert.equal(llmConfig().provider, 'opencode-zen');
+    assert.equal(llmConfig().fallback, undefined);
+  });
+  withKeys(['GROQ_API_KEY', 'OPENCODE_ZEN_API_KEY'], () => {
+    assert.equal(llmConfig().provider, 'groq');
+    assert.equal(llmConfig().fallback?.provider, 'opencode-zen');
+  });
+});
+
+test('provider fallback uses only actually configured credentials', () => {
+  withKeys(['GROQ_API_KEY', 'GEMINI_API_KEY'], () => {
+    const cfg = llmConfig();
+    assert.equal(cfg.provider, 'groq');
+    assert.equal(cfg.fallback?.provider, 'gemini');
     assert.equal(cfg.fallback?.fallback, undefined);
   });
   withKeys(['GEMINI_API_KEY'], () => assert.equal(llmConfig().provider, 'gemini'));
-  withKeys(['OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'OPENROUTER_API_KEY'], () => assert.equal(llmConfig().configured, false));
+  withKeys(['OPENROUTER_API_KEY'], () => assert.equal(llmConfig().provider, 'openrouter'));
+  withKeys(['OPENAI_API_KEY', 'OPENCODE_GO_API_KEY'], () => assert.equal(llmConfig().configured, false));
 });

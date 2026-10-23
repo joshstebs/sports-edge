@@ -1,5 +1,5 @@
 // OpenAI-compatible LLM chat client (raw fetch; Node 22 has fetch).
-// OpenCode Zen DeepSeek Flash is primary when configured.
+// Multiple independent, configured providers form the fallback chain.
 // Supports streaming content deltas AND streaming tool_calls (accumulated per
 // index, partial JSON fragments concatenated). Tool calls emitted in one model
 // turn execute concurrently, then the model receives results in original order.
@@ -20,13 +20,9 @@ export interface LlmConfig {
 }
 
 export function llmConfig(): LlmConfig {
-  // Zen supports application traffic; Go's subscription is for coding agents.
-  // Do not fall back to the known-broken Groq/Gemini credentials when Zen is set.
-  if (process.env.OPENCODE_ZEN_API_KEY) {
-    const model = process.env.OPENCODE_ZEN_MODEL || 'deepseek-v4.1-flash';
-    return { configured: true, provider: 'opencode-zen', model, models: [model],
-      baseUrl: 'https://opencode.ai/zen/v1', reasoningEffort: 'high' };
-  }
+  // A Zen workspace policy budget can return permanent HTTP 429 errors even
+  // when the API key exists. Never let that disable independent providers.
+  // Prefer the configured low-cost providers and retain Zen as a final option.
   const providers: LlmConfig[] = [];
   if (process.env.GROQ_API_KEY) {
     const model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
@@ -36,7 +32,16 @@ export function llmConfig(): LlmConfig {
     const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
     providers.push({ configured: true, provider: 'gemini', model, models: [model], baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
   }
-  if (providers.length > 1) providers[0].fallback = providers[1];
+  if (process.env.OPENROUTER_API_KEY) {
+    const model = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b';
+    providers.push({ configured: true, provider: 'openrouter', model, models: [model], baseUrl: 'https://openrouter.ai/api/v1' });
+  }
+  if (process.env.OPENCODE_ZEN_API_KEY) {
+    const model = process.env.OPENCODE_ZEN_MODEL || 'deepseek-v4.1-flash';
+    providers.push({ configured: true, provider: 'opencode-zen', model, models: [model],
+      baseUrl: 'https://opencode.ai/zen/v1', reasoningEffort: 'high' });
+  }
+  for (let i = 0; i < providers.length - 1; i++) providers[i].fallback = providers[i + 1];
   return providers[0] ?? { configured: false, provider: 'none', model: '', models: [], baseUrl: '' };
 }
 
@@ -313,8 +318,13 @@ async function tryModel(
       });
 
       if (res.status === 429 && attempt === 0) {
+        const rateLimitBody = await res.text().catch(() => '');
+        // Hard budget failures will not recover from a short retry. Fall back
+        // immediately instead of re-spending the user's chat turn on Zen.
+        if (/policy budget|account budget|budget exceeded|insufficient credits|quota exceeded/i.test(rateLimitBody)) {
+          return { ok: false, error: `HTTP 429: ${rateLimitBody.slice(0, 300)}` };
+        }
         const retryAfter = Number(res.headers.get('retry-after')) || 0;
-        await res.body?.cancel().catch(() => {});
         const wait = Math.min(retryAfter > 0 ? retryAfter : 1, 2);
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, wait * 1000);
