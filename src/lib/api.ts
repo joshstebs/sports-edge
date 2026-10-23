@@ -376,3 +376,44 @@ export async function fetchPlayerResearch(
   if (!res.ok && res.status !== 404) throw new Error(payload.reason || `Player research unavailable (HTTP ${res.status})`);
   return payload;
 }
+
+export interface InjuryEntry {
+  playerName: string;
+  team: string | null;
+  position: string | null;
+  designation: string;
+  designationRaw: string;
+  unavailable: boolean;
+  injury: string | null;
+  detail: string | null;
+  shortComment: string | null;
+  changedAt: string | null;
+  source: string;
+}
+
+export interface InjuryReportPayload {
+  available: boolean;
+  sport?: string;
+  checkedAt?: string;
+  sources?: string[];
+  unavailable?: Array<{ source: string; reason: string }>;
+  count?: number;
+  entries?: InjuryEntry[];
+  reason?: string;
+  error?: string;
+}
+
+export async function fetchInjuries(sport: string, player?: string): Promise<InjuryReportPayload> {
+  const params = new URLSearchParams({ sport: sport.toLowerCase() });
+  if (player?.trim()) params.set('player', player.trim());
+  const res = await fetch(`${import.meta.env.BASE_URL}api/stats/injuries?${params.toString()}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = (await res.json().catch(() => null)) as InjuryReportPayload | null;
+  if (!payload) throw new Error(`Injury report unavailable (HTTP ${res.status})`);
+  if (!res.ok && res.status !== 503) {
+    throw new Error(payload.reason || payload.error || `Injury report unavailable (HTTP ${res.status})`);
+  }
+  return payload;
+}

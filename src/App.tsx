@@ -25,6 +25,7 @@ import type { ChatMessage, HealthState, Sport, SgpLeg, ToolEvent } from './types
 import { SPORTS } from './types';
 import { getStoredTheme, toggleTheme, type ThemeMode } from './lib/theme';
 import type { View } from './lib/nav';
+import { navItems } from './lib/nav';
 import Sidebar from './components/Sidebar';
 import MobileNav from './components/MobileNav';
 const Today = lazy(() => import('./components/Today'));
@@ -35,6 +36,8 @@ const Results = lazy(() => import('./components/Results'));
 const ModelLab = lazy(() => import('./components/ModelLab'));
 const ResearchDesk = lazy(() => import('./components/ResearchDesk'));
 const ExperienceApp = lazy(() => import('./ExperienceApp'));
+const Watchlist = lazy(() => import('./components/Watchlist'));
+const GameCenter = lazy(() => import('./components/GameCenter'));
 
 const CHAT_STORAGE_KEY = 'sports-edge:chat:v2';
 const SLIP_STORAGE_KEY = 'sports-edge:betslip:v2';
@@ -222,6 +225,10 @@ function Workspace({
   const [model, setModel] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme());
   const [view, setView] = useState<View>('today');
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(userStorageKey('sports-edge:nav-collapsed', user.id)) === '1'; } catch { return false; }
+  });
+  const [researchSeed, setResearchSeed] = useState('');
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -581,11 +588,32 @@ function Workspace({
     }
   }, [chatStorageKey, setStreamingState]);
 
+  const openResearch = useCallback((player?: string) => {
+    if (player?.trim()) setResearchSeed(player.trim());
+    setView('research');
+  }, []);
+
+  const handleSearch = useCallback((raw: string) => {
+    const query = raw.trim();
+    if (!query) return;
+    const needle = query.toLowerCase();
+    const match = navItems(user.role === 'admin').find((item) =>
+      item.label.toLowerCase() === needle
+      || item.short.toLowerCase() === needle
+      || item.label.toLowerCase().includes(needle) && needle.length > 3,
+    );
+    if (match && !/\s/.test(needle) || match && ['today', 'edge desk', 'research', 'prop research', 'ask', 'ask sportsedge', 'parlays', 'slip', 'my picks', 'results', 'watchlist', 'game center', 'games', 'model lab'].includes(needle)) {
+      setView(match.id);
+      return;
+    }
+    setResearchSeed(query);
+    setView('research');
+  }, [user.role]);
+
   const goAsk = useCallback(
     (text?: string) => {
       setView('chat');
       if (typeof text === 'string' && text.trim()) {
-        // Give the view a tick to mount the composer, then send.
         window.setTimeout(() => sendMessage(text), 30);
       }
     },
@@ -602,7 +630,11 @@ function Workspace({
       case 'today':
         return <Today onAsk={goAsk} onNavigate={setView} onAddLeg={addTopEdgeToSlip} slipLegs={slipLegs} />;
       case 'research':
-        return <ResearchDesk onAsk={goAsk} />;
+        return <ResearchDesk onAsk={goAsk} userId={user.id} seed={researchSeed} />;
+      case 'watchlist':
+        return <Watchlist userId={user.id} onOpenResearch={openResearch} />;
+      case 'games':
+        return <GameCenter onAsk={goAsk} />;
       case 'best-bets':
         return (
           <BestBetsPage
@@ -619,6 +651,7 @@ function Workspace({
           <ParlayBuilder
             onAsk={goAsk}
             slipCount={slipLegs.length}
+            legs={slipLegs}
             slipSlot={
               <ParlaySlip
                 legs={slipLegs}
@@ -647,8 +680,21 @@ function Workspace({
 
   return (
     <div className="flex h-full">
-      <Sidebar user={user} view={view} onNavigate={setView} slipCount={slipLegs.length} />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <Sidebar
+        user={user}
+        view={view}
+        onNavigate={setView}
+        slipCount={slipLegs.length}
+        collapsed={navCollapsed}
+        onToggleCollapsed={() => {
+          setNavCollapsed((current) => {
+            const next = !current;
+            try { localStorage.setItem(userStorageKey('sports-edge:nav-collapsed', user.id), next ? '1' : '0'); } catch { /* ignore */ }
+            return next;
+          });
+        }}
+      />
+      <div className="flex min-w-0 flex-1 flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <Header
         model={model}
         health={health}
@@ -659,6 +705,9 @@ function Workspace({
         onLogout={onLogout}
         onNewChat={() => { newChat(); setView('chat'); }}
         onOpenPerformance={() => setView((v) => (v === 'results' ? 'chat' : 'results'))}
+        onSearch={handleSearch}
+        onOpenSlip={() => setView('parlays')}
+        slipCount={slipLegs.length}
       />
       {chatActive && <SportSelector sports={SPORTS} active={sport} onChange={setSport} />}
       {chatActive ? (
@@ -731,9 +780,7 @@ function Workspace({
         </div>
       )}
       </div>
-      {!chatActive && (
-        <MobileNav user={user} view={view} onNavigate={setView} slipCount={slipLegs.length} />
-      )}
+      <MobileNav user={user} view={view} onNavigate={setView} slipCount={slipLegs.length} />
     </div>
   );
 }
