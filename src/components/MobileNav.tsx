@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { navItems, type View } from '../lib/nav';
 import type { AuthUser } from '../lib/auth';
 
@@ -8,71 +9,56 @@ interface MobileNavProps {
   slipCount: number;
 }
 
-/** Mobile bottom navigation. Five primary destinations; safe-area aware. */
+const PRIMARY: View[] = ['today', 'best-bets', 'research', 'chat'];
+
 export default function MobileNav({ user, view, onNavigate, slipCount }: MobileNavProps) {
-  // Fixed five slots on mobile per design: Home, Picks, Ask (center), Slip, Results.
-  const mobileOrder: Array<View> = ['today', 'best-bets', 'chat', 'parlays', 'results'];
-  const items = navItems(user.role === 'admin').filter((item) => mobileOrder.includes(item.id));
+  const [more, setMore] = useState(false);
+  const items = navItems(user.role === 'admin');
+  const primary = PRIMARY.map((id) => items.find((item) => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const overflow = items.filter((item) => !PRIMARY.includes(item.id));
+  const moreActive = overflow.some((item) => item.id === view);
 
   return (
-    <nav
-      aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-line/80 bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
-    >
-      <div className="mx-auto flex max-w-lg items-stretch justify-around px-1">
-        {items.map((item) => {
-          const active = view === item.id;
-          const isAsk = item.id === 'chat';
-          const showBadge = item.id === 'parlays' && slipCount > 0;
-
-          if (isAsk) {
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onNavigate(item.id)}
-                aria-current={active ? 'page' : undefined}
-                aria-label="Ask SportsEdge"
-                className="relative -mt-4 flex w-16 flex-col items-center focus-visible:outline-none"
-              >
-                <span
-                  className={`flex h-12 w-12 items-center justify-center rounded-full border shadow-[0_6px_18px_rgba(21,255,194,0.25)] transition-colors ${
-                    active
-                      ? 'border-edge bg-edge text-ink'
-                      : 'border-edge/50 bg-panel2 text-edge'
-                  }`}
+    <>
+      {more && (
+        <div className="fixed inset-0 z-40 md:hidden" role="presentation">
+          <button type="button" className="absolute inset-0 bg-ink/70" aria-label="Close menu" onClick={() => setMore(false)} />
+          <div role="dialog" aria-label="More destinations" className="absolute inset-x-0 bottom-0 border-t border-line bg-panel pb-[calc(4.5rem+env(safe-area-inset-bottom))]">
+            <div className="mx-auto grid max-w-lg grid-cols-2 gap-px bg-line">
+              {overflow.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => { onNavigate(item.id); setMore(false); }}
+                  className={`flex min-h-14 items-center gap-2 bg-panel px-4 text-left text-sm font-semibold ${view === item.id ? 'text-edge' : 'text-head'}`}
                 >
-                  <svg viewBox="0 0 24 24" className="h-5.5 w-5.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M3 17l5-5 4 3 6-8" />
-                    <path d="M14 7h4v4" />
-                  </svg>
-                </span>
-                <span className={`mt-0.5 text-[10px] font-semibold ${active ? 'text-edge' : 'text-frost2'}`}>Ask</span>
+                  <span className="h-4 w-4">{item.icon}</span>
+                  {item.label}
+                  {item.id === 'parlays' && slipCount > 0 ? <span className="num ml-auto text-edge">{slipCount}</span> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-50 border-t border-line bg-ink pb-[env(safe-area-inset-bottom)] md:hidden">
+        <div className="mx-auto flex max-w-lg items-stretch">
+          {primary.map((item) => {
+            const active = view === item.id;
+            return (
+              <button key={item.id} type="button" onClick={() => { setMore(false); onNavigate(item.id); }} aria-current={active ? 'page' : undefined} className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-[10px] font-semibold ${active ? 'text-edge' : 'text-frost2'}`}>
+                <span className="h-5 w-5">{item.icon}</span>
+                {item.short}
               </button>
             );
-          }
-
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate(item.id)}
-              aria-current={active ? 'page' : undefined}
-              className={`relative flex min-h-[56px] w-16 flex-col items-center justify-center gap-1 pt-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-edge/40 ${
-                active ? 'text-edge' : 'text-frost2'
-              }`}
-            >
-              <span className="h-5 w-5">{item.icon}</span>
-              <span className="text-[10px] font-medium leading-none">{item.short}</span>
-              {showBadge && (
-                <span className="absolute right-2 top-1 rounded-full bg-edge px-1.5 py-0.5 font-mono text-[9px] font-bold leading-none text-ink">
-                  {slipCount}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+          })}
+          <button type="button" onClick={() => setMore((open) => !open)} aria-expanded={more} className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-[10px] font-semibold ${moreActive || more ? 'text-edge' : 'text-frost2'}`}>
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" strokeLinecap="round" /></svg>
+            More
+            {slipCount > 0 && <span className="sr-only">{slipCount} legs on the slip</span>}
+          </button>
+        </div>
+      </nav>
+    </>
   );
 }

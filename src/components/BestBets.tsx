@@ -263,6 +263,8 @@ function BetCard({ pick, expanded, onToggle, onAdd, added, now }: {
 
       {expanded && (
         <div className="border-t border-line/60 px-4 py-3">
+          <p className="kicker">Evidence receipt</p>
+          <p className="mt-1 text-xs text-frost2">Stored recommendation. The price below was captured with the pick. It is not a live sportsbook quote, and the recommendation age is not the quote age.</p>
           <ProbabilityBar modelPct={pick.confidence} impliedPct={implied} />
 
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3">

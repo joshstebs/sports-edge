@@ -11,6 +11,8 @@ export type View =
   | 'parlays'
   | 'my-picks'
   | 'results'
+  | 'watchlist'
+  | 'games'
   | 'model-lab';
 
 export interface NavItem {
@@ -25,11 +27,13 @@ export interface NavItem {
 export function navItems(adminOnly: boolean): NavItem[] {
   const base: Array<Omit<NavItem, 'icon'>> = [
     { id: 'today', label: 'Today', short: 'Home' },
-    { id: 'best-bets', label: 'Edge Desk', short: 'Picks' },
+    { id: 'best-bets', label: 'Edge Desk', short: 'Desk' },
     { id: 'research', label: 'Prop Research', short: 'Research' },
+    { id: 'games', label: 'Game Center', short: 'Games' },
+    { id: 'watchlist', label: 'Watchlist', short: 'Watch' },
     { id: 'chat', label: 'Ask SportsEdge', short: 'Ask' },
     { id: 'parlays', label: 'Parlays', short: 'Slip' },
-    { id: 'my-picks', label: 'My Picks', short: 'Bets' },
+    { id: 'my-picks', label: 'My Picks', short: 'Picks' },
     { id: 'results', label: 'Results', short: 'Results' },
   ];
   if (adminOnly) base.push({ id: 'model-lab', label: 'Model Lab', short: 'Lab', adminOnly: true });
@@ -53,6 +57,10 @@ function pathStroke(id: View): { d: string; extra?: string } {
     case 'model-lab':
     case 'research':
       return { d: 'M10 3v4l-5 9a2 2 0 001.8 3h10.4a2 2 0 001.8-3l-5-9V3', extra: 'M8.5 3h7M9 15h6' };
+    case 'watchlist':
+      return { d: 'M7 4h10a1 1 0 011 1v15l-6-3.2L6 20V5a1 1 0 011-1z' };
+    case 'games':
+      return { d: 'M4 6h16v12H4z', extra: 'M8 10h.01M12 10h4M8 14h8' };
   }
 }
 

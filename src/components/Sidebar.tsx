@@ -1,4 +1,5 @@
-import { iconFor, navItems, type View } from '../lib/nav';
+import Logo from './Logo';
+import { navItems, type View } from '../lib/nav';
 import type { AuthUser } from '../lib/auth';
 
 interface SidebarProps {
@@ -6,50 +7,53 @@ interface SidebarProps {
   view: View;
   onNavigate: (view: View) => void;
   slipCount: number;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
-export default function Sidebar({ user, view, onNavigate, slipCount }: SidebarProps) {
+export default function Sidebar({ user, view, onNavigate, slipCount, collapsed, onToggleCollapsed }: SidebarProps) {
   const items = navItems(user.role === 'admin');
   return (
     <nav
       aria-label="Primary"
-      className="hidden w-56 shrink-0 flex-col gap-0.5 border-r border-line/70 bg-ink/70 px-2.5 py-4 md:flex"
+      className={`hidden shrink-0 flex-col border-r border-line bg-ink md:flex ${collapsed ? 'w-[4.5rem]' : 'w-56'}`}
     >
-      {items.map((item) => {
-        const active = view === item.id;
-        const showBadge = item.id === 'parlays' && slipCount > 0;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onNavigate(item.id)}
-            aria-current={active ? 'page' : undefined}
-            className={`group flex min-h-10 items-center gap-3 rounded-lg px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-edge/40 ${
-              active
-                ? 'bg-edge/12 text-edge'
-                : 'text-frost hover:bg-panel2 hover:text-head'
-            }`}
-          >
-            <span className={`h-4.5 w-4.5 shrink-0 ${active ? 'text-edge' : 'text-frost2 group-hover:text-frost'}`}>
-              {item.icon}
-            </span>
-            <span className="flex-1 text-left">{item.label}</span>
-            {showBadge && (
-              <span className="rounded-full bg-edge px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none text-ink">
-                {slipCount}
-              </span>
-            )}
-          </button>
-        );
-      })}
-      <div className="mt-auto px-3 pt-3">
-        <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-frost2/60">Verified data only</p>
-        <p className="mt-1 text-[10px] leading-snug text-frost2/50">
-          Picks require real odds and verified evidence. When evidence is missing, SportsEdge withholds.
-        </p>
+      <div className={`flex h-14 items-center border-b border-line ${collapsed ? 'justify-center px-1' : 'justify-between gap-1 px-3'}`}>
+        {collapsed ? <Logo size={28} /> : <Logo size={26} wordmark className="min-w-0 text-[1.15rem]" />}
+        <button type="button" onClick={onToggleCollapsed} className="flex h-11 w-9 shrink-0 items-center justify-center text-frost2 hover:text-head" aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}>
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+            <path d={collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
+      <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-3">
+        {items.map((item) => {
+          const active = view === item.id;
+          const showBadge = item.id === 'parlays' && slipCount > 0;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onNavigate(item.id)}
+              aria-current={active ? 'page' : undefined}
+              aria-label={item.label}
+              title={item.label}
+              className={`flex min-h-11 items-center gap-3 px-2 text-left text-[13px] font-medium ${
+                active ? 'bg-edge/12 text-edge' : 'text-frost hover:bg-panel2 hover:text-head'
+              } ${collapsed ? 'justify-center' : ''}`}
+            >
+              <span className="h-4 w-4 shrink-0">{item.icon}</span>
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && showBadge && (
+                <span className="bg-edge px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none text-ink">{slipCount}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {!collapsed && (
+        <p className="px-4 pb-4 text-[11px] leading-snug text-frost2">Picks need a stored price and evidence. Missing evidence is withheld.</p>
+      )}
     </nav>
   );
 }
-
-export { iconFor };

@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Section } from './ui/primitives';
+import SlipRisk from './SlipRisk';
+import type { SgpLeg } from '../types';
 
 interface ParlayBuilderProps {
   onAsk: (text: string) => void;
   slipCount: number;
+  legs?: SgpLeg[];
   /** Live slip node rendered beneath the builder (mobile sheet + desktop panel). */
   slipSlot?: React.ReactNode;
 }
@@ -25,7 +28,7 @@ type RiskChoice = (typeof RISK_OPTIONS)[number]['id'];
  * qualify than requested, the analyst says so explicitly and offers
  * alternatives instead of padding with weak legs.
  */
-export default function ParlayBuilder({ onAsk, slipCount, slipSlot }: ParlayBuilderProps) {
+export default function ParlayBuilder({ onAsk, slipCount, legs = [], slipSlot }: ParlayBuilderProps) {
   const [sport, setSport] = useState<SportChoice>('MLB');
   const [legCount, setLegCount] = useState(4);
   const [scope, setScope] = useState<'single' | 'multi' | 'props' | 'mixed'>('mixed');
@@ -54,11 +57,12 @@ export default function ParlayBuilder({ onAsk, slipCount, slipSlot }: ParlayBuil
     <div className="mx-auto w-full max-w-3xl px-3 py-4 pb-24 sm:px-5 md:pb-8">
       <header className="mb-4">
         <h2 className="text-lg font-bold tracking-tight text-head">Build a Parlay</h2>
-        <p className="mt-0.5 max-w-2xl text-[11px] leading-relaxed text-muted">
-          Set your preferences and SportsEdge assembles the parlay from genuinely qualifying picks.
-          Requested more legs than qualify? You’ll see exactly how many made the cut and why — never padded with weak legs.
+        <p className="mt-0.5 max-w-2xl text-sm leading-relaxed text-muted">
+          Set your preferences and SportsEdge asks the analyst to assemble the parlay from genuinely qualifying picks.
+          If fewer legs qualify than you asked for, the analyst should say so. This screen does not manufacture legs.
         </p>
       </header>
+      {legs.length > 0 && <div className="mb-4"><SlipRisk legs={legs} /></div>}
 
       <Section title="Preferences">
         <div className="space-y-4">

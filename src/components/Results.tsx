@@ -75,6 +75,15 @@ export default function Results() {
             />
           </div>
 
+          <Section title="Performance chart">
+            {enoughForCharts ? (
+              <RoiChart rows={data.bySport.map((row) => ({ label: row.sport, roi: row.roiPct, n: row.graded }))} />
+            ) : (
+              <EmptyHint>Fewer than 10 graded official results. The chart stays hidden so a small sample is not drawn as a trend.</EmptyHint>
+            )}
+            <p className="mt-2 text-[11px] leading-relaxed text-frost2">Official model ledger only. This is not your personal betting profit and not a hypothetical staking simulation.</p>
+          </Section>
+
           <Section title="Calibration, in plain language">
             {calibration && calibration.status !== 'insufficient-data' ? (
               <>
@@ -146,6 +155,33 @@ export default function Results() {
         </div>
       )}
     </div>
+  );
+}
+
+function RoiChart({ rows }: { rows: Array<{ label: string; roi: number | null; n: number }> }) {
+  const usable = rows.filter((row) => row.roi != null && row.n > 0);
+  if (!usable.length) return <EmptyHint>No sport has both a graded sample and an ROI figure.</EmptyHint>;
+  const max = Math.max(1, ...usable.map((row) => Math.abs(row.roi as number)));
+  const width = 560;
+  const rowH = 28;
+  const height = usable.length * rowH + 8;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="ROI by sport from the official ledger" className="w-full">
+      {usable.map((row, index) => {
+        const roi = row.roi as number;
+        const y = index * rowH + 6;
+        const mid = 150;
+        const bar = (Math.abs(roi) / max) * 180;
+        const positive = roi >= 0;
+        return (
+          <g key={row.label}>
+            <text x="0" y={y + 14} fill="var(--color-frost)" fontSize="12">{row.label}</text>
+            <text x={width} y={y + 14} textAnchor="end" fill={positive ? 'var(--color-edge)' : 'var(--color-danger)'} fontSize="12" fontFamily="ui-monospace, monospace">{`${roi > 0 ? '+' : ''}${roi.toFixed(1)}% · n=${row.n}`}</text>
+            <rect x={positive ? mid : mid - bar} y={y + 4} width={bar} height="10" fill={positive ? 'var(--color-edge)' : 'var(--color-danger)'} />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 

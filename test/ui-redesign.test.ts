@@ -39,7 +39,7 @@ test('nav exposes admin-only Model Lab only for admins', async () => {
   assert.equal(customerItems.some((i) => i.id === 'model-lab'), false);
   assert.equal(adminItems.some((i) => i.id === 'model-lab'), true);
   // Core destinations exist for everyone.
-  for (const id of ['today', 'chat', 'best-bets', 'parlays', 'my-picks', 'results']) {
+  for (const id of ['today', 'chat', 'best-bets', 'research', 'parlays', 'my-picks', 'results', 'watchlist', 'games']) {
     assert.ok(adminItems.some((i) => i.id === id), `missing nav item: ${id}`);
     assert.ok(customerItems.some((i) => i.id === id), `missing customer nav item: ${id}`);
   }

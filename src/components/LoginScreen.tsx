@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { signIn, type AuthUser } from '../lib/auth';
+import Logo from './Logo';
 
 interface LoginScreenProps {
   onAuthenticated: (user: AuthUser) => void;
@@ -50,28 +51,19 @@ export default function LoginScreen({ onAuthenticated, onTrialRequest, serviceEr
   };
 
   return (
-    <main className="relative flex min-h-full items-center justify-center overflow-hidden bg-ink px-4 py-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(21,255,194,0.13),transparent_42%)]" />
-      <section className="relative w-full max-w-md overflow-hidden rounded-3xl border border-line/80 bg-panel/95 p-6 shadow-[0_28px_90px_rgba(0,0,0,0.55)] backdrop-blur-xl sm:p-8">
-        <div className="mb-7 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-edge via-edge2 to-teal3 shadow-[0_0_26px_rgba(21,255,194,0.32)]">
-            <svg viewBox="0 0 24 24" className="h-6 w-6 text-ink" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M3 17l5-5 4 3 6-8" />
-              <path d="M14 7h4v4" />
-            </svg>
+    <main className="flex min-h-full items-center justify-center bg-ink px-4 py-10">
+      <section className="grid w-full max-w-4xl overflow-hidden border border-line bg-panel md:grid-cols-[0.9fr_1.1fr]">
+        <div className="border-b border-line bg-ink p-6 md:border-b-0 md:border-r sm:p-8">
+          <div className="mb-8">
+            <Logo size={44} wordmark className="text-3xl" />
           </div>
-          <div>
-            <h1 className="font-display text-xl font-extrabold tracking-tight text-white">SportsEdge</h1>
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-frost2">AI sports intelligence</p>
-          </div>
-        </div>
-
-        <div className="mb-6">
-          <h2 className="font-display text-2xl font-bold tracking-tight text-head">Welcome back</h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-frost2">
-            Sign in to see today’s verified edges, build parlays and track every pick against real results.
+          <h2 className="display text-4xl text-head">A research desk, not a tip feed.</h2>
+          <p className="mt-4 text-sm leading-relaxed text-frost2">
+            Sign in to inspect stored edges, test a prop line against official logs, and keep a pick’s identity through the slip and the ledger.
           </p>
         </div>
+        <div className="p-6 sm:p-8">
+        <h3 className="text-lg font-semibold text-head">Sign in</h3>
 
         <form onSubmit={submit} className="space-y-4">
           <label className="block">
@@ -156,9 +148,10 @@ export default function LoginScreen({ onAuthenticated, onTrialRequest, serviceEr
           Start free 7-day trial
         </button>
 
-        <p className="mt-5 text-center text-[10px] leading-relaxed text-frost2/75">
+        <p className="mt-5 text-[11px] leading-relaxed text-frost2">
           Sessions use encrypted transport and an HTTP-only secure cookie.
         </p>
+        </div>
       </section>
     </main>
   );

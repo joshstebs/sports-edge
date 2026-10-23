@@ -19,6 +19,7 @@ import {
 import type { HealthState, SgpLeg } from '../types';
 import ParlaySlip, { type SlipSaveStatus } from './ParlaySlip';
 import PlayerHeadshot from './PlayerHeadshot';
+import Logo from './Logo';
 
 export type ExperienceId =
   | 'parlay' | 'performance' | 'provenance' | 'prop-lab' | 'voice'
@@ -98,16 +99,7 @@ function combinedOdds(legs: SgpLeg[]): string {
 }
 
 function Brand() {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="relative h-8 w-9 shrink-0" aria-hidden="true">
-        <span className="absolute left-0 top-0 h-2.5 w-8 skew-x-[-28deg] rounded-sm bg-edge shadow-[0_0_18px_rgba(145,221,185,.28)]" />
-        <span className="absolute left-1 top-2.5 h-2.5 w-7 skew-x-[-28deg] rounded-sm bg-edge2" />
-        <span className="absolute left-0 top-5 h-2.5 w-8 skew-x-[-28deg] rounded-sm bg-edge" />
-      </div>
-      <div className="text-lg font-black uppercase tracking-[0.12em] text-head">Sports<span className="text-edge">Edge</span></div>
-    </div>
-  );
+  return <Logo size={32} wordmark className="text-lg" />;
 }
 
 function Shell({ children, centered = false }: { children: ReactNode; centered?: boolean }) {

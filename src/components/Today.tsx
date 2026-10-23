@@ -57,10 +57,10 @@ export default function Today({ onAsk, onAddLeg, onNavigate, slipLegs }: TodayPr
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-3 py-4 pb-24 sm:px-5 md:pb-8">
+    <div className="workspace-pad mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
       <header className="desk-heading mb-5">
         <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-frost2">{todayLabel()}</p>
-        <h2 className="mt-2 text-3xl font-bold tracking-tight text-head">Find your edge.<br/><span className="text-edge">Keep the receipts.</span></h2>
+        <h2 className="display mt-3 text-4xl text-head sm:text-5xl">Find your edge.<br /><span className="text-edge">Keep the receipts.</span></h2>
         <p className="mt-0.5 max-w-2xl text-[12px] leading-relaxed text-muted">
           Research the player, challenge the price and track the result. One workspace from first question to final whistle.
         </p>
