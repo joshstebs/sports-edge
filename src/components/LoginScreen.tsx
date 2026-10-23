@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { signIn, type AuthUser } from '../lib/auth';
+import Logo from './Logo';
 
 interface LoginScreenProps {
   onAuthenticated: (user: AuthUser) => void;
@@ -53,14 +54,8 @@ export default function LoginScreen({ onAuthenticated, onTrialRequest, serviceEr
     <main className="flex min-h-full items-center justify-center bg-ink px-4 py-10">
       <section className="grid w-full max-w-4xl overflow-hidden border border-line bg-panel md:grid-cols-[0.9fr_1.1fr]">
         <div className="border-b border-line bg-ink p-6 md:border-b-0 md:border-r sm:p-8">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center border border-edge/40 text-edge">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M3 17l5-5 4 3 6-8" />
-                <path d="M14 7h4v4" />
-              </svg>
-            </div>
-            <p className="display text-2xl text-head">Sports<span className="text-edge">Edge</span></p>
+          <div className="mb-8">
+            <Logo size={44} wordmark className="text-3xl" />
           </div>
           <h2 className="display text-4xl text-head">A research desk, not a tip feed.</h2>
           <p className="mt-4 text-sm leading-relaxed text-frost2">

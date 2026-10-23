@@ -309,9 +309,54 @@ button:not(:disabled):active {
   animation: cursor-blink 0.9s steps(1) infinite;
 }
 
+.logo-plate {
+  fill: color-mix(in srgb, var(--color-edge) 12%, transparent);
+  stroke: var(--color-edge);
+  stroke-width: 1.15;
+  stroke-linejoin: miter;
+}
+
+.logo-stroke {
+  fill: none;
+  stroke: var(--color-edge);
+  stroke-width: 2.15;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: logo-draw 0.72s var(--ease-out-ui) forwards;
+}
+
+.logo-stroke-b { animation-delay: 0.16s; }
+.logo-stroke-c { animation-delay: 0.3s; }
+
+.logo-node {
+  fill: var(--color-head);
+  stroke: var(--color-edge);
+  stroke-width: 1;
+  offset-path: path("M12 18.2 H18.2 L23.6 12.2 H28");
+  offset-rotate: 0deg;
+  opacity: 0;
+  animation: logo-run 3.4s var(--ease-out-ui) 0.7s infinite;
+}
+
+@keyframes logo-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes logo-run {
+  0% { offset-distance: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  46% { offset-distance: 100%; opacity: 1; }
+  82% { offset-distance: 100%; opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   button:not(:disabled):active { transform: none; }
   .animate-spin, .animate-ping, .animate-bounce, .cursor-blink { animation: none !important; }
+  .logo-stroke { animation: none !important; stroke-dashoffset: 0 !important; }
+  .logo-node { animation: none !important; offset-distance: 100% !important; opacity: 1 !important; }
   *, *::before, *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;

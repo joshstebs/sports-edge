@@ -1,3 +1,4 @@
+import Logo from './Logo';
 import { navItems, type View } from '../lib/nav';
 import type { AuthUser } from '../lib/auth';
 
@@ -17,9 +18,9 @@ export default function Sidebar({ user, view, onNavigate, slipCount, collapsed, 
       aria-label="Primary"
       className={`hidden shrink-0 flex-col border-r border-line bg-ink md:flex ${collapsed ? 'w-[4.5rem]' : 'w-56'}`}
     >
-      <div className={`flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-3'} h-14 border-b border-line`}>
-        {!collapsed && <span className="display text-lg text-head">Sports<span className="text-edge">Edge</span></span>}
-        <button type="button" onClick={onToggleCollapsed} className="flex h-11 w-11 items-center justify-center text-frost2 hover:text-head" aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}>
+      <div className={`flex h-14 items-center border-b border-line ${collapsed ? 'justify-center px-1' : 'justify-between gap-1 px-3'}`}>
+        {collapsed ? <Logo size={28} /> : <Logo size={26} wordmark className="min-w-0 text-[1.15rem]" />}
+        <button type="button" onClick={onToggleCollapsed} className="flex h-11 w-9 shrink-0 items-center justify-center text-frost2 hover:text-head" aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}>
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
             <path d={collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'} strokeLinecap="round" strokeLinejoin="round" />
           </svg>

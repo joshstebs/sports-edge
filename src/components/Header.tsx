@@ -1,4 +1,5 @@
 import { type FormEvent } from 'react';
+import Logo from './Logo';
 import type { HealthInfo } from '../lib/api';
 import type { AuthUser } from '../lib/auth';
 import type { HealthState } from '../types';
@@ -28,15 +29,6 @@ function liveTooltip(health: HealthState, info: HealthInfo | null): string {
   return bits.length > 0 ? `Live data feed connected · ${bits.join(' · ')}` : 'Live data feed connected';
 }
 
-function EdgeMark() {
-  return (
-    <div className="relative h-7 w-8 shrink-0 min-w-[32px]" aria-hidden="true">
-      <span className="absolute left-0 top-0 h-2 w-7 skew-x-[-28deg] rounded-sm bg-edge" />
-      <span className="absolute left-1 top-2 h-2 w-6 skew-x-[-28deg] rounded-sm bg-edge2" />
-      <span className="absolute left-0 top-4 h-2 w-7 skew-x-[-28deg] rounded-sm bg-edge" />
-    </div>
-  );
-}
 
 export default function Header({
   model,
@@ -74,8 +66,7 @@ export default function Header({
     <header className="z-20 shrink-0 border-b border-line bg-ink">
       <div className="flex h-14 items-center gap-2 px-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 md:hidden">
-          <EdgeMark />
-          <h1 className="display truncate text-xl text-head">Sports<span className="text-edge">Edge</span></h1>
+          <Logo size={30} wordmark heading className="text-xl" />
         </div>
         <form className="hidden min-w-0 flex-1 md:block" role="search" onSubmit={submitSearch}>
           <label className="sr-only" htmlFor="global-search">Search screens or a player</label>
