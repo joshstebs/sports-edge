@@ -1,3 +1,7 @@
+/**
+ * SportsEdge mark. A heavy E, with the middle arm sheared into a two-facet
+ * blade. The blade seats on load, then a glint runs the cutting edge.
+ */
 export default function Logo({
   size = 28,
   wordmark = false,
@@ -15,20 +19,20 @@ export default function Logo({
       <svg
         width={size}
         height={size}
-        viewBox="0 0 36 36"
+        viewBox="0 0 64 64"
         className="logo-mark shrink-0"
         role="img"
         aria-label={wordmark ? undefined : 'SportsEdge'}
         aria-hidden={wordmark ? true : undefined}
       >
-        <path
-          d="M5.5 10.2 10.4 5.2H25.2L30.8 10.6V25.6L25.4 30.8H10.6L5.5 25.8V10.2Z"
-          className="logo-plate"
-        />
-        <path d="M12 12.2h10" pathLength={1} className="logo-stroke" />
-        <path d="M12 18.2h6.2L23.6 12.2H28" pathLength={1} className="logo-stroke logo-stroke-b" />
-        <path d="M12 24.2h8" pathLength={1} className="logo-stroke logo-stroke-c" />
-        <circle r="1.55" className="logo-node" />
+        <path className="logo-body" d="M8 8h10v48H8z" />
+        <path className="logo-body" d="M18 8h10v12H18z" />
+        <path className="logo-body" d="M18 46h12v10H18z" />
+        <g className="logo-blade">
+          <path className="logo-lit" d="M18 26 L62 6 L18 33 Z" />
+          <path className="logo-shade" d="M18 33 L62 6 L18 40 Z" />
+        </g>
+        <path className="logo-sheen" pathLength={1} d="M18 26 L62 6" />
       </svg>
       {wordmark ? (
         <Name className="display truncate text-head">

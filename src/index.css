@@ -309,54 +309,47 @@ button:not(:disabled):active {
   animation: cursor-blink 0.9s steps(1) infinite;
 }
 
-.logo-plate {
-  fill: color-mix(in srgb, var(--color-edge) 12%, transparent);
-  stroke: var(--color-edge);
-  stroke-width: 1.15;
-  stroke-linejoin: miter;
+.logo-body { fill: var(--color-edge); }
+.logo-lit { fill: color-mix(in srgb, var(--color-edge) 42%, var(--color-head)); }
+.logo-shade { fill: color-mix(in srgb, var(--color-edge) 62%, #063222); }
+
+.logo-blade {
+  transform-box: fill-box;
+  transform-origin: 0% 70%;
+  animation: logo-blade-in 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.logo-stroke {
+.logo-sheen {
   fill: none;
-  stroke: var(--color-edge);
-  stroke-width: 2.15;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-  stroke-dasharray: 1;
+  stroke: var(--color-head);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 0.16 1;
   stroke-dashoffset: 1;
-  animation: logo-draw 0.72s var(--ease-out-ui) forwards;
-}
-
-.logo-stroke-b { animation-delay: 0.16s; }
-.logo-stroke-c { animation-delay: 0.3s; }
-
-.logo-node {
-  fill: var(--color-head);
-  stroke: var(--color-edge);
-  stroke-width: 1;
-  offset-path: path("M12 18.2 H18.2 L23.6 12.2 H28");
-  offset-rotate: 0deg;
   opacity: 0;
-  animation: logo-run 3.4s var(--ease-out-ui) 0.7s infinite;
+  animation: logo-sheen 3.8s ease-in-out 0.7s infinite;
 }
 
-@keyframes logo-draw {
-  to { stroke-dashoffset: 0; }
+@keyframes logo-blade-in {
+  0% { transform: translate(-22%, 14%) scale(0.35); opacity: 0; }
+  55% { opacity: 1; }
+  100% { transform: none; opacity: 1; }
 }
 
-@keyframes logo-run {
-  0% { offset-distance: 0%; opacity: 0; }
-  10% { opacity: 1; }
-  46% { offset-distance: 100%; opacity: 1; }
-  82% { offset-distance: 100%; opacity: 1; }
-  100% { offset-distance: 100%; opacity: 0; }
+@keyframes logo-sheen {
+  0%, 58% { stroke-dashoffset: 1; opacity: 0; }
+  68% { opacity: 0.95; }
+  86% { stroke-dashoffset: -0.2; opacity: 0; }
+  100% { stroke-dashoffset: -0.2; opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   button:not(:disabled):active { transform: none; }
   .animate-spin, .animate-ping, .animate-bounce, .cursor-blink { animation: none !important; }
-  .logo-stroke { animation: none !important; stroke-dashoffset: 0 !important; }
-  .logo-node { animation: none !important; offset-distance: 100% !important; opacity: 1 !important; }
+  .logo-blade, .logo-sheen { animation: none !important; }
+  .logo-blade { transform: none !important; opacity: 1 !important; }
+  .logo-sheen { opacity: 0 !important; }
   *, *::before, *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
