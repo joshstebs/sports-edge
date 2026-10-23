@@ -75,6 +75,7 @@
 :root {
   --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
+  --logo-glow: rgba(145, 221, 185, 0.72);
 }
 
 .desk-heading { border-top: 2px solid var(--color-edge); padding-top: 1rem; }
@@ -312,6 +313,12 @@ button:not(:disabled):active {
 .logo-body { fill: var(--color-edge); }
 .logo-lit { fill: color-mix(in srgb, var(--color-edge) 42%, var(--color-head)); }
 .logo-shade { fill: color-mix(in srgb, var(--color-edge) 62%, #063222); }
+.logo-glow { fill: #b8ffe0; opacity: 0.95; }
+.logo-mark {
+  overflow: visible;
+  filter: drop-shadow(0 0 4px var(--logo-glow)) drop-shadow(0 0 1px var(--logo-glow));
+  animation: logo-mark-glow 3.8s ease-in-out 0.7s infinite;
+}
 
 .logo-blade {
   transform-box: fill-box;
@@ -328,7 +335,14 @@ button:not(:disabled):active {
   stroke-dasharray: 0.16 1;
   stroke-dashoffset: 1;
   opacity: 0;
+  filter: drop-shadow(0 0 2px var(--color-edge));
   animation: logo-sheen 3.8s ease-in-out 0.7s infinite;
+}
+
+@keyframes logo-mark-glow {
+  0%, 60% { filter: drop-shadow(0 0 3px var(--logo-glow)); }
+  76% { filter: drop-shadow(0 0 8px var(--logo-glow)) drop-shadow(0 0 2px var(--logo-glow)); }
+  100% { filter: drop-shadow(0 0 3px var(--logo-glow)); }
 }
 
 @keyframes logo-blade-in {
@@ -347,9 +361,10 @@ button:not(:disabled):active {
 @media (prefers-reduced-motion: reduce) {
   button:not(:disabled):active { transform: none; }
   .animate-spin, .animate-ping, .animate-bounce, .cursor-blink { animation: none !important; }
-  .logo-blade, .logo-sheen { animation: none !important; }
+  .logo-blade, .logo-sheen, .logo-mark { animation: none !important; }
   .logo-blade { transform: none !important; opacity: 1 !important; }
   .logo-sheen { opacity: 0 !important; }
+  .logo-mark { filter: drop-shadow(0 0 3px var(--logo-glow)) !important; }
   *, *::before, *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
@@ -378,6 +393,7 @@ button:not(:disabled):active {
   --color-frost2: #4d5c54;
   --color-muted: #5c6b63;
   --color-head: #101614;
+  --logo-glow: rgba(12, 122, 82, 0.45);
   color-scheme: light;
 }
 
