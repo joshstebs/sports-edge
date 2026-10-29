@@ -7,6 +7,8 @@ test('canonicalizes player markets without conflating hits and total bases', () 
   assert.equal(canonicalPropMarket('player_total_bases', 'mlb'), 'totalBases');
   assert.equal(canonicalPropMarket('batter_hits', 'mlb'), 'hits');
   assert.notEqual(canonicalPropMarket('player_total_bases', 'mlb'), canonicalPropMarket('player_hits', 'mlb'));
+  assert.equal(canonicalPropMarket('player_pass_yards', 'nfl'), 'passingYards');
+  assert.equal(canonicalPropMarket('player_reception_yards', 'nfl'), 'receivingYards');
 });
 
 test('accepts real half/integer lines across a broad range and rejects malformed rows', () => {
@@ -31,4 +33,13 @@ test('revalues both sides at the actual book line instead of carrying a stale un
   assert.equal(result.chosen?.side, 'over');
   assert.equal(result.chosen?.line, 1.5);
   assert.ok((result.edgeOver ?? 0) > 0);
+});
+
+test('a one-sided sportsbook offer selects the priced side', () => {
+  const observations = [0, 0, 1, 1, 1, 2, 2, 3].map((value) => ({ value }));
+  const result = evaluatePropLine({
+    sport: 'nfl', market: 'receptions', line: 1.5, observations,
+    source: 'test', oddsOver: -110, oddsUnder: null,
+  });
+  assert.equal(result.chosen?.side, 'over');
 });

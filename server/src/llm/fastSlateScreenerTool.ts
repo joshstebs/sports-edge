@@ -309,27 +309,16 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     .filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence)
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
 
-  // One leg per player: keep each player's single best market so a parlay never
-  // double-counts the same athlete. With an explicit market filter, this simply
-  // deduplicates athletes while preserving the requested market and side.
-  const seenPlayer = new Set<string>();
-  const deduped = qualified.filter(({ player }) => {
-    const key = `${player.name}|${player.team}`.toLowerCase();
-    if (seenPlayer.has(key)) return false;
-    seenPlayer.add(key);
-    return true;
-  });
   const inLineup = (player: DiscoveredPlayer) => player.lineupSlot != null || player.probablePitcher;
-  deduped.sort((a, b) => Number(inLineup(b.player)) - Number(inLineup(a.player)) || (b.model.probability ?? 0) - (a.model.probability ?? 0));
 
   const lineupPosted = evaluated.some(({ player }) => inLineup(player));
 
-  // Attach real SharpApi sportsbook line/odds to candidates when the
+  // Attach real sportsbook line/odds to candidates when the
   // player+market appears in the live props feed. The model's `line` is only a
   // derived proposal; when SharpApi has a real market for the same player+market
   // we surface the actual price. Never fabricated — only set on a real match.
   const sharpDeadline = new Promise<{ available: boolean; reason?: string; byKey: Map<string, any>; alternatesByKey: Map<string, any[]> }>((resolve) =>
-    setTimeout(() => resolve({ available: false, reason: 'live price lookup timed out (3s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 3_000)
+    setTimeout(() => resolve({ available: false, reason: 'live price lookup timed out (15s deadline)', byKey: new Map<string, any>(), alternatesByKey: new Map<string, any[]>() }), 15_000)
   );
   const sharpPrices = await Promise.race([
     getConsensusSlatePrices(sport),
@@ -344,6 +333,22 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     const match = sharpByKey.get(`${player.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`);
     return match ?? null;
   };
+
+  // A player's highest model score may be on an unposted market. Choose the
+  // best offered market first, then keep one leg per player. Unpriced rows
+  // remain useful research but must never displace a verified offer.
+  qualified.sort((a, b) =>
+    Number(Boolean(sharpline(b.player.name, b.market))) - Number(Boolean(sharpline(a.player.name, a.market)))
+    || Number(inLineup(b.player)) - Number(inLineup(a.player))
+    || (b.model.probability ?? 0) - (a.model.probability ?? 0)
+  );
+  const seenPlayer = new Set<string>();
+  const deduped = qualified.filter(({ player }) => {
+    const key = `${player.name}|${player.team}`.toLowerCase();
+    if (seenPlayer.has(key)) return false;
+    seenPlayer.add(key);
+    return true;
+  });
 
   const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, observations, calibration }) => {
     const live = sharpline(player.name, market);
