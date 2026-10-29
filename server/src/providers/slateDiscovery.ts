@@ -358,6 +358,9 @@ export async function getSharpSlatePrices(
 export async function getConsensusSlatePrices(
   sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
 ): Promise<SlatePriceResult> {
+  // Start the fallback immediately. A quota-limited SGO request can consume
+  // its entire timeout; a serial SharpAPI walk then misses the screener budget.
+  const sharpFallback = getSharpSlatePrices(sport);
   try {
     const result = await sgo.getSgoSlateEvents(sport, 12);
     if (result.available && Array.isArray(result.events)) {
@@ -405,5 +408,5 @@ export async function getConsensusSlatePrices(
   } catch (error) {
     console.warn('[slateDiscovery] SGO consensus props unavailable: ' + (error as Error).message);
   }
-  return getSharpSlatePrices(sport);
+  return sharpFallback;
 }
