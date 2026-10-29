@@ -48,8 +48,10 @@ export function evaluatePropLine(input: PropLineEvaluationInput): PropLineEvalua
   if (input.requestedSide) {
     chosen = input.requestedSide === 'over' ? (usable(over) ? over : null) : (usable(under) ? under : null);
   } else {
-    const positiveValue = options.filter((row) => row.estimatedEdge != null && row.estimatedEdge > 0);
-    const ranked = [...(positiveValue.length ? positiveValue : options)].sort((a, b) =>
+    const priced = options.filter((row) => row.side === 'over' ? input.oddsOver != null : input.oddsUnder != null);
+    const selectable = priced.length ? priced : options;
+    const positiveValue = selectable.filter((row) => row.estimatedEdge != null && row.estimatedEdge > 0);
+    const ranked = [...(positiveValue.length ? positiveValue : selectable)].sort((a, b) =>
       (b.estimatedEdge ?? -Infinity) - (a.estimatedEdge ?? -Infinity)
       || (b.probability ?? 0) - (a.probability ?? 0)
     );
