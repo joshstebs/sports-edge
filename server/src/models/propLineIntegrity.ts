@@ -23,6 +23,8 @@ const ALIASES: Record<string, string> = {
   threepointersmade: 'threePointersMade', threepointermade: 'threePointersMade', threes: 'threePointersMade',
   pointsreboundsassists: 'pointsReboundsAssists', pra: 'pointsReboundsAssists',
   passingyards: 'passingYards', passingtouchdowns: 'passingTouchdowns', passingtds: 'passingTouchdowns',
+  playerpassyards: 'passingYards', playerpassingyards: 'passingYards',
+  playerreceptionyards: 'receivingYards', playerreceivingyards: 'receivingYards',
   rushingyards: 'rushingYards', receivingyards: 'receivingYards', receptions: 'receptions', rushingreceivingyards: 'rushingReceivingYards',
   touchdown: 'touchdowns', touchdowns: 'touchdowns', anytimetouchdown: 'touchdowns',
   goals: 'goals', goal: 'goals', shotsongoal: 'shotsOnGoal', shots: 'shotsOnGoal', shot: 'shotsOnGoal',
