@@ -7,6 +7,8 @@ test('canonicalizes player markets without conflating hits and total bases', () 
   assert.equal(canonicalPropMarket('player_total_bases', 'mlb'), 'totalBases');
   assert.equal(canonicalPropMarket('batter_hits', 'mlb'), 'hits');
   assert.notEqual(canonicalPropMarket('player_total_bases', 'mlb'), canonicalPropMarket('player_hits', 'mlb'));
+  assert.equal(canonicalPropMarket('player_pass_yards', 'nfl'), 'passingYards');
+  assert.equal(canonicalPropMarket('player_reception_yards', 'nfl'), 'receivingYards');
 });
 
 test('accepts real half/integer lines across a broad range and rejects malformed rows', () => {
