@@ -34,3 +34,12 @@ test('revalues both sides at the actual book line instead of carrying a stale un
   assert.equal(result.chosen?.line, 1.5);
   assert.ok((result.edgeOver ?? 0) > 0);
 });
+
+test('a one-sided sportsbook offer selects the priced side', () => {
+  const observations = [0, 0, 1, 1, 1, 2, 2, 3].map((value) => ({ value }));
+  const result = evaluatePropLine({
+    sport: 'nfl', market: 'receptions', line: 1.5, observations,
+    source: 'test', oddsOver: -110, oddsUnder: null,
+  });
+  assert.equal(result.chosen?.side, 'over');
+});
