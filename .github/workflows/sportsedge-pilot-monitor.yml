@@ -1,0 +1,79 @@
+name: SportsEdge pilot monitoring
+
+on:
+  schedule:
+    - cron: '11 * * * *'
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: sportsedge-pilot-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Smoke test the production app (read-only)
+        id: smoke
+        continue-on-error: true
+        run: node scripts/monitor/smoke.mjs
+
+      - name: Scan the built frontend for exposed data (daily or manual)
+        id: proof
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        continue-on-error: true
+        run: |
+          npm ci
+          npm run build
+          npx --yes reaproof@0.9.0 dist --no-open --fail-on high
+
+      - name: Analyze shipped JavaScript with REA (daily or manual)
+        id: rea
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        continue-on-error: true
+        run: |
+          if [ ! -d dist ]; then
+            echo "No built frontend found for REA analysis."
+            exit 1
+          fi
+          timeout 180s npx --yes rea-agents@6.8.0 analyze-javascript-application dist --json > "$RUNNER_TEMP/rea-evidence.json"
+          node -e 'const fs=require("node:fs");const p=process.env.RUNNER_TEMP+"/rea-evidence.json";const x=JSON.parse(fs.readFileSync(p,"utf8"));console.log("REA generated structured evidence. Top-level fields:",Object.keys(x).join(", "));'
+          echo "Full evidence is intentionally not uploaded or printed because it may contain sensitive implementation details."
+
+      - name: Open one GitHub issue when a check fails
+        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="SportsEdge pilot monitor alert"
+          EXISTING="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title=="SportsEdge pilot monitor alert") | .number' | head -n 1)"
+          if [ -z "$EXISTING" ]; then
+            gh issue create --title "$TITLE" --body "At least one SportsEdge check failed. This is a read-only monitoring alert, not proof of a production outage. Inspect the [workflow run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) for the failing smoke test or the daily REA/Reaproof scan. Do not paste secrets into the issue. Fixes must be tested before deployment."
+          else
+            echo "An open monitoring issue already exists: #$EXISTING"
+          fi
+
+      - name: Close the monitoring issue after all checks recover
+        if: ${{ always() && steps.smoke.outcome == 'success' && (steps.proof.outcome == 'success' || steps.proof.outcome == 'skipped') && (steps.rea.outcome == 'success' || steps.rea.outcome == 'skipped') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title=="SportsEdge pilot monitor alert") | .number' | head -n 1)"
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --comment "All checks executed in the latest [monitoring run](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) passed. This closes the monitoring alert; it does not certify every SportsEdge feature."
+          fi
+
+      - name: Mark unhealthy checks failed
+        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure') }}
+        run: exit 1
