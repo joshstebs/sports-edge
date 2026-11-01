@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://sports-edge-kohl.vercel.app/sitemap.xml
+Sitemap: https://sportsedge.harbourandmain.com/sitemap.xml
