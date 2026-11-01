@@ -2,6 +2,7 @@
 // Exposes monitoring status and manual trigger endpoints
 
 import { Router, Request, Response } from 'express';
+import { requireAuth, requireRole } from '../auth/middleware.js';
 import { runMonitoringCycle, checkWatchlist, getMonitorStatus, MonitorAlert } from '../lib/monitor.js';
 
 export const monitorRouter = Router();
@@ -24,7 +25,7 @@ monitorRouter.get('/status', async (_req: Request, res: Response) => {
 });
 
 /** POST /api/monitor/run — Manually trigger a monitoring cycle (admin) */
-monitorRouter.post('/run', async (_req: Request, res: Response) => {
+monitorRouter.post('/run', requireAuth, requireRole('admin'), async (_req: Request, res: Response) => {
   try {
     const result = await runMonitoringCycle();
     res.json({
@@ -42,7 +43,7 @@ monitorRouter.post('/run', async (_req: Request, res: Response) => {
 });
 
 /** POST /api/monitor/watchlist — Check specific players */
-monitorRouter.post('/watchlist', async (req: Request, res: Response) => {
+monitorRouter.post('/watchlist', requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   try {
     const { playerNames, sports } = req.body;
     
