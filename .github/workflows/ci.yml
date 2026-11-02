@@ -46,3 +46,12 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Verify SportsEdge monitoring helper tests
+        run: node --test scripts/monitor/*.test.mjs
+
+      - name: Identify npm dependency warnings (diagnostics only)
+        continue-on-error: true
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node scripts/monitor/audit-summary.mjs "$RUNNER_TEMP/npm-audit.json" --report-only
