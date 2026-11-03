@@ -65,7 +65,7 @@ jobs:
           echo "PARTIAL COVERAGE ONLY: large JS bundles were not scanned."
 
       - name: Open one GitHub issue when a check fails
-        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure' || steps.audit.outcome == 'failure') }}
+        if: ${{ always() && github.ref == 'refs/heads/master' && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure' || steps.audit.outcome == 'failure') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -78,7 +78,7 @@ jobs:
           fi
 
       - name: Close the monitoring issue after all checks recover
-        if: ${{ always() && steps.smoke.outcome == 'success' && steps.proof.outcome == 'success' && steps.rea.outcome == 'success' && steps.audit.outcome == 'success' }}
+        if: ${{ always() && github.ref == 'refs/heads/master' && steps.smoke.outcome == 'success' && steps.proof.outcome == 'success' && steps.rea.outcome == 'success' && steps.audit.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
