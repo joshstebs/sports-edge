@@ -38,21 +38,37 @@ jobs:
           npm run build
           npx --yes reaproof@0.9.0 dist --no-open --fail-on high
 
-      - name: Analyze shipped JavaScript with REA (daily or manual)
+      - name: Identify actual npm dependency advisories (daily or manual)
+        id: audit
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        continue-on-error: true
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node scripts/monitor/audit-summary.mjs "$RUNNER_TEMP/npm-audit.json"
+
+      - name: Analyze small JavaScript chunks with REA (daily or manual)
         id: rea
         if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
         continue-on-error: true
         run: |
-          if [ ! -d dist ]; then
-            echo "No built frontend found for REA analysis."
+          # The large Vite entry chunk stalls REA 6.8.0. Partial coverage is
+          # reported explicitly, never represented as a full security scan.
+          mapfile -d '' TARGETS < <(node scripts/monitor/rea-targets.mjs dist --null)
+          if [ "${#TARGETS[@]}" -eq 0 ]; then
+            echo "No eligible small JavaScript chunks available for REA."
             exit 1
           fi
-          timeout 180s npx --yes rea-agents@6.8.0 analyze-javascript-application dist --json > "$RUNNER_TEMP/rea-evidence.json"
-          node -e 'const fs=require("node:fs");const p=process.env.RUNNER_TEMP+"/rea-evidence.json";const x=JSON.parse(fs.readFileSync(p,"utf8"));console.log("REA generated structured evidence. Top-level fields:",Object.keys(x).join(", "));'
-          echo "Full evidence is intentionally not uploaded or printed because it may contain sensitive implementation details."
+          ARGS=(npx --yes rea-agents@6.8.0 analyze-javascript-application dist --json)
+          for TARGET in "${TARGETS[@]}"; do
+            ARGS+=(--source-path "$TARGET")
+          done
+          timeout 180s "${ARGS[@]}" > "$RUNNER_TEMP/rea-evidence.json"
+          node -e 'const fs=require("node:fs");const p=process.env.RUNNER_TEMP+"/rea-evidence.json";const x=JSON.parse(fs.readFileSync(p,"utf8"));console.log("Partial REA evidence generated. Top-level fields:",Object.keys(x).join(", "));'
+          echo "PARTIAL SCAN ONLY: the large main bundle remains unassessed by REA."
+          echo "Full evidence is not uploaded or printed."
 
       - name: Open one GitHub issue when a check fails
-        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure') }}
+        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure' || steps.audit.outcome == 'failure') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -65,7 +81,7 @@ jobs:
           fi
 
       - name: Close the monitoring issue after all checks recover
-        if: ${{ always() && steps.smoke.outcome == 'success' && steps.proof.outcome == 'success' && steps.rea.outcome == 'success' }}
+        if: ${{ always() && steps.smoke.outcome == 'success' && steps.proof.outcome == 'success' && steps.rea.outcome == 'success' && steps.audit.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -75,5 +91,5 @@ jobs:
           fi
 
       - name: Mark unhealthy checks failed
-        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure') }}
+        if: ${{ always() && (steps.smoke.outcome == 'failure' || steps.proof.outcome == 'failure' || steps.rea.outcome == 'failure' || steps.audit.outcome == 'failure') }}
         run: exit 1
