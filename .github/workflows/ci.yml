@@ -38,6 +38,12 @@ jobs:
       - name: Install server dependencies
         run: npm ci --prefix server
 
+      - name: Diagnose remaining server dependency advisories (non-blocking)
+        continue-on-error: true
+        run: |
+          npm audit --prefix server --json > "$RUNNER_TEMP/server-audit.json" || true
+          node -e 'const fs=require("node:fs");const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/server-audit.json","utf8"));if(!a.vulnerabilities||!a.metadata?.vulnerabilities)process.exit(2);console.log("Server npm audit totals:",JSON.stringify(a.metadata.vulnerabilities));for(const [name,v] of Object.entries(a.vulnerabilities)){console.log("Server npm advisory:",name,"severity:",v.severity,"affected:",v.range,"fixed:",JSON.stringify(v.fixAvailable));}'
+
       - name: Build server
         run: npm run build:server
 
