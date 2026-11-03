@@ -52,3 +52,6 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Test REA scope and audit reporting
+        run: node --test scripts/monitor/*.test.mjs
