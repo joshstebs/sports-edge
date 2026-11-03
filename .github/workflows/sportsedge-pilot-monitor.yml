@@ -65,7 +65,7 @@ jobs:
           fi
 
       - name: Close the monitoring issue after all checks recover
-        if: ${{ always() && steps.smoke.outcome == 'success' && (steps.proof.outcome == 'success' || steps.proof.outcome == 'skipped') && (steps.rea.outcome == 'success' || steps.rea.outcome == 'skipped') }}
+        if: ${{ always() && steps.smoke.outcome == 'success' && steps.proof.outcome == 'success' && steps.rea.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
