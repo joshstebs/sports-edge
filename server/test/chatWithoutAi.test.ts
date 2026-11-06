@@ -83,6 +83,9 @@ test('authenticated chat produces verified NFL picks with broken or absent AI cr
       assert.equal(legs.length, 5);
       assert.ok(legs.every((leg: any) => leg.line_verified === true && leg.sport === 'NFL'));
       assert.match(stream, /deterministic-live-data/);
+      const logEvent = /event: log\ndata: (.*)/.exec(stream);
+      assert.ok(logEvent, 'Selected priced games should have a prediction-history result');
+      assert.ok(JSON.parse(logEvent[1]).stored > 0, 'Verified fixture selections should still be recorded');
     }
     assert.equal(aiCalls, 0);
     withPlayerHistory = true;
