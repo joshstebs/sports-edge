@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyModelEvidence, recommendationSummary } from '../src/routes/chat.js';
+import { applyModelEvidence, canPersistPredictionLeg, recommendationSummary } from '../src/routes/chat.js';
 import type { ModelEvidence } from '../src/lib/predictionStore.js';
 
 test('a recommendation uses only evidence from its exact game and date', () => {
@@ -46,4 +46,7 @@ test('summary clearly labels player selections without server-matched model evid
   assert.doesNotMatch(recommendationSummary([{ player_name: 'Player A', __matchedPlayerModel: true }]), /analysis only/);
   assert.doesNotMatch(recommendationSummary([{ entity_type: 'game', selection: 'Game total over 8.5' }]), /player selection lacks/);
   assert.doesNotMatch(recommendationSummary([{ player_name: 'Player A' }]), /Verified recommendation/);
+  assert.equal(canPersistPredictionLeg({ player_name: 'Player A', __matchedPlayerModel: false }), false);
+  assert.equal(canPersistPredictionLeg({ player_name: 'Player A', __matchedPlayerModel: true }), true);
+  assert.equal(canPersistPredictionLeg({ entity_type: 'game', selection: 'Game total over 8.5' }), true);
 });

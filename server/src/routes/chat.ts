@@ -103,6 +103,10 @@ export function recommendationSummary(legs: any[]): string {
   return `**Selections:** ${legs.length} structured ${legs.length === 1 ? 'leg passed' : 'legs passed'} the configured screening.${evidenceNote} Check current prices and player availability before betting.`;
 }
 
+export function canPersistPredictionLeg(leg: any): boolean {
+  return isClearlyNonPlayerLeg(leg) || leg?.__matchedPlayerModel === true;
+}
+
 function playerForLeg(leg: any): string | null {
   const explicit = String(leg?.player_name ?? '').trim();
   const parsed = playerFromSelection(leg?.selection ?? leg?.leg_name);
@@ -615,7 +619,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       .map((log) => ({
         ...log,
         legs: (Array.isArray(log?.legs) ? log.legs : []).filter((leg: any) =>
-          selectedLegs.has(legFingerprint(leg, log.sport)),
+          selectedLegs.has(legFingerprint(leg, log.sport)) && canPersistPredictionLeg(leg),
         ),
       }))
       .filter((log) => log.legs.length > 0);
