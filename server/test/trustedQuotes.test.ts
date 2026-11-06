@@ -41,4 +41,6 @@ test('team moneyline prices must match the event, team and price', () => {
   assert.equal(applyTrustedQuote(leg, [{ ...candidate, confidencePct: undefined }], now).line_verified, false);
   assert.equal(applyTrustedQuote({ ...leg, team: 'Other Team' }, [candidate], now).line_verified, false);
   assert.equal(applyTrustedQuote({ ...leg, odds: 140 }, [candidate], now).line_verified, false);
+  assert.equal(applyTrustedQuote({ ...leg, market: 'total' }, [candidate], now).line_verified, false);
+  assert.equal(applyTrustedQuote({ ...leg, entity_type: 'game' }, [candidate], now).line_verified, false);
 });

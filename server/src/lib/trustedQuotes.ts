@@ -26,7 +26,8 @@ export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candida
     if (odds == null || String(odds).trim() === '' || quoteOdds == null || Number(odds) !== Number(quoteOdds)) return false;
     if (game) {
       const expectedSelection = String(candidate?.selection ?? `${candidate?.team ?? ''} ML`).trim();
-      if (!leg.team || normalizeName(String(leg.team)) !== normalizeName(String(candidate?.team ?? '')) ||
+      if (entity !== 'team' || normalizeMarket(String(leg.market ?? '')) !== normalizeMarket(String(candidate.market ?? '')) ||
+          !leg.team || normalizeName(String(leg.team)) !== normalizeName(String(candidate?.team ?? '')) ||
           normalizeName(selection) !== normalizeName(expectedSelection)) return false;
     } else {
       const expectedSelection = `${candidate?.player ?? ''} ${String(candidate?.side ?? '').toUpperCase()} ${candidate?.marketLine ?? '?'} ${marketLabel(candidate?.market)}`;
