@@ -130,6 +130,12 @@ interface RecommendationContext {
   team?: unknown;
 }
 
+export function predictionLegKey(leg: any, context: RecommendationContext = {}): string {
+  const date = String(leg?.game_date ?? leg?.gameDate ?? leg?.eventDate ?? context.date ?? '').slice(0, 10);
+  const eventId = String(leg?.event_id ?? leg?.eventId ?? leg?.game_id ?? leg?.gamePk ?? context.eventId ?? context.gamePk ?? '').trim();
+  return `${legFingerprint(leg, context.sport)}|${date}|${eventId}`;
+}
+
 export function applyModelEvidence(
   rawLegs: unknown,
   contextSport: unknown,
@@ -618,14 +624,19 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     // rejected candidates from poisoning the performance history and ensures
     // every displayed selection has one corresponding durable ledger record.
     const selectedLegs = new Set(
-      finalizedParlay.legs.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
+      finalizedParlay.legs.map((leg) => predictionLegKey(leg, { sport })),
     );
     const preQualityLogCount = filteredLogs.length;
     filteredLogs = filteredLogs
       .map((log) => ({
         ...log,
-        legs: (Array.isArray(log?.legs) ? log.legs : []).filter((leg: any) =>
-          selectedLegs.has(legFingerprint(leg, log.sport)) && canPersistPredictionLeg(leg),
+        legs: (Array.isArray(log?.legs) ? log.legs : []).map((leg: any) => applyTrustedQuote({
+          ...leg,
+          sport: leg?.sport ?? log.sport,
+          eventDate: leg?.eventDate ?? leg?.game_date ?? log.game_date ?? log.gameDate,
+          eventId: leg?.eventId ?? leg?.event_id ?? log.event_id ?? log.game_id ?? log.gamePk,
+        }, trustedQuoteCandidates)).filter((leg: any) =>
+          leg.line_verified === true && selectedLegs.has(predictionLegKey(leg, { sport: log.sport })) && canPersistPredictionLeg(leg),
         ),
       }))
       .filter((log) => log.legs.length > 0);
