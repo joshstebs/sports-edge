@@ -29,26 +29,28 @@ jobs:
         continue-on-error: true
         run: node scripts/monitor/smoke.mjs
 
-      - name: Scan the built frontend for exposed data (daily or manual)
+      # GitHub may drop/delay individual cron events; run full checks on every
+      # delivered schedule event so missing the daily trigger does not skip scanning.
+      - name: Scan the built frontend for exposed data (scheduled or manual)
         id: proof
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: |
           npm ci
           npm run build
           npx --yes reaproof@0.9.0 dist --no-open --fail-on high
 
-      - name: Identify dependency advisories (daily or manual)
+      - name: Identify dependency advisories (scheduled or manual)
         id: audit
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: |
           npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
           node scripts/monitor/audit-summary.mjs "$RUNNER_TEMP/npm-audit.json"
 
-      - name: Analyze scoped JavaScript with REA (daily or manual)
+      - name: Analyze scoped JavaScript with REA (scheduled or manual)
         id: rea
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '37 4 * * *' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: |
           # REA 6.8.0 hangs on the large Vite entry chunk. Explicitly report
