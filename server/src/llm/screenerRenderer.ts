@@ -1,4 +1,4 @@
-function marketLabel(value: unknown): string {
+export function marketLabel(value: unknown): string {
   const key = String(value ?? '').trim();
   const labels: Record<string, string> = {
     hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
