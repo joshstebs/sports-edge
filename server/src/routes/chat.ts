@@ -136,11 +136,14 @@ export function applyModelEvidence(
     const market = normalizeMarket(String(leg?.market ?? ''));
     const side = String(leg?.side ?? (/\bunder\b/i.test(selection) ? 'under' : 'over')).toLowerCase();
     const line = Number(leg?.line ?? leg?.target_line ?? selection.match(/\b(?:over|under)\s*([0-9.]+)/i)?.[1]);
-    const eventDate = String(leg?.game_date ?? leg?.gameDate ?? context.date ?? '').slice(0, 10);
-    const eventId = String(leg?.event_id ?? leg?.game_id ?? leg?.gamePk ?? context.eventId ?? context.gamePk ?? '').trim();
-    const match = player && evidence.find((item) =>
+    const eventDate = String(leg?.game_date ?? leg?.gameDate ?? leg?.eventDate ?? context.date ?? '').slice(0, 10);
+    const eventId = String(leg?.event_id ?? leg?.eventId ?? leg?.game_id ?? leg?.gamePk ?? context.eventId ?? context.gamePk ?? '').trim();
+    // Historical calibration records have no game identity. They can inform
+    // learning context, but must never override an exact-game live model.
+    const match = player && /^\d{4}-\d{2}-\d{2}$/.test(eventDate) && eventId && evidence.find((item) =>
       normalizeName(item.player) === normalizeName(player) && item.sport === sport &&
-      normalizeMarket(item.market) === market && item.side === side && Number(item.line) === line
+      normalizeMarket(item.market) === market && item.side === side && Number(item.line) === line &&
+      item.eventDate === eventDate && String(item.eventId ?? '').trim() === eventId
     );
     // A result without verified positive edge, or a D grade, is analysis-only.
     if (!match || match.grade === 'D' || match.estimatedEdge == null || match.estimatedEdge <= 0) {

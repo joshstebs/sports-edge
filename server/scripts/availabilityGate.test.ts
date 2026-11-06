@@ -56,10 +56,10 @@ test('player parser and model evidence match the exact normalized prop', () => {
     entity_type: 'player', player_name: 'Shohei Ohtani', sport: 'MLB',
     selection: 'Shohei Ohtani OVER 1.5 Total Bases', market: 'total_bases', side: 'over', line: 1.5,
   }], 'MLB', evidence, { date: '2026-08-21', eventId: '99999' });
-  // Learned evidence is market-scoped, not event-scoped: what the engine
-  // learned from past nights' evaluations applies to tonight's same spot.
+  // A live model result for a different game cannot enrich this recommendation.
+  // In relaxed mode the leg remains analysis-only without the model metadata.
   assert.equal(differentEvent.legs.length, 1);
-  assert.equal(differentEvent.legs[0].model_version, 'empirical-beta-v1');
+  assert.equal(differentEvent.legs[0].model_version, undefined);
 });
 
 test('American odds fallback accepts signed prices only', () => {
