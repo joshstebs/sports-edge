@@ -16,6 +16,7 @@ import { normalizeName } from '../providers/http.js';
 import { parseParlayQualityPolicy, finalizeStructuredParlay } from '../lib/parlayQuality.js';
 import { SPORTS } from '../providers/sportsConfig.js';
 import { parseBetRequest, serializeBetRequestContext } from '../models/betRequest.js';
+import { applyTrustedQuote } from '../lib/trustedQuotes.js';
 
 export const chatRouter = Router();
 
@@ -394,6 +395,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     ];
 
     const modelEvidence: ModelEvidence[] = await loadModelEvidence();
+    const trustedQuoteCandidates: any[] = [];
     const { content: finalText, modelUsed } = await runAgent(cfg, messages, getToolSchemas(), {
       signal: controller.signal,
       // Recommendation text is buffered until the server validates every
@@ -401,6 +403,10 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       // pick before the later safety gates had a chance to remove it.
       onDelta: () => undefined,
       onToolEvent: (ev) => {
+        if ((ev.name === 'slate_candidate_screener' || ev.name === 'game_market_screener') &&
+            ev.status === 'done' && Array.isArray(ev.data?.candidates)) {
+          trustedQuoteCandidates.push(...ev.data.candidates);
+        }
         if (ev.name === 'player_prop_model' && ev.status === 'done' && ev.data && Number.isFinite(ev.data.probability)) {
           modelEvidence.push(ev.data as ModelEvidence);
         }
@@ -594,7 +600,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const parlayPolicy = parseParlayQualityPolicy(lastUserText);
     const pooledLegs = acceptedSgpBlocks.flatMap((block) =>
       Array.isArray(block?.legs) ? block.legs : [],
-    );
+    ).map((leg) => applyTrustedQuote(leg, trustedQuoteCandidates));
     const finalizedParlay = finalizeStructuredParlay(pooledLegs, parlayPolicy);
     const qualityBlocked = new Set(
       finalizedParlay.blocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
