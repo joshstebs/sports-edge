@@ -32,7 +32,7 @@ export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candida
       const expectedSelection = `${candidate?.player ?? ''} ${String(candidate?.side ?? '').toUpperCase()} ${candidate?.marketLine ?? '?'} ${marketLabel(candidate?.market)}`;
       if (!player || !candidate?.player || normalizeName(player) !== normalizeName(String(candidate.player)) ||
           !selectedPlayer || normalizeName(selectedPlayer) !== normalizeName(player) ||
-          normalizeName(selection) !== normalizeName(expectedSelection) ||
+          selection.toLowerCase().replace(/\s+/g, ' ') !== expectedSelection.toLowerCase().replace(/\s+/g, ' ') ||
           normalizeMarket(String(leg.market ?? '')) !== normalizeMarket(String(candidate.market ?? '')) ||
           side !== String(candidate.side ?? '').toLowerCase() || line == null || candidate.marketLine == null ||
           Number(line) !== Number(candidate.marketLine)) return false;

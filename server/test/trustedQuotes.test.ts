@@ -18,6 +18,7 @@ test('player prop prices must match a current tool-returned quote for the same e
     { line: 21.5 }, { side: 'under' }, { odds: 150 }, { market: 'rebounds' },
     { selection: 'Other Player over 20.5 points' }, { selection: 'Example Player under 20.5 points' },
     { selection: 'Example Player over 21.5 points' }, { selection: 'Example Player over 20.5 rebounds' },
+    { selection: 'Example Player over 20 5 points' },
     { selection: 'Other Player 25+ points' },
   ]) assert.equal(applyTrustedQuote({ ...leg, ...altered }, [candidate], now).line_verified, false);
   assert.equal(applyTrustedQuote(leg, [], now).line_verified, false, 'Model-authored fields are not proof');
