@@ -93,6 +93,20 @@ export function isClearlyNonPlayerLeg(leg: any): boolean {
   return /^(?:team|game)$/i.test(String(leg?.entity_type ?? '').trim());
 }
 
+export function recommendationSummary(legs: any[]): string {
+  const unmodeledPlayers = legs.filter((leg) =>
+    !isClearlyNonPlayerLeg(leg) && leg.__matchedPlayerModel !== true,
+  ).length;
+  const evidenceNote = unmodeledPlayers
+    ? ` ${unmodeledPlayers} player ${unmodeledPlayers === 1 ? 'selection lacks' : 'selections lack'} a matching game-specific model and should be treated as analysis only.`
+    : '';
+  return `**Selections:** ${legs.length} structured ${legs.length === 1 ? 'leg passed' : 'legs passed'} the configured screening.${evidenceNote} Check current prices and player availability before betting.`;
+}
+
+export function canPersistPredictionLeg(leg: any): boolean {
+  return isClearlyNonPlayerLeg(leg) || leg?.__matchedPlayerModel === true;
+}
+
 function playerForLeg(leg: any): string | null {
   const explicit = String(leg?.player_name ?? '').trim();
   const parsed = playerFromSelection(leg?.selection ?? leg?.leg_name);
@@ -129,7 +143,7 @@ export function applyModelEvidence(
   // own confidence still rides on each leg; nothing is invented.
   const gate = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
   const accepted = legs.flatMap((leg: any) => {
-    if (isClearlyNonPlayerLeg(leg)) return [leg];
+    if (isClearlyNonPlayerLeg(leg)) return [{ ...leg, __matchedPlayerModel: false }];
     const selection = String(leg?.selection ?? leg?.leg_name ?? '');
     const player = playerForLeg(leg);
     const sport = String(leg?.sport ?? contextSport ?? '').toLowerCase();
@@ -147,13 +161,14 @@ export function applyModelEvidence(
     );
     // A result without verified positive edge, or a D grade, is analysis-only.
     if (!match || match.grade === 'D' || match.estimatedEdge == null || match.estimatedEdge <= 0) {
-      if (gate !== 'strict') return [leg];
+      if (gate !== 'strict') return [{ ...leg, __matchedPlayerModel: false }];
       blocked.push(legFingerprint(leg, contextSport));
       return [];
     }
     const probabilityPct = Math.round(match.probability * 1000) / 10;
     return [{
       ...leg,
+      __matchedPlayerModel: true,
       confidence: Math.round(probabilityPct),
       model_probability: String(probabilityPct),
       model_version: match.modelVersion,
@@ -551,6 +566,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
               line_verified: l.line_verified,
               line_source: l.line_source,
               line_checked_at: l.line_checked_at,
+              __matchedPlayerModel: l.__matchedPlayerModel === true,
               provisional: l.provisional,
               confidence: Number.isFinite(prob)
                 ? Math.max(0, Math.min(100, prob <= 1 && prob > 0 ? Math.round(prob * 100) : Math.round(prob)))
@@ -603,7 +619,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       .map((log) => ({
         ...log,
         legs: (Array.isArray(log?.legs) ? log.legs : []).filter((leg: any) =>
-          selectedLegs.has(legFingerprint(leg, log.sport)),
+          selectedLegs.has(legFingerprint(leg, log.sport)) && canPersistPredictionLeg(leg),
         ),
       }))
       .filter((log) => log.legs.length > 0);
@@ -634,9 +650,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       // Never display model-authored recommendation prose. It can mention
       // extra picks that were not represented in the machine-readable blocks
       // and therefore never passed availability/model verification.
-      const totalLegs = finalizedParlay.legs.length;
       sse(res, 'delta', {
-        text: `**Verified recommendation:** all ${totalLegs} requested structured ${totalLegs === 1 ? 'leg passed' : 'legs passed'} current availability, sportsbook-line, evidence, and quality checks. Details are shown below.`,
+        text: recommendationSummary(finalizedParlay.legs),
       });
     } else {
       sse(res, 'delta', { text: finalText });
