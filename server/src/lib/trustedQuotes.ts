@@ -2,6 +2,7 @@ import { hasCurrentMarketLine } from './parlayQuality.js';
 import { normalizeMarket } from '../models/playerPropModel.js';
 import { normalizeName } from '../providers/http.js';
 import { playerFromSelection } from '../providers/playerAvailability.js';
+import { marketLabel } from '../llm/screenerRenderer.js';
 
 /** Match generated structured legs against quotes returned by server-side tools. */
 export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candidates: any[], nowMs = Date.now()): T {
@@ -25,11 +26,14 @@ export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candida
     if (odds == null || String(odds).trim() === '' || quoteOdds == null || Number(odds) !== Number(quoteOdds)) return false;
     if (game) {
       const expectedSelection = String(candidate?.selection ?? `${candidate?.team ?? ''} ML`).trim();
-      if (!leg.team || normalizeName(String(leg.team)) !== normalizeName(String(candidate?.team ?? '')) ||
+      if (entity !== 'team' || normalizeMarket(String(leg.market ?? '')) !== normalizeMarket(String(candidate.market ?? '')) ||
+          !leg.team || normalizeName(String(leg.team)) !== normalizeName(String(candidate?.team ?? '')) ||
           normalizeName(selection) !== normalizeName(expectedSelection)) return false;
     } else {
+      const expectedSelection = `${candidate?.player ?? ''} ${String(candidate?.side ?? '').toUpperCase()} ${candidate?.marketLine ?? '?'} ${marketLabel(candidate?.market)}`;
       if (!player || !candidate?.player || normalizeName(player) !== normalizeName(String(candidate.player)) ||
-          (selectedPlayer && normalizeName(selectedPlayer) !== normalizeName(player)) ||
+          !selectedPlayer || normalizeName(selectedPlayer) !== normalizeName(player) ||
+          selection.toLowerCase().replace(/\s+/g, ' ') !== expectedSelection.toLowerCase().replace(/\s+/g, ' ') ||
           normalizeMarket(String(leg.market ?? '')) !== normalizeMarket(String(candidate.market ?? '')) ||
           side !== String(candidate.side ?? '').toLowerCase() || line == null || candidate.marketLine == null ||
           Number(line) !== Number(candidate.marketLine)) return false;
@@ -39,5 +43,17 @@ export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candida
       line_source: candidate.marketSource, line_checked_at: candidate.marketCheckedAt }, nowMs);
   });
   if (!found) return { ...leg, line_verified: false, line_source: null, line_checked_at: null };
+  if (game) {
+    const probability = found.confidencePct == null ? NaN : Number(found.confidencePct);
+    const qualitySource = String(found.qualitySource ?? found.modelVersion ?? '').trim();
+    if (!Number.isFinite(probability) || probability < 0 || probability > 100 || !qualitySource) {
+      return { ...leg, line_verified: false, line_source: null, line_checked_at: null };
+    }
+    // Game-market confidence is the tool's market-implied probability; never
+    // use a model-authored confidence or claim it is an independent forecast.
+    return { ...leg, line_verified: true, line_source: found.marketSource, line_checked_at: found.marketCheckedAt,
+      confidence: Math.round(probability), model_probability: String(probability),
+      quality_source: qualitySource, model_source: qualitySource };
+  }
   return { ...leg, line_verified: true, line_source: found.marketSource, line_checked_at: found.marketCheckedAt };
 }
