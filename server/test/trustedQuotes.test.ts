@@ -31,10 +31,14 @@ test('team moneyline prices must match the event, team and price', () => {
   const now = Date.now();
   const candidate = { candidateType: 'game_market', sport: 'nfl', eventId: 'game-a', eventDate: '2026-11-06',
     team: 'Buffalo Bills', market: 'moneyline', marketOdds: -140,
-    marketSource: 'espn', marketCheckedAt: new Date(now).toISOString() };
+    marketSource: 'espn', marketCheckedAt: new Date(now).toISOString(), confidencePct: 62.5, qualitySource: 'market-consensus-v1' };
   const leg = { entity_type: 'team', sport: 'NFL', team: 'Buffalo Bills', eventId: 'game-a', eventDate: '2026-11-06',
-    selection: 'Buffalo Bills ML', market: 'moneyline', odds: -140, line_verified: true };
-  assert.equal(applyTrustedQuote(leg, [candidate], now).line_verified, true);
+    selection: 'Buffalo Bills ML', market: 'moneyline', odds: -140, line_verified: true, confidence: 99, quality_source: 'invented' };
+  const verified = applyTrustedQuote(leg, [candidate], now);
+  assert.equal(verified.line_verified, true);
+  assert.equal(verified.confidence, 63);
+  assert.equal(verified.quality_source, 'market-consensus-v1');
+  assert.equal(applyTrustedQuote(leg, [{ ...candidate, confidencePct: undefined }], now).line_verified, false);
   assert.equal(applyTrustedQuote({ ...leg, team: 'Other Team' }, [candidate], now).line_verified, false);
   assert.equal(applyTrustedQuote({ ...leg, odds: 140 }, [candidate], now).line_verified, false);
 });

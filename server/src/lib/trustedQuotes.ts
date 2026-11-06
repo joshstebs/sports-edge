@@ -42,5 +42,17 @@ export function applyTrustedQuote<T extends Record<string, any>>(leg: T, candida
       line_source: candidate.marketSource, line_checked_at: candidate.marketCheckedAt }, nowMs);
   });
   if (!found) return { ...leg, line_verified: false, line_source: null, line_checked_at: null };
+  if (game) {
+    const probability = found.confidencePct == null ? NaN : Number(found.confidencePct);
+    const qualitySource = String(found.qualitySource ?? found.modelVersion ?? '').trim();
+    if (!Number.isFinite(probability) || probability < 0 || probability > 100 || !qualitySource) {
+      return { ...leg, line_verified: false, line_source: null, line_checked_at: null };
+    }
+    // Game-market confidence is the tool's market-implied probability; never
+    // use a model-authored confidence or claim it is an independent forecast.
+    return { ...leg, line_verified: true, line_source: found.marketSource, line_checked_at: found.marketCheckedAt,
+      confidence: Math.round(probability), model_probability: String(probability),
+      quality_source: qualitySource, model_source: qualitySource };
+  }
   return { ...leg, line_verified: true, line_source: found.marketSource, line_checked_at: found.marketCheckedAt };
 }
