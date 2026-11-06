@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyModelEvidence, canPersistPredictionLeg, recommendationSummary } from '../src/routes/chat.js';
+import { applyModelEvidence, canPersistPredictionLeg, predictionLegKey, recommendationSummary } from '../src/routes/chat.js';
 import type { ModelEvidence } from '../src/lib/predictionStore.js';
 
 test('a recommendation uses only evidence from its exact game and date', () => {
@@ -39,6 +39,14 @@ test('a recommendation uses only evidence from its exact game and date', () => {
     if (previous === undefined) delete process.env.EVIDENCE_GATE;
     else process.env.EVIDENCE_GATE = previous;
   }
+});
+
+test('prediction history identities distinguish the same prop in different games', () => {
+  const leg = { sport: 'NBA', player_name: 'Example Player', selection: 'Example Player over 20.5 points' };
+  const selected = predictionLegKey({ ...leg, eventDate: '2026-11-06', eventId: 'one' });
+  assert.equal(selected, predictionLegKey({ ...leg, leg_name: leg.selection, selection: undefined }, { date: '2026-11-06', eventId: 'one' }));
+  assert.notEqual(selected, predictionLegKey({ ...leg, eventDate: '2026-11-06', eventId: 'two' }));
+  assert.notEqual(selected, predictionLegKey({ ...leg, eventDate: '2026-11-07', eventId: 'one' }));
 });
 
 test('summary clearly labels player selections without server-matched model evidence', () => {
