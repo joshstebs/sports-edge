@@ -55,8 +55,10 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
   const aggressive = /\b(?:aggressive|high[- ]?risk|long[- ]?shot|lottery|moonshot)\b/i.test(normalized);
   const sameGameIntent = /\b(?:same[- ]?game|sgp)\b/i.test(normalized);
 
-  const range = normalized.match(/\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s*(?:leg|legs|game|games|pick|picks)?\b/i);
-  const single = normalized.match(/\b(\d{1,2})\s*(?:-|–|—)?\s*(?:leg|legs|game|games|pick|picks)\b/i);
+  // Only count a range when it describes selections. A game score like 24-27
+  // is not a request for 24 picks. Allow common league and market qualifiers.
+  const range = normalized.match(/\b(\d{1,2})\s*(?:-|–|—|to|or)\s*(\d{1,2})\s*(?:good\s+|best\s+|nba\s+|nfl\s+|mlb\s+|nhl\s+|player\s+)*(?:legs?|games?|picks?|props?|bets?|sgp|parlays?)\b/i);
+  const single = normalized.match(/\b(\d{1,2})\s*(?:-|–|—)?\s*(?:good\s+|best\s+|nba\s+|nfl\s+|mlb\s+|nhl\s+|player\s+)*(?:legs?|games?|picks?|props?|bets?)\b/i);
   let requestedMin: number | null = null;
   let requestedMax: number | null = null;
   if (range) {

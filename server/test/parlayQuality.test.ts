@@ -52,6 +52,19 @@ test('hyphenated single leg counts are parsed and capped', () => {
   assert.equal(policy.targetFill, true);
 });
 
+test('requested counts include league and market qualifiers without confusing score ranges', () => {
+  for (const prompt of ['Give me 5 NBA picks', 'Find five NBA player props', 'Show me 5 good bets']) {
+    const policy = parseParlayQualityPolicy(prompt);
+    assert.equal(policy.requestedMin, 5, prompt);
+    assert.equal(policy.requestedMax, 5, prompt);
+    assert.equal(requestedParlayShortfall(policy, 2), 3, prompt);
+  }
+  const policy = parseParlayQualityPolicy('Give me 5 NBA picks for a game projected 110-115 points');
+  assert.equal(policy.requestedMin, 5);
+  assert.equal(policy.requestedMax, 5);
+  assert.equal(parseParlayQualityPolicy('The score was 24-27; analyze the game').requestedMin, null);
+});
+
 test('aggressive request may include C but never D', () => {
   const policy = parseParlayQualityPolicy('Build an aggressive high-risk 6-leg parlay');
   const result = filterParlayQuality([
