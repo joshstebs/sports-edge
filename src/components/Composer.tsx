@@ -10,10 +10,11 @@ import VoiceCall from './VoiceCall';
 
 interface ComposerProps {
   onSend: (text: string, images?: string[]) => void;
+  onStop?: () => void;
   streaming: boolean;
 }
 
-export default function Composer({ onSend, streaming }: ComposerProps) {
+export default function Composer({ onSend, onStop, streaming }: ComposerProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -278,18 +279,33 @@ export default function Composer({ onSend, streaming }: ComposerProps) {
               <span className="hidden sm:inline">Call</span>
             </button>
 
-            <span className="ml-auto hidden font-mono text-[9px] text-frost2/70 sm:inline">Enter to send</span>
-            <button
-              type="submit"
-              disabled={!canSend}
-              title="Send"
-              aria-label="Send message"
-              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-edge text-ink hover:brightness-105 disabled:cursor-not-allowed disabled:bg-panel2 disabled:text-frost2"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-            </button>
+            <span className="ml-auto hidden font-mono text-[9px] text-frost2/70 sm:inline">{streaming ? 'Streaming — stop to cancel' : 'Enter to send'}</span>
+            {streaming && onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                title="Stop the current analysis"
+                aria-label="Stop the current analysis"
+                className="ml-1 flex h-8 items-center gap-1.5 rounded-md border border-danger/40 bg-danger/10 px-2.5 text-[10px] font-semibold text-danger hover:bg-danger/20"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                </svg>
+                Stop
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSend}
+                title="Send"
+                aria-label="Send message"
+                className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-edge text-ink hover:brightness-105 disabled:cursor-not-allowed disabled:bg-panel2 disabled:text-frost2"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 

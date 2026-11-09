@@ -45,11 +45,34 @@ function responseError(payload: SessionPayload, fallback: string): string {
   return errorMessage(payload.error) || errorMessage(payload.message) || fallback;
 }
 
+/** A hung auth request must not leave the app on "Checking secure session…" forever. */
+const AUTH_TIMEOUT_MS = 10_000;
+
+function timeoutSignal(): AbortSignal | undefined {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(AUTH_TIMEOUT_MS)
+    : undefined;
+}
+
+function timeoutMessage(error: unknown): Error {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return new Error('The sign-in service did not respond in time. Check your connection, then reload.');
+  }
+  return error instanceof Error ? error : new Error('The sign-in service is unreachable.');
+}
+
 export async function fetchSession(): Promise<AuthUser | null> {
-  const res = await fetch(`${import.meta.env.BASE_URL}api/auth/session`, {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json' },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${import.meta.env.BASE_URL}api/auth/session`, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+      signal: timeoutSignal(),
+    });
+  } catch (error) {
+    throw timeoutMessage(error);
+  }
   if (res.status === 401) return null;
   const payload = await readPayload(res);
   if (!res.ok) throw new Error(responseError(payload, `Session check failed (HTTP ${res.status})`));
@@ -62,6 +85,7 @@ export async function signIn(username: string, password: string): Promise<AuthUs
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ username, password }),
+    signal: timeoutSignal(),
   });
   const payload = await readPayload(res);
   if (!res.ok || !payload.user) {
@@ -75,6 +99,7 @@ export async function signOut(): Promise<void> {
     method: 'POST',
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },
+    signal: timeoutSignal(),
   });
   if (!res.ok) {
     const payload = await readPayload(res);

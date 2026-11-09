@@ -4,6 +4,7 @@ import { parseProplineOdds, proplineMarketsFor, PROPLINE_MARKETS } from '../src/
 import { isLineNearProjection, isRealisticLine } from '../src/models/playerPropModel.js';
 import { orderRosterForSampling, interleaveByPosition } from '../src/providers/slateDiscovery.js';
 import { isBlockingInjuryStatus, blockingInjuries } from '../src/models/injuryStatus.js';
+import { canonicalPropMarket, isPlausiblePropLine } from '../src/models/propLineIntegrity.js';
 
 function outcome(description: string, name: 'Over' | 'Under', price: number, point: number) {
   return { description, name, price, point };
@@ -127,4 +128,22 @@ test('benign "Active" injury rows do not block; real designations do', () => {
     { playerName: 'No Status' },
   ];
   assert.deepEqual(blockingInjuries(rows).map((row) => row.playerName), ['Hurt Starter']);
+});
+
+test('provider market keys canonicalize into the model vocabulary', () => {
+  assert.equal(canonicalPropMarket('player_points', 'nba'), 'points');
+  assert.equal(canonicalPropMarket('player_rebounds', 'nba'), 'rebounds');
+  assert.equal(canonicalPropMarket('player_assists', 'nba'), 'assists');
+  assert.equal(canonicalPropMarket('player_threes', 'nba'), 'threePointersMade');
+  assert.equal(canonicalPropMarket('player_points_rebounds_assists', 'nba'), 'pointsReboundsAssists');
+  assert.equal(canonicalPropMarket('player_pass_yds', 'nfl'), 'passingYards');
+  assert.equal(canonicalPropMarket('player_reception_yds', 'nfl'), 'receivingYards');
+  assert.equal(canonicalPropMarket('player_receptions', 'nfl'), 'receptions');
+  assert.equal(canonicalPropMarket('player_anytime_td', 'nfl'), 'touchdowns');
+  assert.equal(canonicalPropMarket('player_goals', 'nhl'), 'goals');
+  assert.equal(isPlausiblePropLine('nba', 'player_points', 24.5), true);
+  assert.equal(isPlausiblePropLine('nfl', 'player_reception_yds', 39.5), true);
+  // Model-supported markets the integrity gate used to reject outright.
+  assert.equal(isPlausiblePropLine('mlb', 'earnedRuns', 2.5), true);
+  assert.equal(isPlausiblePropLine('nba', 'steals', 1.5), true);
 });

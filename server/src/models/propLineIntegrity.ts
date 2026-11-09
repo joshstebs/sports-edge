@@ -19,6 +19,9 @@ const ALIASES: Record<string, string> = {
   rbi: 'rbi', batterrbi: 'rbi', batterrbis: 'rbi', runs: 'runs', run: 'runs', batterrun: 'runs', batterruns: 'runs', batterrunsscored: 'runs', batterrunsscoreds: 'runs',
   strikeout: 'strikeouts', strikeouts: 'strikeouts', pitcherstrikeout: 'strikeouts', pitcherstrikeouts: 'strikeouts', playerstrikeout: 'strikeouts', playerstrikeouts: 'strikeouts',
   outsrecorded: 'outsRecorded', pitcherouts: 'outsRecorded', pitcheroutsrecorded: 'outsRecorded',
+  walk: 'walks', walks: 'walks', baseonballs: 'walks', stolenbase: 'stolenBases', stolenbases: 'stolenBases',
+  earnedrun: 'earnedRuns', earnedruns: 'earnedRuns', hitsallowed: 'hitsAllowed', walksallowed: 'walksAllowed',
+  steals: 'steals', steal: 'steals', blocks: 'blocks', block: 'blocks', turnovers: 'turnovers', turnover: 'turnovers',
   points: 'points', point: 'points', rebounds: 'rebounds', rebound: 'rebounds', assists: 'assists', assist: 'assists',
   threepointersmade: 'threePointersMade', threepointermade: 'threePointersMade', threes: 'threePointersMade',
   pointsreboundsassists: 'pointsReboundsAssists', pra: 'pointsReboundsAssists',
@@ -30,6 +33,16 @@ const ALIASES: Record<string, string> = {
   carries: 'rushingAttempts', carry: 'rushingAttempts', rushattempts: 'rushingAttempts',
   receivingtargets: 'receivingTargets', playertargets: 'receivingTargets', targets: 'receivingTargets',
   touchdown: 'touchdowns', touchdowns: 'touchdowns', anytimetouchdown: 'touchdowns',
+  // the-odds-api / PropLine style keys (compact() strips underscores)
+  playerpoints: 'points', playerrebounds: 'rebounds', playerassists: 'assists',
+  playerthrees: 'threePointersMade', playerthreepointersmade: 'threePointersMade',
+  playerpointsreboundsassists: 'pointsReboundsAssists',
+  playerpassyds: 'passingYards', playerpasstds: 'passingTouchdowns',
+  playerrushyds: 'rushingYards', playerrushingyards: 'rushingYards',
+  playerreceptionyds: 'receivingYards', playerreceivingyds: 'receivingYards',
+  playerreceptions: 'receptions', playeranytimetd: 'touchdowns', playeranytimetouchdown: 'touchdowns',
+  playergoals: 'goals', playergoal: 'goals', playershotsongoal: 'shotsOnGoal', playersaves: 'saves',
+  playerhockeypoints: 'hockeyPoints',
   goals: 'goals', goal: 'goals', shotsongoal: 'shotsOnGoal', shots: 'shotsOnGoal', shot: 'shotsOnGoal',
   hockeypoints: 'hockeyPoints', saves: 'saves',
 };
@@ -38,10 +51,13 @@ const BOUNDS: Record<PropSport, Record<string, MarketBounds>> = {
   mlb: {
     hits: { min: 0, max: 5.5 }, totalBases: { min: 0, max: 10.5 }, homeRuns: { min: 0, max: 3.5 },
     rbi: { min: 0, max: 6.5 }, runs: { min: 0, max: 6.5 }, strikeouts: { min: 0, max: 20.5 }, outsRecorded: { min: 0, max: 30.5 },
+    walks: { min: 0, max: 8.5 }, stolenBases: { min: 0, max: 4.5 },
+    earnedRuns: { min: 0, max: 12.5 }, hitsAllowed: { min: 0, max: 15.5 }, walksAllowed: { min: 0, max: 10.5 },
   },
   nba: {
     points: { min: 0, max: 100.5 }, rebounds: { min: 0, max: 50.5 }, assists: { min: 0, max: 40.5 },
     threePointersMade: { min: 0, max: 25.5 }, pointsReboundsAssists: { min: 0, max: 180.5 },
+    steals: { min: 0, max: 10.5 }, blocks: { min: 0, max: 10.5 }, turnovers: { min: 0, max: 15.5 },
   },
   nfl: {
     passingYards: { min: 0, max: 650.5 }, passingTouchdowns: { min: 0, max: 10.5 },
