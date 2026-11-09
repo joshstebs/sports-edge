@@ -1,6 +1,7 @@
 import { llmConfig } from '../llm/chatClient.js';
 import { apiSportsConfigured, apiSportsQuota } from '../providers/apiSports.js';
 import { oddsConfigured, quotaRemaining as oddsQuotaRemaining } from '../providers/oddsApi.js';
+import { rundownConfigured } from '../providers/rundown.js';
 import { listPredictions, loadLearning, storageStatus, type Prediction } from './predictionStore.js';
 
 export type ProviderStatus = 'ready' | 'fallback' | 'unavailable';
@@ -92,6 +93,16 @@ export async function buildDiagnostics(): Promise<DiagnosticsSnapshot> {
       status: oddsApi ? 'ready' : 'fallback', primaryFor: ['moneyline', 'spread', 'totals', 'supported props'], fallback: 'ESPN sportsbook odds',
       quota: { remaining: oddsQuotaRemaining() }, cacheTtl: 'short-lived around market changes', source: 'api.the-odds-api.com',
       note: oddsApi ? 'Primary multi-book odds source.' : 'Not configured; featured odds use the ESPN sportsbook fallback when available.',
+    },
+    {
+      id: 'rundown', label: 'Rundown (therundown.io)', configured: rundownConfigured(),
+      status: rundownConfigured() ? 'ready' : 'fallback',
+      primaryFor: ['game moneyline', 'spread', 'totals (secondary)'], fallback: 'The Odds API',
+      quota: { daily: null, minute: null }, cacheTtl: 'short-lived around market changes',
+      source: 'therundown.io/api/v2',
+      note: rundownConfigured()
+        ? 'Secondary game-line source; player props are not published by this provider.'
+        : 'Not configured; game lines come from The Odds API only.',
     },
     {
       id: 'mlb-stats', label: 'MLB Stats API', configured: true, status: 'ready', primaryFor: ['MLB schedule', 'box scores', 'player stats', 'lineups', 'MLB injured-list status'],            
