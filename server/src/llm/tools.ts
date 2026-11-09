@@ -825,6 +825,10 @@ const playerPropModel = async (args: any): Promise<ToolOutcome> => {
       gameDay: status.gameDay,
     },
     observations: observations.map((row) => ({ date: row.date ?? null, value: row.value })),
+    oddsProvenance: americanOdds != null ? 'caller-supplied (unverified; not a provider quote)' : null,
+    warning: americanOdds != null && model.available
+      ? 'The price was caller-supplied, not a verified sportsbook quote. Do not describe the edge as verified or +EV; fetch game_odds/screener quotes first.'
+      : model.warning,
     rule: 'Use probability only for this exact market side and line. A grade D is no recommendation. Positive EV requires verified odds and estimatedEdge > 0.',
   };
   if (!model.available) {

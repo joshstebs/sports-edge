@@ -7,6 +7,7 @@
 import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
 import { normalizeName } from './http.js';
+import { blockingInjuries, isBlockingInjuryStatus } from '../models/injuryStatus.js';
 
 export type SportKey = 'mlb' | 'nfl' | 'nba' | 'nhl';
 export type PlayingStatus = 'active' | 'questionable' | 'doubtful' | 'out' | 'inactive' | 'suspended' | 'unknown';
@@ -82,6 +83,7 @@ function classifyInjury(status: string): PlayingStatus {
   if (/suspend/.test(s)) return 'suspended';
   if (/out|injured reserve|\bil\b|disabled|inactive|not active/.test(s)) return 'out';
   if (/doubt/.test(s)) return 'doubtful';
+  if (/\bactive\b|healthy|probable|available/.test(s)) return 'active';
   // Any open injury designation, including probable/day-to-day, is treated as
   // uncertain for a player-prop recommendation until cleared.
   return 'questionable';
@@ -98,7 +100,7 @@ export async function checkPlayerAvailability(name: string, sport: SportKey): Pr
   const checkedAt = new Date().toISOString();
   const espnSport = ESPN_SPORTS[sport];
   const injuryReport = await espn.getLeagueInjuries(espnSport);
-  const injuries = injuryReport.available ? injuryMatches(name, injuryReport.injuries) : [];
+  const injuries = injuryReport.available ? blockingInjuries(injuryMatches(name, injuryReport.injuries)) : [];
   const injuryStatus = injuries.length ? classifyInjury(injuries[0].status) : null;
 
   if (sport === 'mlb') {
@@ -145,8 +147,10 @@ export async function checkPlayerAvailability(name: string, sport: SportKey): Pr
   const rosterActive = rosterVerified && String(rosterStatus ?? '').toLowerCase() === 'active';
   const statusVerified = rosterVerified && injuryReport.available;
   const playingStatus: PlayingStatus = injuryStatus ?? (rosterActive ? 'active' : nonActiveRoster(rosterStatus));
-  const recommendationEligible = statusVerified && rosterActive && injuries.length === 0 && roster?.injuries.length === 0;
-  const embeddedInjury = roster?.injuries?.[0];
+  // Embedded roster rows carry the same benign "Active" status the league feed
+  // does; only a real designation blocks.
+  const embeddedInjury = blockingInjuries(roster?.injuries)[0];
+  const recommendationEligible = statusVerified && rosterActive && injuries.length === 0 && !embeddedInjury;
   const reason = !injuryReport.available
     ? `Not eligible: current injury report unavailable (${injuryReport.reason ?? 'unknown error'}).`
     : injuries.length

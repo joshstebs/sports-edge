@@ -20,7 +20,7 @@ export const DATA_TOOL_RULES = `
    - moneyline / ML / h2h -> use game_market_screener; do NOT substitute player props;
    - explicit player props or a named prop market -> use slate_candidate_screener/player_prop_model; do NOT substitute moneylines;
    - generic multi-pick requests such as "best NFL picks" may compare both game-market and player-prop candidates.
-   For explicit prop requests of 3+ picks, slate_candidate_screener remains the mandatory first prop tool. For explicit moneyline requests, game_market_screener is the mandatory first game-market tool.
+   For explicit prop requests of 3+ picks, slate_candidate_screener remains the mandatory first prop tool. For explicit moneyline requests, game_market_screener is the mandatory first game-market tool. A MIXED request (a game line plus player props) needs BOTH tools — never answer the prop half from a game-market screen.
 3. API-SPORTS IS OPTIONAL. A suspended, exhausted or unavailable API-Sports account must not make NBA/NFL analysis empty. NFL player-prop history should prefer nflverse weekly player statistics, then use ESPN/StatsHawk fallbacks as needed. Use current ESPN rosters/injuries for availability and the configured live-odds providers for exact markets. Clearly disclose the fallback source; never fabricate missing fields.
 4. SOURCE ATTRIBUTION. Cite the actual provider for numbers used (for example statsapi.mlb.com, Baseball Savant, ESPN, The Odds API, API-Sports, Open-Meteo). Label derived calculations as computed.
 5. ZERO FABRICATION. Never invent a line, odd, statistic, injury status, lineup status, projection, model score, source or event. If unavailable, say exactly what is unavailable.

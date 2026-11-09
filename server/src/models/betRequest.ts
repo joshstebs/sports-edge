@@ -110,7 +110,7 @@ export function serializeBetRequestContext(req: BetRequest): string {
     '## CONSTRAINT ENFORCEMENT',
     `- Return EXACTLY ${req.target_legs} legs. Emit ERR_INSUFFICIENT_PROPS if unavailable.`,
     `- NEVER invent a line. Every leg must have line_source and line_checked_at.`,
-    `- NEVER select a player tagged OUT, IR, Inactive, Suspended, or Doubtful.`,
+    `- NEVER select a player tagged OUT, IR, Inactive, Suspended, Doubtful, Questionable, or Day-To-Day.`,
     `- Diversify prop_market: no more than 2 legs sharing the same market type.`,
     req.sgp_enclosure ? `- SGP: run intra-game correlation check before finalizing.` : '',
   ].filter(Boolean).join('\n');

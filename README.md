@@ -22,6 +22,7 @@ A sports analytics chat platform where an AI betting analyst answers matchup, pr
 | site.web.api.espn.com | MLB/NFL/NBA/NHL rosters, injury reports, gamelogs where available, team efficiency, news, **DraftKings odds** (via summary payload) | none |
 | api.open-meteo.com | Game-time weather + 30-park venue table | none |
 | api.the-odds-api.com | Multi-book odds (FanDuel, Bet365, BetMGM...) | `ODDS_API_KEY` (optional) |
+| api.prop-line.com (PropLine) | Real player-prop lines and prices for NFL/NBA/MLB/NHL; consensus primary line plus alternates | `PROPLINE_API_KEY` (optional) |
 | LLM (OpenCode Zen) | DeepSeek V4.1 Flash, high reasoning; tool-calling agent | `OPENCODE_ZEN_API_KEY` (`OPENCODE_ZEN_MODEL` override) |
 
 ## Predictive engine

@@ -139,7 +139,7 @@ export async function getSharpGameOdds(
         console.warn(`[sharpApi] walk budget exhausted after ${rows.length} rows; skipping remaining ${markets.length - markets.indexOf(market) - 1} market(s)`);
         break;
       }
-      const url = `${BASE}/odds?sport=${map.sport}&league=${map.league}&market_type=${market}&limit=500`;
+      const url = `${BASE}/odds?sport=${map.sport}&league=${map.league}&market_type=${market}&limit=200`;
       // Attempt each market at most twice: once immediately, once after a paced
       // wait when the free tier answers 429 (12 req/min). Never hang the parent
       // tool on a stalled fetch — every request carries its own timeout.

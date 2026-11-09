@@ -18,6 +18,7 @@
 //      NFL defensive yards allowed are NOT exposed -> honest unavailable.
 
 import { cacheGet, cacheSet, fetchJson, normalizeName, round } from './http.js';
+import { isBlockingInjuryStatus } from '../models/injuryStatus.js';
 
 const API = 'https://site.web.api.espn.com/apis/site/v2/sports';
 const V3 = 'https://site.web.api.espn.com/apis/common/v3/sports';
@@ -305,6 +306,9 @@ export async function getGameDayStatus(
     const hit = eventInjuries.find((injury: any) =>
       normalizeName(injury?.athlete?.displayName ?? injury?.athlete?.fullName ?? '') === target
     );
+    // The feed can carry a row with a benign status ("Active"); a row alone is
+    // not a designation. Only a blocking status counts as listed.
+    const blockingHit = hit && isBlockingInjuryStatus(hit?.status ?? hit?.type?.description) ? hit : null;
     return {
       available: true,
       source: SOURCE,
@@ -315,8 +319,8 @@ export async function getGameDayStatus(
         status: String(type?.detail ?? type?.name ?? 'pregame'),
         completed,
         teams: competitors.map((c) => ({ id: String(c?.team?.id ?? ''), name: c?.team?.displayName ?? c?.team?.name ?? '' })),
-        playerListedInEventInjuries: Boolean(hit),
-        playerEventInjuryStatus: hit ? String(hit?.status ?? hit?.type?.description ?? 'Unknown') : null,
+        playerListedInEventInjuries: Boolean(blockingHit),
+        playerEventInjuryStatus: blockingHit ? String(blockingHit?.status ?? blockingHit?.type?.description ?? 'Unknown') : null,
         checkedAt,
       },
     };

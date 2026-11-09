@@ -691,7 +691,17 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       for (const log of filteredLogs) {
         const legs = (Array.isArray(log.legs) ? log.legs : [])
           .map((l: any) => {
-            if (!l || typeof l.leg_name !== 'string') return null;
+            if (!l) return null;
+            // The documented PREDICTION_LOG schema may omit leg_name. Derive the
+            // same selection string the slip uses instead of dropping the leg.
+            const logSelection = typeof l.leg_name === 'string' && l.leg_name.trim()
+              ? l.leg_name
+              : typeof l.selection === 'string' && l.selection.trim()
+                ? l.selection
+                : l.player_name
+                  ? `${l.player_name} ${String(l.side ?? 'over').toUpperCase()} ${l.line ?? l.target_line ?? ''} ${l.market ?? ''}`.trim()
+                  : '';
+            if (!logSelection) return null;
             const oddsNum = parseAmericanOdds(l.implied_odds);
             const prob = l.model_probability != null ? Number(String(l.model_probability).replace('%', '')) : NaN;
             return {
@@ -702,9 +712,9 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
               entity_type: l.entity_type ?? (l.player_name ? 'player' : undefined),
               player_name: l.player_name,
               team: l.team,
-              selection: l.leg_name,
+              selection: logSelection,
               market: l.market ?? null,
-              side: l.side ?? (/\bunder\b/i.test(l.leg_name) ? 'under' : 'over'),
+              side: l.side ?? (/\bunder\b/i.test(logSelection) ? 'under' : 'over'),
               line: l.line ?? (l.target_line != null ? String(l.target_line) : null),
               odds: oddsNum,
               game_odds: null,
@@ -737,9 +747,31 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     // backfilled from verified alternates. A requested multi-leg parlay is
     // all-or-nothing: no partial slip is emitted or written to the ledger.
     const parlayPolicy = parseParlayQualityPolicy(lastUserText);
-    const pooledLegs = acceptedSgpBlocks.flatMap((block) =>
-      Array.isArray(block?.legs) ? block.legs : [],
-    ).map((leg) => applyTrustedQuote(leg, trustedQuoteCandidates));
+    // Pool every structured source. The model is asked for a ```sgp``` block,
+    // but a PREDICTION_LOG-only answer is a real failure mode (seen on mixed
+    // game-line + prop requests); those legs carry the same verified fields and
+    // must reach the same gate instead of being invisible to it.
+    const pooledLegs = [
+      ...acceptedSgpBlocks.flatMap((block) => Array.isArray(block?.legs) ? block.legs : []),
+      ...filteredLogs.flatMap((log) => (Array.isArray(log?.legs) ? log.legs : []).map((leg: any) => ({
+        ...leg,
+        sport: leg?.sport ?? log?.sport,
+        game: leg?.game ?? log?.matchup,
+        game_date: leg?.game_date ?? leg?.eventDate ?? leg?.gameDate ?? log?.game_date,
+        event_id: leg?.event_id ?? leg?.eventId ?? log?.event_id,
+      }))),
+    ].map((leg) => applyTrustedQuote(leg, trustedQuoteCandidates))
+      .map((leg) => {
+        const entity = String((leg as any)?.entity_type ?? '').toLowerCase();
+        const isPlayer = entity !== 'team' && entity !== 'game';
+        if (!isPlayer || (leg as any)?.__matchedPlayerModel === true) return leg;
+        // A player leg the server could not match to its own model must never
+        // carry model-authored confidence into the quality gate. Missing
+        // confidence fails closed there, so this cannot become a "65% core"
+        // pick that only the LLM believed in.
+        const { confidence, model_probability, quality_source, ...rest } = leg as any;
+        return rest;
+      });
     const finalizedParlay = finalizeStructuredParlay(pooledLegs, parlayPolicy);
     const qualityBlocked = new Set(
       finalizedParlay.blocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
@@ -815,9 +847,23 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     if (isExplicitSgp) {
       // All-or-nothing: an explicit SGP must be complete before any of it is
       // shown or added to the slip.
-      if (notes) {
+      if (notes && !finalizedParlay.complete) {
+        // Show the legs that DID pass verification, without emitting a partial
+        // slip: the user asked for six and must not be left with no information.
+        const qualifiedPreview = finalizedParlay.qualified
+          .slice(0, 6)
+          .map((leg: any) => {
+            const selection = String(leg?.selection ?? leg?.leg_name ?? '').trim();
+            const confidence = leg?.confidence ?? leg?.model_probability;
+            return selection ? `- ${selection}${confidence != null ? ` (model ${confidence}%)` : ''}` : '';
+          })
+          .filter(Boolean)
+          .join('\n');
         sse(res, 'delta', {
-          text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
+          text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`
+            + (qualifiedPreview
+              ? `\n\nDefensible legs that did pass verification (not a complete parlay):\n${qualifiedPreview}`
+              : ''),
         });
       } else if (hadStructuredCandidates) {
         // Never display model-authored recommendation prose. It can mention

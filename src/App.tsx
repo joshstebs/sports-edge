@@ -594,6 +594,15 @@ function Workspace({
     [beginStream],
   );
 
+  const stopStream = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreamingState(false);
+    setMessages((prev) => prev.map((m) => (m.streaming
+      ? { ...m, streaming: false, content: m.content || '_Analysis stopped before an answer was produced._' }
+      : m)));
+  }, []);
+
   const newChat = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -783,7 +792,7 @@ function Workspace({
               </div>
             </div>
           )}
-          <Composer onSend={sendMessage} streaming={streaming} />
+          <Composer onSend={sendMessage} streaming={streaming} onStop={stopStream} />
         </div>
         <div className="hidden w-80 shrink-0 xl:block">
           <div className="sticky top-0 flex h-full flex-col p-4 pl-2">
