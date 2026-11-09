@@ -26,6 +26,9 @@ const ALIASES: Record<string, string> = {
   playerpassyards: 'passingYards', playerpassingyards: 'passingYards',
   playerreceptionyards: 'receivingYards', playerreceivingyards: 'receivingYards',
   rushingyards: 'rushingYards', receivingyards: 'receivingYards', receptions: 'receptions', rushingreceivingyards: 'rushingReceivingYards',
+  rushingattempts: 'rushingAttempts', playerrushattempts: 'rushingAttempts', playerushingattempts: 'rushingAttempts',
+  carries: 'rushingAttempts', carry: 'rushingAttempts', rushattempts: 'rushingAttempts',
+  receivingtargets: 'receivingTargets', playertargets: 'receivingTargets', targets: 'receivingTargets',
   touchdown: 'touchdowns', touchdowns: 'touchdowns', anytimetouchdown: 'touchdowns',
   goals: 'goals', goal: 'goals', shotsongoal: 'shotsOnGoal', shots: 'shotsOnGoal', shot: 'shotsOnGoal',
   hockeypoints: 'hockeyPoints', saves: 'saves',
@@ -42,7 +45,8 @@ const BOUNDS: Record<PropSport, Record<string, MarketBounds>> = {
   },
   nfl: {
     passingYards: { min: 0, max: 650.5 }, passingTouchdowns: { min: 0, max: 10.5 },
-    rushingYards: { min: 0, max: 350.5 }, receivingYards: { min: 0, max: 400.5 },
+    rushingYards: { min: 0, max: 350.5 }, rushingAttempts: { min: 0, max: 60.5 },
+    receivingYards: { min: 0, max: 400.5 }, receivingTargets: { min: 0, max: 40.5 },
     receptions: { min: 0, max: 30.5 }, rushingReceivingYards: { min: 0, max: 450.5 }, touchdowns: { min: 0, max: 8.5 },
   },
   nhl: {

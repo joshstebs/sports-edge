@@ -3,9 +3,12 @@ export function marketLabel(value: unknown): string {
   const labels: Record<string, string> = {
     hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
     strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
-    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
-    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards',
+    rushingAttempts: 'Rushing Attempts', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', receivingTargets: 'Receiving Targets',
+    rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Anytime Touchdowns',
     points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    pointsReboundsAssists: 'Points + Rebounds + Assists',
     shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
   };
   if (labels[key]) return labels[key];
@@ -40,21 +43,158 @@ function lineLabel(candidate: any): string {
 }
 
 /**
+ * NBA and NFL player props may be displayed as research-only statistical picks.
+ * Only an explicit research marker qualifies: an unpriced or stale offer in a
+ * direct fixture stays in the verified pool so downstream line verification can
+ * block it rather than silently re-labeling it as research.
+ */
+function isResearchCandidate(candidate: any): boolean {
+  const sport = String(candidate?.sport ?? '').toLowerCase();
+  if (sport !== 'nba' && sport !== 'nfl') return false;
+  if (isGameMarket(candidate)) return false;
+  return candidate?.recommendationType === 'research' || candidate?.researchOnly === true;
+}
+
+function statNumber(value: unknown, digits = 1): string {
+  const number = Number(value);
+  if (value == null || !Number.isFinite(number)) return 'n/a';
+  return Number.isInteger(number) ? String(number) : number.toFixed(digits);
+}
+
+function percent(value: unknown): string {
+  const number = Number(value);
+  return value == null || !Number.isFinite(number) ? 'n/a' : `${Math.round(number * 100)}%`;
+}
+
+function renderResearchCandidate(candidate: any, index: number): string[] {
+  const market = marketLabel(candidate?.market);
+  const direction = String(candidate?.side ?? candidate?.direction ?? 'over').toUpperCase();
+  const threshold = candidate?.historicalThreshold ?? candidateLine(candidate);
+  const matchup = String(
+    candidate?.matchupContext
+      ?? `${candidate?.team ?? ''} ${candidate?.homeAway === 'away' ? '@' : 'vs'} ${candidate?.opponent ?? ''}`,
+  ).trim();
+  const gameDate = candidate?.gameDate ?? candidate?.eventDate;
+  const lines: string[] = [
+    `${index + 1}. **${candidate?.player ?? 'Player'}** (${matchup}${gameDate ? ` · ${gameDate}` : ''}) — ${direction} ${statNumber(threshold)} ${market} — **Research Pick — Odds Unavailable**`,
+  ];
+
+  const form = [
+    `L5 ${statNumber(candidate?.l5Average)}`,
+    `L10 ${statNumber(candidate?.l10Average)}`,
+    `season/sample ${statNumber(candidate?.seasonAverage)}${candidate?.seasonSampleSize ? ` (${candidate.seasonSampleSize} g)` : ''}`,
+  ];
+  if (candidate?.trendLabel) {
+    form.push(`${candidate.trendLabel} trend${candidate?.trend != null ? ` (${candidate.trend > 0 ? '+' : ''}${statNumber(candidate.trend)})` : ''}`);
+  }
+  if (candidate?.minutesL5 != null) form.push(`minutes L5 ${statNumber(candidate.minutesL5)}`);
+  if (candidate?.usageL5 != null) form.push(`usage L5 ${statNumber(candidate.usageL5)}`);
+  if (candidate?.consistencyLabel) {
+    form.push(`consistency ${candidate.consistencyLabel}${candidate?.consistencyStdDev != null ? ` (σ ${statNumber(candidate.consistencyStdDev)})` : ''}`);
+  }
+  lines.push(`   _${form.join(' · ')}_`);
+
+  if (Array.isArray(candidate?.recentGames) && candidate.recentGames.length) {
+    const games = candidate.recentGames
+      .map((game: any, gameIndex: number) => {
+        const label = `G${gameIndex + 1}`;
+        const value = statNumber(game?.value);
+        const opponent = game?.opponent ? ` ${game.opponent}` : '';
+        return `${label} ${value}${opponent}`;
+      })
+      .join(' · ');
+    lines.push(`   _last ${candidate.recentGames.length}: ${games}_`);
+  }
+
+  const wins = Number(candidate?.historicalWins ?? 0);
+  const losses = Number(candidate?.historicalLosses ?? 0);
+  const pushes = Number(candidate?.historicalPushes ?? 0);
+  const thresholdParts = [
+    `historical threshold ${statNumber(threshold)} (NOT a sportsbook line)`,
+    candidate?.hitFrequency != null ? `hit ${wins}/${wins + losses} decisions (${percent(candidate.hitFrequency)})` : null,
+    pushes ? `${pushes} push${pushes === 1 ? '' : 'es'}` : null,
+    candidate?.dataDate ? `data through ${candidate.dataDate}` : null,
+  ].filter(Boolean);
+  lines.push(`   _${thresholdParts.join(' · ')}_`);
+
+  if (candidate?.projection != null) {
+    const range = candidate?.projectionLow != null && candidate?.projectionHigh != null
+      ? ` (range ${statNumber(candidate.projectionLow)}–${statNumber(candidate.projectionHigh)})`
+      : '';
+    const source = String(candidate?.historicalThresholdSource ?? '').trim();
+    lines.push(`   _projection ${statNumber(candidate.projection)}${range}${source ? ` · threshold: ${source}` : ''}_`);
+  }
+
+  const opponentParts = [
+    candidate?.opponentSampleSize
+      ? `vs ${candidate?.opponent ?? 'opponent'}: ${candidate.opponentSampleSize} g, ${statNumber(candidate.opponentAverage)} avg`
+      : null,
+    candidate?.homeAway ? `${candidate.homeAway === 'home' ? 'home' : 'away'} matchup` : null,
+  ].filter(Boolean);
+  if (opponentParts.length) lines.push(`   _${opponentParts.join(' · ')}_`);
+  lines.push('   _opponent defensive ranking vs this position: not available from the current feed — player history shown instead_');
+
+  if (candidate?.usedPriorSeason && candidate?.priorSeasonSampleSize) {
+    lines.push(`   _prior-season context${candidate?.priorSeasonLabel ? ` (${candidate.priorSeasonLabel})` : ''}: ${statNumber(candidate.priorSeasonAverage)} avg over ${candidate.priorSeasonSampleSize} g — NOT part of current-season L5/L10_`);
+  }
+  if (candidate?.availabilityNote) lines.push(`   _⚠️ ${candidate.availabilityNote}_`);
+  if (candidate?.source) lines.push(`   _source: ${candidate.source}_`);
+  if (candidate?.rationale) lines.push(`   _${candidate.rationale}_`);
+  return lines;
+}
+
+export interface ScreenerMeta {
+  insufficientSamples?: number;
+  minimumSample?: number;
+  priceProviderAvailable?: boolean;
+  priceProviderReason?: string;
+  gates?: {
+    playerMarketsConsidered?: number;
+    noGameHistory?: number;
+    insufficientSample?: number;
+    insufficientCurrentSample?: number;
+    modelUnavailable?: number;
+    belowConfidence?: number;
+    duplicatePlayer?: number;
+    injuryExcluded?: number;
+  };
+}
+
+/**
  * Render screener rows into prose plus the same structured blocks consumed by
  * the chat route. This closes a historical gap where fast-screened picks were
  * visible to the user but never entered PREDICTION_LOG, so they could not be
  * graded the next morning.
  */
-export function renderScreenerSummaryBlocks(candidates: any[], requested: number): string {
+export function renderScreenerSummaryBlocks(
+  candidates: any[],
+  requested: number,
+  meta: ScreenerMeta = {},
+): string {
+  const safeRequested = Math.max(1, Math.floor(Number(requested) || 1));
   // Keep a wider structured pool so server-side availability, line, and quality
   // gates can backfill rejected top rows without asking the model to invent more.
-  const poolSize = Math.max(1, requested * 2, requested + 4);
-  const top = candidates.slice(0, poolSize);
+  const poolSize = Math.max(1, safeRequested * 2, safeRequested + 4);
+  const all = Array.isArray(candidates) ? candidates : [];
+  const verifiedPool: any[] = [];
+  const researchPool: any[] = [];
+  for (const candidate of all) {
+    if (isResearchCandidate(candidate)) researchPool.push(candidate);
+    else verifiedPool.push(candidate);
+  }
+  const verifiedTop = verifiedPool.slice(0, poolSize);
+  const researchSlots = Math.max(0, safeRequested - verifiedTop.length);
+  const researchTop = researchPool.slice(0, researchSlots);
+
   const output: string[] = [];
   const timestamp = new Date().toISOString();
-  const anyProvisional = top.some((candidate) => String(candidate?.sport ?? '').toLowerCase() === 'mlb' && candidate?.inLineupToday === false);
+  const anyProvisional = verifiedTop.some((candidate) => String(candidate?.sport ?? '').toLowerCase() === 'mlb' && candidate?.inLineupToday === false);
 
-  output.push('**Verified slate screen — ' + top.length + ' qualified candidate' + (top.length === 1 ? '' : 's') + ' (model grades, live stats).**');
+  if (verifiedTop.length) {
+    output.push('**Verified slate screen — ' + verifiedTop.length + ' qualified candidate' + (verifiedTop.length === 1 ? '' : 's') + ' (model grades, live stats).**');
+  } else {
+    output.push('**No verified sportsbook picks were found.**');
+  }
   if (anyProvisional) {
     output.push('');
     output.push('⚠️ **Some MLB batting orders are not posted yet.** Picks marked 🕐 are provisional and are not saved to the learning ledger until final game-day verification.');
@@ -63,7 +203,7 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
 
   const sgpLegs: any[] = [];
   const logs: any[] = [];
-  top.forEach((candidate, index) => {
+  verifiedTop.forEach((candidate, index) => {
     const gameMarket = isGameMarket(candidate);
     const line = candidateLine(candidate);
     const odds = candidateOdds(candidate);
@@ -157,12 +297,41 @@ export function renderScreenerSummaryBlocks(candidates: any[], requested: number
     }
   });
 
-  if (top.length < requested) {
+  if (researchTop.length) {
     output.push('');
-    output.push('⚠️ **Shortfall:** only ' + top.length + ' of ' + requested + ' requested legs cleared the modeled quality floor after a broader slate scan.');
+    output.push('**Research-only statistical picks — NOT verified sportsbook lines.**');
+    output.push('_These players did not have a verified sportsbook line with positive modeled edge, so no odds, implied probability or EV are shown. The thresholds below are historical research labels, not bettable lines._');
+    output.push('');
+    researchTop.forEach((candidate, index) => {
+      output.push(...renderResearchCandidate(candidate, index));
+    });
+  }
+
+  const shown = verifiedTop.length + researchTop.length;
+  if (shown < safeRequested) {
+    output.push('');
+    const g = meta?.gates ?? {};
+    const excluded = Number(meta?.insufficientSamples ?? g.insufficientSample ?? 0);
+    const minimum = meta?.minimumSample;
+    const gateParts: string[] = [];
+    if (Number(g.noGameHistory ?? 0) > 0) gateParts.push(`${g.noGameHistory} player-market${g.noGameHistory === 1 ? '' : 's'} had no usable recent game log`);
+    if (excluded > 0) gateParts.push(`${excluded} player-market${excluded === 1 ? '' : 's'} were excluded for a sample below the ${minimum ?? 'required'}-game minimum`);
+    if (Number(g.insufficientCurrentSample ?? 0) > 0) gateParts.push(`${g.insufficientCurrentSample} lacked at least 3 current-season games (prior-season data is context only)`);
+    if (Number(g.modelUnavailable ?? 0) > 0) gateParts.push(`${g.modelUnavailable} lacked a valid model probability`);
+    if (Number(g.injuryExcluded ?? 0) > 0) gateParts.push(`${g.injuryExcluded} were excluded because the player is out/inactive on the current injury report`);
+    if (Number(g.belowConfidence ?? 0) > 0) gateParts.push(`${g.belowConfidence} scored below the confidence floor`);
+    if (Number(g.duplicatePlayer ?? 0) > 0) gateParts.push(`${g.duplicatePlayer} were dropped as a second market for an already-selected player`);
+    const providerNote = meta?.priceProviderAvailable === false
+      ? ` No live odds provider returned prices (${meta?.priceProviderReason ?? 'unavailable'}), so only research-only picks were possible.`
+      : '';
+    const gateNote = gateParts.length ? ` Gate detail: ${gateParts.join('; ')}.` : '';
+    output.push('⚠️ **Shortfall:** only ' + shown + ' of ' + safeRequested + ' requested picks cleared the evidence floor.' + gateNote + providerNote + ' No picks were padded to reach the target.');
   }
   output.push('');
   output.push('_Player props prefer primary/consensus lines and label alternates. Moneyline confidence is explicitly two-sided no-vig market probability, not an independent team-performance forecast._');
+  if (researchTop.length) {
+    output.push('_Research-only picks are excluded from slips, odds verification and the verified performance ledger._');
+  }
   if (sgpLegs.length) {
     output.push(''); output.push('```sgp'); output.push(JSON.stringify({ legs: sgpLegs })); output.push('```');
   }

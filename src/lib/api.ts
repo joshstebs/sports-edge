@@ -6,6 +6,28 @@ export interface HealthInfo {
   version?: string;
 }
 
+export interface LedgerSourceStatus {
+  available?: boolean;
+  backend?: string;
+  durable?: boolean;
+}
+
+export function ledgerSourceStatus(info: HealthInfo | null | undefined): LedgerSourceStatus | null {
+  const ledger = info?.sources?.ledger;
+  return ledger && typeof ledger === 'object' ? ledger as LedgerSourceStatus : null;
+}
+
+/**
+ * User-facing explanation when durable results storage is missing (for example
+ * a Vercel preview without Upstash). Never claims picks were saved.
+ */
+export function storageNoticeForHealth(info: HealthInfo | null | undefined): string | null {
+  const ledger = ledgerSourceStatus(info);
+  if (!ledger) return null;
+  if (ledger.available !== false && ledger.durable !== false) return null;
+  return 'Results storage is not configured on this deployment. Picks stay in this browser and are not saved to the results ledger.';
+}
+
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`Health check returned HTTP ${res.status}`);
@@ -98,9 +120,12 @@ export function displayPropMarket(value: string): string {
   const labels: Record<string, string> = {
     hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
     strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
-    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
-    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards',
+    rushingAttempts: 'Rushing Attempts', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', receivingTargets: 'Receiving Targets',
+    rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Anytime Touchdowns',
     points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    pointsReboundsAssists: 'Points + Rebounds + Assists',
     shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
   };
   return labels[value] ?? value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');

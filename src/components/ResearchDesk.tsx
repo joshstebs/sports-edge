@@ -6,8 +6,8 @@ import PlayerHeadshot from './PlayerHeadshot';
 import PropTrendChart from './PropTrendChart';
 
 const MARKETS: Record<string, string[]> = {
-  NFL: ['passingYards', 'passingTouchdowns', 'rushingYards', 'receivingYards', 'receptions'],
-  NBA: ['points', 'rebounds', 'assists', 'threePointersMade'],
+  NFL: ['passingYards', 'passingTouchdowns', 'rushingYards', 'rushingAttempts', 'receivingYards', 'receptions', 'touchdowns'],
+  NBA: ['points', 'rebounds', 'assists', 'threePointersMade', 'pointsReboundsAssists'],
   NHL: ['shotsOnGoal', 'goals', 'assists', 'saves'],
   MLB: ['hits', 'totalBases', 'homeRuns', 'rbi', 'runs', 'strikeouts', 'outsRecorded'],
 };

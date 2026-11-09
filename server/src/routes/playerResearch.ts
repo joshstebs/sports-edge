@@ -3,6 +3,7 @@ import * as espn from '../providers/espn.js';
 import * as mlb from '../providers/mlbStatsApi.js';
 import { parseSportKey } from '../providers/playerAvailability.js';
 import { espnObservation, mlbObservation, normalizeMarket } from '../models/playerPropModel.js';
+import { minutesFromStats } from '../llm/fastSlateScreenerTool.js';
 
 export const playerResearchRouter = Router();
 
@@ -80,6 +81,11 @@ playerResearchRouter.get('/player-research', async (req: Request, res: Response)
     const observations = log.games.flatMap((game) => {
       const value = espnObservation(sport, market, game.stats);
       if (value == null || !Number.isFinite(value)) return [];
+      // Zero-minute NBA rows are DNPs, not played games.
+      if (sport === 'nba') {
+        const minutes = minutesFromStats(game.stats ?? {});
+        if (minutes != null && minutes <= 0) return [];
+      }
       return [{
         date: game.gameDate || null,
         value,

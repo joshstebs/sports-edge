@@ -19,6 +19,7 @@ interface ParlaySlipProps {
   onSave?: () => void;
   unsavedCount?: number;
   saveStatus?: SlipSaveStatus;
+  storageNotice?: string | null;
   className?: string;
 }
 
@@ -56,6 +57,7 @@ export default function ParlaySlip({
   onSave,
   unsavedCount = legs.length,
   saveStatus = { state: 'idle' },
+  storageNotice = null,
   className = '',
 }: ParlaySlipProps) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
@@ -274,6 +276,11 @@ export default function ParlaySlip({
               {saveStatus.message ?? 'Saves to the results ledger. It does not place a wager.'}
             </p>
           </>
+        ) : null}
+        {storageNotice ? (
+          <p role="status" className="rounded border border-warn/25 bg-warn/5 px-2 py-1 text-[9px] leading-snug text-warn">
+            {storageNotice}
+          </p>
         ) : null}
         <p className="text-[9px] leading-snug text-frost2/65">Parlays amplify variance. Size in fractional units.</p>
       </div>

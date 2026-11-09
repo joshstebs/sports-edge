@@ -3,6 +3,7 @@
 import { Router, Request, Response } from 'express';
 import { SYSTEM_PROMPT, BET_GENERATION_ENGINE_RULES } from '../prompt/systemPrompt.js';
 import { llmConfig, runAgent, deterministicScreenerCalls, ChatMessage } from '../llm/chatClient.js';
+import { renderScreenerSummaryBlocks, type ScreenerMeta } from '../llm/screenerRenderer.js';
 import { getToolSchemas } from '../llm/toolRegistry.js';
 import { addPrediction, learningPromptBlock, loadModelEvidence, type ModelEvidence } from '../lib/predictionStore.js';
 import {
@@ -267,6 +268,126 @@ async function filterRecommendationLegs(
   return { legs: checked.filter((leg): leg is any => leg !== null), blocked };
 }
 
+function displayKeyPart(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function isDisplayGameMarket(candidate: any): boolean {
+  return candidate?.candidateType === 'game_market'
+    || candidate?.entityType === 'team'
+    || String(candidate?.market ?? '').toLowerCase() === 'moneyline';
+}
+
+/** Stable identity for a screener candidate, matching recommendationLegDisplayKey. */
+export function screenerCandidateDisplayKey(candidate: any): string {
+  const eventId = displayKeyPart(candidate?.eventId ?? candidate?.gamePk);
+  if (isDisplayGameMarket(candidate)) {
+    return ['team', displayKeyPart(candidate?.team), eventId].join('|');
+  }
+  const line = candidate?.marketLine ?? candidate?.suggestedLine;
+  return [
+    'prop',
+    displayKeyPart(candidate?.player),
+    displayKeyPart(normalizeMarket(String(candidate?.market ?? ''))),
+    displayKeyPart(candidate?.side),
+    displayKeyPart(line),
+    eventId,
+  ].join('|');
+}
+
+/** Stable identity for a finalized recommendation leg, matching the screener row. */
+export function recommendationLegDisplayKey(leg: any): string {
+  const entity = displayKeyPart(leg?.entity_type);
+  const eventId = displayKeyPart(leg?.event_id ?? leg?.eventId ?? leg?.gamePk);
+  if (entity === 'team' || entity === 'game') {
+    return ['team', displayKeyPart(leg?.team), eventId].join('|');
+  }
+  const player = leg?.player_name ?? playerFromSelection(leg?.selection ?? leg?.leg_name);
+  const line = leg?.line ?? leg?.target_line;
+  return [
+    'prop',
+    displayKeyPart(player),
+    displayKeyPart(normalizeMarket(String(leg?.market ?? ''))),
+    displayKeyPart(leg?.side),
+    displayKeyPart(line),
+    eventId,
+  ].join('|');
+}
+
+function isDisplayResearchCandidate(candidate: any): boolean {
+  const sport = String(candidate?.sport ?? '').toLowerCase();
+  if (sport !== 'nba' && sport !== 'nfl') return false;
+  if (isDisplayGameMarket(candidate)) return false;
+  return candidate?.recommendationType === 'research' || candidate?.researchOnly === true;
+}
+
+/** Remove machine-readable blocks; they are delivered as separate SSE events. */
+export function stripStructuredBlocks(text: string): string {
+  const cut = text.search(/\n\s*(?:```sgp|\[PREDICTION_LOG\])/);
+  return (cut >= 0 ? text.slice(0, cut) : text).trimEnd();
+}
+
+function renderQualifiedLegList(legs: any[]): string {
+  const lines = [`**Verified picks — ${legs.length} qualified.**`];
+  legs.forEach((leg, index) => {
+    const odds = Number(leg?.odds);
+    const oddsText = Number.isFinite(odds) && odds !== 0 ? ` · ${odds > 0 ? '+' : ''}${odds}` : '';
+    const confidence = Number(leg?.confidence);
+    const confidenceText = Number.isFinite(confidence) ? ` · model ${Math.round(confidence)}%` : '';
+    const game = String(leg?.game ?? '').trim();
+    const selection = String(leg?.selection ?? leg?.leg_name ?? 'Selection').trim();
+    lines.push(`${index + 1}. **${selection}**${game ? ` (${game})` : ''}${oddsText}${confidenceText}`);
+  });
+  return lines.join('\n');
+}
+
+export interface OrdinaryRecommendationInput {
+  candidates: any[];
+  qualifiedLegs: any[];
+  requested: number;
+  meta?: ScreenerMeta;
+  shortfallReasons?: string[];
+}
+
+/**
+ * Display an ordinary (non-SGP) pick request. Verified survivors and
+ * independently supported research-only rows are rendered together, capped at
+ * the requested count. Incomplete verified coverage is shown with its reasons
+ * instead of withholding the whole answer. Research rows never enter the slip.
+ */
+export function composeOrdinaryRecommendation(input: OrdinaryRecommendationInput): string {
+  const requested = Math.max(1, Math.floor(Number(input.requested) || 1));
+  const candidates = Array.isArray(input.candidates) ? input.candidates : [];
+  const qualified = Array.isArray(input.qualifiedLegs) ? input.qualifiedLegs : [];
+  const qualifiedKeys = new Set(qualified.map(recommendationLegDisplayKey));
+  const survivors = candidates.filter((candidate) => qualifiedKeys.has(screenerCandidateDisplayKey(candidate)));
+  const research = candidates.filter(isDisplayResearchCandidate);
+  const meta = input.meta ?? {};
+
+  let text: string;
+  if (survivors.length || research.length) {
+    text = stripStructuredBlocks(renderScreenerSummaryBlocks([...survivors, ...research], requested, meta));
+  } else if (qualified.length) {
+    // No screener rows were captured (for example a model-authored slip); still
+    // show every qualified verified pick rather than hiding the answer.
+    text = renderQualifiedLegList(qualified);
+  } else {
+    text = '**No picks qualified.** No verified sportsbook pick or explicitly labeled research pick survived the current evidence checks. No data was invented to fill the request.';
+  }
+
+  if (qualified.length < requested) {
+    const reasons = (input.shortfallReasons ?? []).filter(Boolean);
+    const researchShown = Math.min(research.length, Math.max(0, requested - qualified.length));
+    text += `\n\n**Verification shortfall:** ${qualified.length} of ${requested} requested verified picks passed current line, evidence and quality checks${reasons.length ? ` (${reasons.join('; ')})` : ''}.`;
+    if (researchShown) {
+      text += ` ${researchShown} research-only candidate${researchShown === 1 ? '' : 's'} shown separately ${researchShown === 1 ? 'is' : 'are'} not a sportsbook recommendation.`;
+    }
+    text += ' No picks were invented to fill the request.';
+  }
+
+  return text.trim();
+}
+
 chatRouter.post('/chat', async (req: Request, res: Response) => {
   const cfg = llmConfig();
 
@@ -347,7 +468,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   res.on('finish', () => clearTimeout(requestDeadline));
 
   try {
-    sse(res, 'meta', { model: cfg.model, sport, llmConfigured: true, provider: cfg.provider });
+    sse(res, 'meta', { model: cfg.model, sport, llmConfigured: cfg.configured, provider: cfg.provider });
 
     // ── Bet Generation Engine: parse the latest user message for a BetRequest ──
     // This runs deterministically BEFORE the LLM sees any messages.
@@ -402,6 +523,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
 
     const modelEvidence: ModelEvidence[] = await loadModelEvidence();
     const trustedQuoteCandidates: any[] = [];
+    let screenerGateMeta: ScreenerMeta = {};
     const { content: finalText, modelUsed } = await runAgent(cfg, messages, getToolSchemas(), {
       signal: controller.signal,
       // Recommendation text is buffered until the server validates every
@@ -412,6 +534,17 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         if ((ev.name === 'slate_candidate_screener' || ev.name === 'game_market_screener') &&
             ev.status === 'done' && Array.isArray(ev.data?.candidates)) {
           trustedQuoteCandidates.push(...ev.data.candidates);
+        }
+        if (ev.status === 'done' && ev.data?.slate && typeof ev.data.slate === 'object') {
+          const slate = ev.data.slate;
+          const minimumSample = Number(slate.minimumSample);
+          screenerGateMeta = {
+            insufficientSamples: Number(slate.insufficientSamples) || 0,
+            ...(Number.isFinite(minimumSample) ? { minimumSample } : {}),
+            ...(typeof slate.priceProviderAvailable === 'boolean' ? { priceProviderAvailable: slate.priceProviderAvailable } : {}),
+            ...(slate.priceProviderReason ? { priceProviderReason: String(slate.priceProviderReason) } : {}),
+            ...(slate.gates && typeof slate.gates === 'object' ? { gates: slate.gates } : {}),
+          };
         }
         if (ev.name === 'player_prop_model' && ev.status === 'done' && ev.data && Number.isFinite(ev.data.probability)) {
           modelEvidence.push(ev.data as ModelEvidence);
@@ -615,16 +748,21 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       finalizedParlay.lineBlocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
     );
 
+    // Explicit SGP construction stays all-or-nothing. Ordinary pick requests
+    // display every verified survivor (plus research rows) even when the
+    // requested count cannot be fully satisfied.
+    const isExplicitSgp = parlayPolicy.sameGameIntent || /\bparlay(?:s)?\b/i.test(lastUserText);
+    const displayedVerifiedLegs = isExplicitSgp ? finalizedParlay.legs : finalizedParlay.qualified;
     acceptedSgpBlocks.length = 0;
-    if (finalizedParlay.complete) {
-      acceptedSgpBlocks.push({ legs: finalizedParlay.legs });
+    if (displayedVerifiedLegs.length) {
+      acceptedSgpBlocks.push({ legs: displayedVerifiedLegs });
     }
 
     // Store exactly the displayed, verified picks. This prevents invisible or
     // rejected candidates from poisoning the performance history and ensures
     // every displayed selection has one corresponding durable ledger record.
     const selectedLegs = new Set(
-      finalizedParlay.legs.map((leg) => predictionLegKey(leg, { sport })),
+      displayedVerifiedLegs.map((leg) => predictionLegKey(leg, { sport })),
     );
     const preQualityLogCount = filteredLogs.length;
     filteredLogs = filteredLogs
@@ -643,7 +781,11 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const qualityRemovedLogs = preQualityLogCount - filteredLogs.length;
 
     const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
-    if (gateMode === 'strict' && !hadStructuredCandidates && (looksLikeUnstructuredProp || asksForRecommendation)) {
+    // Explicitly labeled research-only statistical picks are not betting
+    // recommendations, so strict unstructured-recommendation mode must allow
+    // them through while still withholding unverified prose picks.
+    const hasLabeledResearch = /Research-only statistical picks|Research Pick — Odds Unavailable/i.test(finalText);
+    if (gateMode === 'strict' && !hadStructuredCandidates && !hasLabeledResearch && (looksLikeUnstructuredProp || asksForRecommendation)) {
       modelBlocked.add('unstructured-player-prop');
     }
 
@@ -652,23 +794,57 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const qualityBlockedLegs = qualityBlocked.size;
     const lineBlockedLegs = lineBlocked.size;
     const requestedShortfall = hadStructuredCandidates ? finalizedParlay.shortfall : 0;
-    if (blockedLegs || modelBlockedLegs || qualityBlockedLegs || lineBlockedLegs || requestedShortfall) {
-      const notes = [
-        blockedLegs ? `${blockedLegs} leg${blockedLegs === 1 ? '' : 's'} failed current roster, injury, or game-day verification` : '',
-        modelBlockedLegs ? `${modelBlockedLegs} leg${modelBlockedLegs === 1 ? '' : 's'} lacked an exact non-D evidence model with verified positive edge` : '',
-        qualityBlockedLegs ? `${qualityBlockedLegs} leg${qualityBlockedLegs === 1 ? '' : 's'} did not meet the parlay quality threshold` : '',
-        lineBlockedLegs ? `${lineBlockedLegs} leg${lineBlockedLegs === 1 ? '' : 's'} lacked a current sportsbook line and price` : '',
-        requestedShortfall ? `only ${finalizedParlay.qualified.length} of ${parlayPolicy.requestedMin} requested legs survived verification` : '',
-      ].filter(Boolean).join('; ');
-      sse(res, 'delta', {
-        text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
-      });
+    const requestedPickCount = Math.max(1, Math.floor(Number(parlayPolicy.requestedMax ?? parlayPolicy.requestedMin ?? 5)));
+    const shortfallReasons = [
+      blockedLegs ? `${blockedLegs} failed current roster, injury, or game-day verification` : '',
+      modelBlockedLegs ? `${modelBlockedLegs} lacked an exact non-D evidence model with verified positive edge` : '',
+      qualityBlockedLegs ? `${qualityBlockedLegs} missed the parlay quality threshold` : '',
+      lineBlockedLegs ? `${lineBlockedLegs} lacked a current sportsbook line and price` : '',
+    ].filter(Boolean);
+    const notes = [
+      blockedLegs ? `${blockedLegs} leg${blockedLegs === 1 ? '' : 's'} failed current roster, injury, or game-day verification` : '',
+      modelBlockedLegs ? `${modelBlockedLegs} leg${modelBlockedLegs === 1 ? '' : 's'} lacked an exact non-D evidence model with verified positive edge` : '',
+      qualityBlockedLegs ? `${qualityBlockedLegs} leg${qualityBlockedLegs === 1 ? '' : 's'} did not meet the parlay quality threshold` : '',
+      lineBlockedLegs ? `${lineBlockedLegs} leg${lineBlockedLegs === 1 ? '' : 's'} lacked a current sportsbook line and price` : '',
+      requestedShortfall ? `only ${finalizedParlay.qualified.length} of ${parlayPolicy.requestedMin} requested legs survived verification` : '',
+    ].filter(Boolean).join('; ');
+    const strictUnstructuredWithheld = gateMode === 'strict'
+      && !hadStructuredCandidates && !hasLabeledResearch
+      && (looksLikeUnstructuredProp || asksForRecommendation);
+
+    if (isExplicitSgp) {
+      // All-or-nothing: an explicit SGP must be complete before any of it is
+      // shown or added to the slip.
+      if (notes) {
+        sse(res, 'delta', {
+          text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
+        });
+      } else if (hadStructuredCandidates) {
+        // Never display model-authored recommendation prose. It can mention
+        // extra picks that were not represented in the machine-readable blocks
+        // and therefore never passed availability/model verification.
+        sse(res, 'delta', {
+          text: recommendationSummary(finalizedParlay.legs),
+        });
+      } else {
+        sse(res, 'delta', { text: finalText });
+      }
     } else if (hadStructuredCandidates) {
-      // Never display model-authored recommendation prose. It can mention
-      // extra picks that were not represented in the machine-readable blocks
-      // and therefore never passed availability/model verification.
+      // Ordinary pick research: show every verified survivor and independently
+      // labeled research row, with an explicit reason when the requested count
+      // could not be met. Research rows never enter the slip or ledger.
       sse(res, 'delta', {
-        text: recommendationSummary(finalizedParlay.legs),
+        text: composeOrdinaryRecommendation({
+          candidates: trustedQuoteCandidates,
+          qualifiedLegs: finalizedParlay.qualified,
+          requested: requestedPickCount,
+          meta: screenerGateMeta,
+          shortfallReasons,
+        }),
+      });
+    } else if (strictUnstructuredWithheld) {
+      sse(res, 'delta', {
+        text: `**Recommendation withheld:** ${notes || 'the response could not be verified'}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
       });
     } else {
       sse(res, 'delta', { text: finalText });
