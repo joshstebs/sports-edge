@@ -2,9 +2,11 @@ import * as espn from './espn.js';
 import * as mlb from './mlbStatsApi.js';
 import * as sharp from './sharpApi.js';
 import * as sgo from './sportsGameOdds.js';
+import * as propline from './propline.js';
 import { canonicalPropMarket, isPlausiblePropLine } from '../models/propLineIntegrity.js';
 
 const ESPN_BASE = 'https://site.web.api.espn.com/apis/site/v2/sports';
+const ESPN_COMMON_BASE = 'https://site.web.api.espn.com/apis/common/v3/sports';
 
 export interface SlateEvent {
   sport: 'mlb' | 'nba' | 'nfl' | 'nhl';
@@ -148,6 +150,90 @@ function positionAllowed(sport: 'mlb' | 'nba' | 'nfl' | 'nhl', position: string 
   return true;
 }
 
+/**
+ * NBA rosters arrive alphabetically, so `slice(0, N)` systematically drafts bench
+ * players and skips stars (a team's best scorer can sort 15th). This index ranks
+ * qualified players by points, rebounds and assists in three bounded reads, and
+ * lets discovery sample a team's actual rotation instead of the A-B-C of the roster.
+ * Returns athleteId -> best rank (lower is better); players absent from the index
+ * keep a large rank and only fill remaining slots.
+ */
+const NBA_PRODUCTION_SORTS = ['offensive.avgPoints', 'general.avgRebounds', 'offensive.avgAssists'];
+const NBA_PRODUCTION_INDEX_TTL = 30 * 60 * 1000;
+let nbaProductionCache: { at: number; ranks: Map<string, number> } | null = null;
+
+async function nbaProductionRanks(): Promise<Map<string, number>> {
+  if (nbaProductionCache && Date.now() - nbaProductionCache.at < NBA_PRODUCTION_INDEX_TTL) {
+    return nbaProductionCache.ranks;
+  }
+  const season = new Date().getUTCMonth() >= 9 ? new Date().getUTCFullYear() + 1 : new Date().getUTCFullYear();
+  const ranks = new Map<string, number>();
+  let any = false;
+  for (const sort of NBA_PRODUCTION_SORTS) {
+    try {
+      const payload = await fetchJson(
+        `${ESPN_COMMON_BASE}/basketball/nba/statistics/byathlete?region=us&lang=en&contentorigin=espn`
+        + `&isqualified=true&page=1&limit=200&sort=${encodeURIComponent(sort)}%3Adesc&season=${season}&seasontype=2`,
+      );
+      const rows: any[] = Array.isArray(payload?.athletes) ? payload.athletes : [];
+      rows.slice(0, 150).forEach((row, index) => {
+        const id = String(row?.athlete?.id ?? '');
+        if (!id) return;
+        const current = ranks.get(id);
+        if (current == null || index < current) ranks.set(id, index);
+      });
+      if (rows.length) any = true;
+    } catch (e) {
+      console.warn(`[slateDiscovery] NBA production index ${sort} unavailable: ${(e as Error).message}`);
+    }
+  }
+  if (!any) return new Map();
+  nbaProductionCache = { at: Date.now(), ranks };
+  return ranks;
+}
+
+/** Order a roster for sampling: production-known players first (best rank wins), then the rest. */
+export function orderRosterForSampling(
+  roster: Array<{ id: string; name: string; position: string | null }>,
+  ranks: Map<string, number> | null,
+): Array<{ id: string; name: string; position: string | null }> {
+  if (!ranks || !ranks.size) return roster;
+  return [...roster].sort((a, b) => {
+    const ra = ranks.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER;
+    const rb = ranks.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb || a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * Football rosters are alphabetical inside one big position group, so a blind slice
+ * can return three quarterbacks and no receivers. Round-robin across positions keeps
+ * every draftable role represented before a second player from any role is taken.
+ */
+export function interleaveByPosition<T extends { position: string | null }>(roster: T[]): T[] {
+  const queues = new Map<string, T[]>();
+  for (const player of roster) {
+    const key = String(player.position ?? 'UNKNOWN').toUpperCase();
+    const queue = queues.get(key) ?? [];
+    queue.push(player);
+    queues.set(key, queue);
+  }
+  // Skill-position roles first; anything else fills the tail.
+  const order = ['QB', 'RB', 'FB', 'WR', 'TE', 'UNKNOWN'];
+  const keys = [...queues.keys()].sort((a, b) => {
+    const ia = order.indexOf(a); const ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  const out: T[] = [];
+  while (keys.some((key) => (queues.get(key)?.length ?? 0) > 0)) {
+    for (const key of keys) {
+      const row = queues.get(key)?.shift();
+      if (row) out.push(row);
+    }
+  }
+  return out;
+}
+
 export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<string> = new Set()): Promise<DiscoveredPlayer[]> {
   if (event.sport === 'mlb') {
     const output: DiscoveredPlayer[] = [];
@@ -249,14 +335,23 @@ export async function discoverPlayersForEvent(event: SlateEvent, exclude: Set<st
 
   const sport = ESPN_MAP[event.sport];
   const output: DiscoveredPlayer[] = [];
+  // NBA rosters are alphabetical; rank by real production so the screener samples
+  // the rotation rather than whoever sorts first. Non-NBA sports keep roster order.
+  const nbaRanks = event.sport === 'nba' ? await nbaProductionRanks() : null;
+  const unusableStatus = /injur|out|suspend|practice|reserve|inactive/i;
   for (const side of ['away', 'home'] as const) {
     const team = event[side];
     const opponent = event[side === 'away' ? 'home' : 'away'];
     if (!team.id) continue;
     try {
-      const roster = (await espnRoster(sport, team.id)).filter((player) => positionAllowed(event.sport, player.position));
-      const perTeam = event.sport === 'nfl' ? 9 : event.sport === 'nhl' ? 10 : 9;
-      for (const player of roster.slice(0, perTeam)) output.push({
+      const roster = (await espnRoster(sport, team.id))
+        .filter((player) => positionAllowed(event.sport, player.position))
+        .filter((player) => !unusableStatus.test(String((player as any).status ?? '')));
+      const perTeam = event.sport === 'nfl' ? 18 : event.sport === 'nhl' ? 10 : 12;
+      const ordered = event.sport === 'nba'
+        ? orderRosterForSampling(roster, nbaRanks)
+        : event.sport === 'nfl' ? interleaveByPosition(roster) : roster;
+      for (const player of ordered.slice(0, perTeam)) output.push({
         id: player.id,
         name: player.name,
         teamId: team.id,
@@ -358,9 +453,10 @@ export async function getSharpSlatePrices(
 export async function getConsensusSlatePrices(
   sport: 'mlb' | 'nba' | 'nfl' | 'nhl',
 ): Promise<SlatePriceResult> {
-  // Start the fallback immediately. A quota-limited SGO request can consume
-  // its entire timeout; a serial SharpAPI walk then misses the screener budget.
+  // Start the fallbacks immediately. A quota-limited SGO request can consume
+  // its entire timeout; serial fallbacks then miss the screener budget.
   const sharpFallback = getSharpSlatePrices(sport);
+  const proplineFallback = propline.getProplineSlatePrices(sport);
   try {
     const result = await sgo.getSgoSlateEvents(sport, 12);
     if (result.available && Array.isArray(result.events)) {
@@ -408,5 +504,9 @@ export async function getConsensusSlatePrices(
   } catch (error) {
     console.warn('[slateDiscovery] SGO consensus props unavailable: ' + (error as Error).message);
   }
+  // PropLine is a full player-prop feed (real lines + prices); prefer it over the
+  // SharpAPI fallback when it answered, and keep SharpAPI as the last resort.
+  const proplineResult = await proplineFallback.catch(() => null);
+  if (proplineResult?.available) return proplineResult as SlatePriceResult;
   return sharpFallback;
 }

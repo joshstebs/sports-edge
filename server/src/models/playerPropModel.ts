@@ -106,6 +106,19 @@ export function isRealisticLine(sport: string, market: string, line: number): bo
 }
 
 /**
+ * A model-derived line is only informative when it sits near the player's own
+ * projection. Snapping a 2.1-rebound guard up to the lowest bookable ladder
+ * (3.5) produces a 90% "under" that reflects the ladder, not the player. Used
+ * only when no real sportsbook line exists; a verified market line is always
+ * authoritative and is never rejected by this check.
+ */
+export function isLineNearProjection(projection: number | null | undefined, line: number, toleranceRatio = 0.25, floor = 0.5): boolean {
+  if (projection == null || !Number.isFinite(projection)) return true;
+  const tolerance = Math.max(floor, Math.abs(projection) * toleranceRatio);
+  return Math.abs(line - projection) <= tolerance + 1e-9;
+}
+
+/**
  * Snap a model-derived line to the nearest bookable line for the market.
  * Unknown markets pass through unchanged. The caller recomputes probability
  * at the snapped line, so a hot hitter (avg 3.2) is evaluated at over 1.5

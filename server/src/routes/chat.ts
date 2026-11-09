@@ -737,9 +737,20 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     // backfilled from verified alternates. A requested multi-leg parlay is
     // all-or-nothing: no partial slip is emitted or written to the ledger.
     const parlayPolicy = parseParlayQualityPolicy(lastUserText);
-    const pooledLegs = acceptedSgpBlocks.flatMap((block) =>
-      Array.isArray(block?.legs) ? block.legs : [],
-    ).map((leg) => applyTrustedQuote(leg, trustedQuoteCandidates));
+    // Pool every structured source. The model is asked for a ```sgp``` block,
+    // but a PREDICTION_LOG-only answer is a real failure mode (seen on mixed
+    // game-line + prop requests); those legs carry the same verified fields and
+    // must reach the same gate instead of being invisible to it.
+    const pooledLegs = [
+      ...acceptedSgpBlocks.flatMap((block) => Array.isArray(block?.legs) ? block.legs : []),
+      ...filteredLogs.flatMap((log) => (Array.isArray(log?.legs) ? log.legs : []).map((leg: any) => ({
+        ...leg,
+        sport: leg?.sport ?? log?.sport,
+        game: leg?.game ?? log?.matchup,
+        game_date: leg?.game_date ?? leg?.eventDate ?? leg?.gameDate ?? log?.game_date,
+        event_id: leg?.event_id ?? leg?.eventId ?? log?.event_id,
+      }))),
+    ].map((leg) => applyTrustedQuote(leg, trustedQuoteCandidates));
     const finalizedParlay = finalizeStructuredParlay(pooledLegs, parlayPolicy);
     const qualityBlocked = new Set(
       finalizedParlay.blocked.map((leg) => legFingerprint(leg, sport ?? leg?.sport)),
@@ -815,7 +826,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     if (isExplicitSgp) {
       // All-or-nothing: an explicit SGP must be complete before any of it is
       // shown or added to the slip.
-      if (notes) {
+      if (notes && !finalizedParlay.complete) {
         sse(res, 'delta', {
           text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
         });

@@ -1,13 +1,14 @@
 import * as mlb from '../providers/mlbStatsApi.js';
 import * as espn from '../providers/espn.js';
+import { normalizeName } from '../providers/http.js';
+import { isBlockingInjuryStatus } from '../models/injuryStatus.js';
 import { discoverPlayersForEvent, discoverSlateEvents, discoverUpcomingNflSlate, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
-import { buildPlayerPropModel, espnObservation, snapToRealisticLine, mlbObservation, minimumSampleFor, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
+import { buildPlayerPropModel, espnObservation, snapToRealisticLine, isLineNearProjection, mlbObservation, minimumSampleFor, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
 import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
 import { hasCurrentMarketLine } from '../lib/parlayQuality.js';
 import { loadLearning } from '../lib/predictionStore.js';
-import { normalizeName } from '../providers/http.js';
 import type { ToolDef, ToolOutcome } from './tools.js';
 
 const ESPN_MAP: Record<Exclude<ModelSport, 'mlb'>, espn.EspnSport> = {
@@ -51,7 +52,9 @@ function requestedDate(value: unknown): string {
 }
 function usableEvent(status: string | null): boolean {
   const value = String(status ?? '').toLowerCase();
-  return !['final', 'completed', 'postponed', 'canceled', 'cancelled'].some((token) => value.includes(token));
+  // A game already underway is not a place to place a pre-game prop: its markets are
+  // closed or moved. Exclude in-progress/halftime as well as terminal states.
+  return !['final', 'completed', 'postponed', 'canceled', 'cancelled', 'in_progress', 'in progress', 'halftime', 'delayed', 'suspended', 'rained out'].some((token) => value.includes(token));
 }
 function requestedSide(value: unknown): RequestedSide | null {
   const side = String(value ?? '').trim().toLowerCase();
@@ -557,11 +560,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Pull a wider pool for market/side-specific requests. Filtering to one market
   // or one direction naturally removes many generic top candidates, so screen
   // enough distinct athletes to have a fair chance of satisfying 5-6 pick asks.
-  const defaultPlayers = sameGame ? Math.max(16, requested * 3)
-    : constrained ? Math.max(12, requested * 3)
-      : (sport === 'nba' || sport === 'nfl') ? Math.max(12, requested * 3)
-        : Math.max(8, requested * 2);
-  const maxPlayersCap = sameGame || constrained || sport === 'nba' || sport === 'nfl' ? 22 : 14;
+  // The system prompt requires roughly 4-5N players; the old 2N cap made that
+  // instruction impossible to obey and is the main cause of short pick lists.
+  const defaultPlayers = sameGame
+    ? Math.max(20, requested * 5)
+    : constrained ? Math.max(20, requested * 5) : Math.max(24, requested * 5);
+  const maxPlayersCap = sameGame ? 36 : 40;
   const maxPlayers = Math.min(maxPlayersCap, Math.max(8, Number(args?.maxPlayers ?? defaultPlayers) || defaultPlayers));
   const minConfidence = Math.max(0.5, Math.min(0.75, Number(args?.minConfidence ?? 0.54) || 0.54));
   const excludeNames = new Set<string>(
@@ -654,6 +658,11 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       const values = rows.map((row) => row.value);
       // Snap to the nearest bookable line (same contract as universal screener).
       const line = snapToRealisticLine(sport, market, halfLine(rows));
+      // Without a real market line, a snapped line far from the player's own
+      // projection invents an easy side (2.1 RPG -> "under 3.5"). Skip it; the
+      // no-odds path must stay honest about what the ladder can support.
+      const projection = rows.reduce((sum, row) => sum + row.value, 0) / rows.length;
+      if (!isLineNearProjection(projection, line)) continue;
       const calibration = calibrationFor(learning, sport, normalizeMarket(market));
       const sides: RequestedSide[] = sideFilter ? [sideFilter] : ['over', 'under'];
       const models = sides
@@ -701,6 +710,24 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     .sort((a, b) => (b.model.probability ?? 0) - (a.model.probability ?? 0) || b.model.sampleSize - a.model.sampleSize);
   gates.belowConfidence = evaluated.length - qualified.length;
 
+  // Screen OUT the players the final availability gate would reject anyway.
+  // One cached league-injury read prevents the model from spending its six
+  // requested slots on Questionable/Day-To-Day names (verified 2026-11-09:
+  // a 6-leg NBA request failed at 5/6 because the model picked a Day-To-Day
+  // player the screener had already ranked first).
+  const injuryByName = new Map<string, string>();
+  try {
+    const report = await espn.getLeagueInjuries(ESPN_MAP[sport as Exclude<ModelSport, 'mlb'>] ?? 'basketball/nba');
+    if (report.available) {
+      for (const injury of report.injuries) {
+        if (isBlockingInjuryStatus(injury.status)) {
+          injuryByName.set(normalizeName(injury.playerName), String(injury.status ?? 'injured'));
+        }
+      }
+    }
+  } catch { /* the final gate still fails closed; screening proceeds */ }
+  const healthyQualified = qualified.filter(({ player }) => !injuryByName.has(normalizeName(player.name)));
+
   const inLineup = (player: DiscoveredPlayer) => player.lineupSlot != null || player.probablePitcher;
 
   const lineupPosted = evaluated.some(({ player }) => inLineup(player));
@@ -737,7 +764,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     || (b.model.probability ?? 0) - (a.model.probability ?? 0)
   );
   const seenPlayer = new Set<string>();
-  const deduped = qualified.filter(({ player }) => {
+  const deduped = healthyQualified.filter(({ player }) => {
     const key = `${player.name}|${player.team}`.toLowerCase();
     if (seenPlayer.has(key)) return false;
     seenPlayer.add(key);
@@ -745,7 +772,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   });
   gates.duplicatePlayer = qualified.length - deduped.length;
 
-  const candidates = deduped.slice(0, Math.max(12, requested * 2)).map(({ player, market, line, model, profile, observations, gameRows, calibration, injury, history }) => {
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).flatMap(({ player, market, line, model, profile, observations, gameRows, calibration, injury, history }) => {
     const live = sharpline(player.name, market);
     const liveLine = live != null && Number.isFinite(Number(live.line)) ? Number(live.line) : null;
     const liveEvaluation = liveLine == null ? null : evaluatePropLine({
@@ -753,6 +780,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       calibration, requestedSide: sideFilter, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
     });
     const finalModel = (liveEvaluation?.chosen ?? model)!;
+    // Re-apply the quality gate AFTER re-scoring at the live line. A candidate
+    // that qualified at the screening line can fall to a D grade or below the
+    // confidence floor at the book's actual number; showing it anyway would
+    // recommend a leg the screen itself rejects.
+    if (!finalModel?.available || finalModel.probability == null || !finalModel.grade
+      || finalModel.grade === 'D' || finalModel.probability < minConfidence) return [];
     const finalLine = liveLine ?? line;
     const recentValues = observations.map((row: HistoricalObservation) => row.value);
     const hitRateAtLine = (windowSize: number): number | null | undefined => {
@@ -841,7 +874,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     // A live sportsbook line is authoritative: both sides are re-scored at
     // that line, and positive value gets priority over the raw-probability
     // under bias that appears when the screening line is higher than the book.
-    return {
+    return [{
       sport, modelVersion: finalModel.modelVersion, source: profile.sources?.[0] ?? 'unknown',
       player: player.name, team: player.team, opponent: player.opponent, eventId: player.eventId, eventDate: player.eventDate,
       gameDate: player.eventDate,
@@ -917,7 +950,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
         : liveLine == null
           ? 'Model screening line only; no verified sportsbook offer was found.'
           : 'Both sides re-scored at the exact current sportsbook line; verify final availability before treating as a recommendation.',
-    };
+    }];
   });
   // Rank verified-price candidates first (either side has a real edge — matches the
   // "verified lines" requirement), then by chosen-side edge, then confidence.
