@@ -2,6 +2,7 @@
 // Fetches live odds from The Odds API and other sources, normalizes markets, finds best lines
 
 import { z } from 'zod';
+import { fetchRundownOdds } from './rundown.js';
 
 export interface OddsMarket {
   market: string;        // e.g., 'player_hits', 'player_home_runs', 'player_total_bases'
@@ -295,10 +296,45 @@ export async function getOdds(config: OddsProviderConfig): Promise<GameOdds[]> {
   if (cached && cached.expires > Date.now()) {
     return cached.data;
   }
-  
-  const data = await fetchTheOddsAPI(config);
+
+  const [primary, rundown] = await Promise.all([
+    fetchTheOddsAPI(config).catch(() => [] as GameOdds[]),
+    fetchRundownOdds(config.sports.map(s => s.toLowerCase())).catch(() => [] as GameOdds[]),
+  ]);
+  const data = mergeGameOdds(primary, rundown);
   oddsCache.set(cacheKey, { data, expires: Date.now() + CACHE_TTL });
   return data;
+}
+
+/**
+ * Merge a secondary game-line source into the primary one.
+ *
+ * Primary values win for every field it supplies; the secondary only fills gaps
+ * and contributes book names, so a partial outage at either provider still
+ * leaves a usable board. Keyed on the team pair because event ids are not shared
+ * across providers.
+ */
+function mergeGameOdds(primary: GameOdds[], secondary: GameOdds[]): GameOdds[] {
+  const key = (g: GameOdds) => `${g.awayTeam}|${g.homeTeam}`.toLowerCase().replace(/\s+/g, ' ').trim();
+  const merged = new Map<string, GameOdds>();
+  for (const game of primary) merged.set(key(game), game);
+  for (const game of secondary) {
+    const existing = merged.get(key(game));
+    if (!existing) {
+      merged.set(key(game), game);
+      continue;
+    }
+    merged.set(key(game), {
+      ...existing,
+      moneyline: existing.moneyline?.home && existing.moneyline?.away ? existing.moneyline : game.moneyline,
+      spread: existing.spread?.line != null ? existing.spread : game.spread,
+      total: existing.total?.line != null ? existing.total : game.total,
+      playerProps: existing.playerProps?.length ? existing.playerProps : game.playerProps,
+      books: [...new Set([...(existing.books ?? []), ...(game.books ?? [])])],
+      lastUpdated: existing.lastUpdated || game.lastUpdated,
+    });
+  }
+  return [...merged.values()];
 }
 
 /** Enrich candidate pool with live odds */
