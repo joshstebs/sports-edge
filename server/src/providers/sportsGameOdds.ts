@@ -265,6 +265,7 @@ export interface SgoSlateEvent {
 function displayPlayerName(playerId: string): string {
   return playerId
     .replace(/_\d+_(?:MLB|NBA|NFL|NHL)$/i, '')
+    .replace(/_(?:MLB|NBA|NFL|NHL)$/i, '')
     .split('_')
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())

@@ -416,7 +416,7 @@ export async function getSharpSlatePrices(
       const market = canonicalPropMarket(marketRow.market, sport);
       const line = Number(marketRow.line);
       if (!market || !isPlausiblePropLine(sport, market, line)) continue;
-      const key = String(marketRow.player).toLowerCase() + '|' + market;
+      const key = String(marketRow.player).toLowerCase() + '|' + market.toLowerCase();
       const price: SharpPrice = {
         player: marketRow.player, market, line,
         over: marketRow.over ?? null, under: marketRow.under ?? null,
@@ -467,7 +467,7 @@ export async function getConsensusSlatePrices(
           const market = canonicalPropMarket(prop.market, sport);
           const line = Number(prop.line);
           if (!market || !isPlausiblePropLine(sport, market, line)) continue;
-          const key = String(prop.playerName).toLowerCase() + '|' + market;
+          const key = String(prop.playerName).toLowerCase() + '|' + market.toLowerCase();
           const lineMap = grouped.get(key) ?? new Map<number, SharpPrice>();
           const current = lineMap.get(line) ?? {
             player: prop.playerName, market, line, over: null, under: null,

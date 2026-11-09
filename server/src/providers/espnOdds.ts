@@ -3,6 +3,13 @@
 // odds, but the per-event SUMMARY endpoint carries a `pickcenter` array with
 // DraftKings odds: moneyline (open/close), point spread / runline, total,
 // over/under prices. Keyless. Rate-limit: >=800ms between calls.
+/** ESPN totals arrive as "o236.5"/"u45.5"; strip the side prefix. */
+function espnLineText(value: unknown): string | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  return text.replace(/^[ou]/i, '');
+}
+
 
 const SOURCE = 'site.web.api.espn.com (ESPN summary → DraftKings)';
 const API = 'https://site.web.api.espn.com/apis/site/v2/sports';
@@ -148,7 +155,7 @@ export async function getGameOdds(
         : null,
       total: tot
         ? {
-            line: tot.over?.close?.line ?? null,
+            line: espnLineText(tot.over?.close?.line ?? tot.overUnder ?? null),
             overOdds: tot.over?.close?.odds ?? null,
             underOdds: tot.under?.close?.odds ?? null,
             openLine: tot.over?.open?.line ?? null,
