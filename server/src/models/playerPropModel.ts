@@ -55,7 +55,17 @@ export interface PlayerPropModelResult {
   calibrationApplied?: { n: number; historicalBias: number; adjustment: number } | null;
 }
 
-const MIN_SAMPLE: Record<ModelSport, number> = { mlb: 8, nfl: 5, nba: 8, nhl: 8 };
+/**
+ * Minimum official recent-game sample required before the model emits a
+ * probability. Exported so the screener's history/fallback gates use the same
+ * per-sport floor instead of duplicated hard-coded values.
+ */
+export const MIN_SAMPLE: Readonly<Record<ModelSport, number>> = { mlb: 8, nfl: 5, nba: 8, nhl: 8 };
+
+/** Per-sport model minimum; single source of truth for model + screener. */
+export function minimumSampleFor(sport: ModelSport): number {
+  return MIN_SAMPLE[sport];
+}
 
 /**
  * Realistic bookable lines per sport+market. Model-derived suggestion lines
@@ -74,13 +84,17 @@ const REALISTIC_LINES: Record<string, number[]> = {
   'mlb|strikeouts': [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5],
   'mlb|outsRecorded': [15.5, 16.5, 17.5, 18.5],
   'nfl|passingYards': [175.5, 199.5, 209.5, 214.5, 219.5, 224.5, 229.5, 234.5, 239.5, 244.5, 249.5, 254.5, 264.5, 274.5],
+  'nfl|passingTouchdowns': [0.5, 1.5, 2.5, 3.5, 4.5],
   'nfl|rushingYards': [29.5, 39.5, 49.5, 59.5, 69.5, 79.5, 89.5, 99.5, 109.5],
+  'nfl|rushingAttempts': [4.5, 7.5, 9.5, 11.5, 13.5, 15.5, 17.5, 19.5, 21.5, 24.5],
   'nfl|receivingYards': [19.5, 29.5, 39.5, 49.5, 59.5, 69.5, 79.5, 89.5, 99.5],
   'nfl|receptions': [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5],
+  'nfl|touchdowns': [0.5],
   'nba|points': [9.5, 14.5, 19.5, 24.5, 29.5, 34.5],
   'nba|rebounds': [3.5, 5.5, 7.5, 9.5, 11.5, 13.5],
   'nba|assists': [1.5, 3.5, 5.5, 7.5, 9.5, 11.5],
   'nba|threePointersMade': [0.5, 1.5, 2.5, 3.5, 4.5],
+  'nba|pointsReboundsAssists': [9.5, 14.5, 19.5, 24.5, 29.5, 34.5, 39.5, 44.5, 49.5],
   'nhl|goals': [0.5],
   'nhl|saves': [19.5, 24.5, 29.5],
 };
@@ -138,7 +152,8 @@ export function normalizeMarket(value: string): string {
     pointsrebounds: 'pointsRebounds', pr: 'pointsRebounds', pointsassists: 'pointsAssists', pa: 'pointsAssists',
     reboundsassists: 'reboundsAssists', ra: 'reboundsAssists', blocks: 'blocks', steals: 'steals',
     passingyards: 'passingYards', passingtouchdowns: 'passingTouchdowns', passingtds: 'passingTouchdowns',
-    rushingyards: 'rushingYards', receivingyards: 'receivingYards', receptions: 'receptions',
+    rushingyards: 'rushingYards', rushingattempts: 'rushingAttempts', carries: 'rushingAttempts', carry: 'rushingAttempts',
+    receivingyards: 'receivingYards', receptions: 'receptions', receivingtargets: 'receivingTargets', targets: 'receivingTargets',
     rushingreceivingyards: 'rushingReceivingYards', rushreceivingyards: 'rushingReceivingYards',
     anytimetouchdown: 'touchdowns', touchdowns: 'touchdowns',
     goal: 'goals', goals: 'goals', shot: 'shotsOnGoal', shots: 'shotsOnGoal', shotsongoal: 'shotsOnGoal',
@@ -265,7 +280,9 @@ export function espnObservation(sport: Exclude<ModelSport, 'mlb'>, marketInput: 
       ? touchdownParts.reduce<number>((total, value) => total + (value ?? 0), 0) : null;
     const map: Record<string, number | null> = {
       passingYards: numeric(stats, 'passingYards'), passingTouchdowns: numeric(stats, 'passingTouchdowns'),
-      rushingYards: rushing, receivingYards: receiving, receptions: numeric(stats, 'receptions'),
+      rushingYards: rushing, rushingAttempts: numeric(stats, 'rushingAttempts', 'carries'),
+      receivingYards: receiving, receptions: numeric(stats, 'receptions'),
+      receivingTargets: numeric(stats, 'receivingTargets', 'targets'),
       rushingReceivingYards: sum(rushing, receiving), touchdowns,
     };
     return map[market] ?? null;

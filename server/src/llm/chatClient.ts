@@ -5,9 +5,9 @@
 // turn execute concurrently, then the model receives results in original order.
 
 import { executeToolBatch, type BatchToolCall } from './toolBatch.js';
-import { renderScreenerSummaryBlocks } from './screenerRenderer.js';
+import { renderScreenerSummaryBlocks, type ScreenerMeta } from './screenerRenderer.js';
 import { resolveSlateDate } from './slateDate.js';
-import { hasCurrentMarketLine } from '../lib/parlayQuality.js';
+import { hasCurrentMarketLine, parseParlayQualityPolicy } from '../lib/parlayQuality.js';
 
 export interface LlmConfig {
   configured: boolean;
@@ -105,22 +105,35 @@ function clampRequestedPicks(value: number): number | undefined {
 }
 
 function inferRequestedPicks(text: string): number | undefined {
+  // The parlay policy already understands lookback windows ("last 5 and 10
+  // games") and hyphenated qualifiers, so it is the primary source of truth for
+  // requested selection counts. Tool arguments must agree with the final gate.
+  const policy = parseParlayQualityPolicy(text);
+  if (policy.requestedMax != null) return clampRequestedPicks(policy.requestedMax);
+  if (policy.requestedMin != null) return clampRequestedPicks(policy.requestedMin);
+
+  // Market names can sit between the count and the unit word ("5 NFL passing
+  // yards props"), which the parlay policy intentionally ignores. Keep the
+  // older sport-qualified pattern as a fallback, with lookback windows removed
+  // so "last 5 and 10 games" is never read as a pick count.
   const numberWords: Record<string, string> = {
     one: '1', two: '2', three: '3', four: '4', five: '5',
     six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
   };
-  const normalized = text.toLowerCase().replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
-    (word) => numberWords[word],
-  );
-  const range = normalized.match(/\b(\d{1,2})\s*(?:or|to|-|–|—)\s*(\d{1,2})\s+(?:good\s+)?(?:one|ones|pick|picks|prop|props|bet|bets|leg|legs|player|players)\b/i);
-  if (range) return clampRequestedPicks(Math.max(Number(range[1]), Number(range[2])));
-  const giveMe = normalized.match(/\b(?:give|show|find|send)\s+me\s+(\d{1,2})(?:\s*(?:or|to|-|–|—)\s*(\d{1,2}))?/i);
-  if (giveMe) return clampRequestedPicks(Math.max(Number(giveMe[1]), Number(giveMe[2] ?? giveMe[1])));
+  const normalized = text.toLowerCase()
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+    .replace(/([a-z])-(?=[a-z])/g, '$1 ')
+    .replace(
+      /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+      (word) => numberWords[word],
+    )
+    .replace(
+      /\b(?:last|past|previous|recent|trailing|prior|latest)\s+\d{1,2}(?:\s*(?:,|and|&|\+|\/|or)\s*\d{1,2})*\s+(?:games?|matches?|outings?|starts?|events?|appearances?)\b/g,
+      ' ',
+    )
+    .replace(/\bl\s*\d{1,2}\b/g, ' ');
   const sportQualified = normalized.match(/\b(\d{1,2})\s*(?:mlb|nfl|nba|nhl|baseball|football|basketball|hockey)\s+(?:[a-z]+\s+){0,4}(?:pick|picks|prop|props|bet|bets|play|plays)\b/i);
   if (sportQualified) return clampRequestedPicks(Number(sportQualified[1]));
-  const explicit = normalized.match(/\b(\d{1,2})\s*(?:leg|legs|pick|picks|player|players|prop|props|bet|bets|play|plays)\b/i);
-  if (explicit) return clampRequestedPicks(Number(explicit[1]));
   return undefined;
 }
 
@@ -143,6 +156,7 @@ export function inferScreenerIntent(text: string): ScreenerIntent {
     [/\bpassing\s*yards?\b/i, 'passingYards', 'nfl'],
     [/\bpassing\s*(?:touchdowns?|tds?)\b/i, 'passingTouchdowns', 'nfl'],
     [/\brushing\s*(?:\+|and)?\s*receiving\s*yards?\b/i, 'rushingReceivingYards', 'nfl'],
+    [/\brushing\s*(?:attempts?|carries?)\b/i, 'rushingAttempts', 'nfl'],
     [/\brushing\s*yards?\b/i, 'rushingYards', 'nfl'],
     [/\breceiving\s*yards?\b/i, 'receivingYards', 'nfl'],
     [/\breceptions?\b/i, 'receptions', 'nfl'],
@@ -152,12 +166,30 @@ export function inferScreenerIntent(text: string): ScreenerIntent {
     [/\bgoalie\s*saves?\b|\bsaves?\b/i, 'saves', 'nhl'],
     [/\bpoints?\b/i, 'points', 'nba'],
   ];
-  for (const [pattern, market, sport] of marketPatterns) {
-    if (!pattern.test(text)) continue;
-    intent.market = market;
-    intent.requestKind = 'player_prop';
-    if (sport) intent.sport = sport;
-    break;
+  // NBA-specific markets that must not be inferred for other sports (e.g. NHL assists).
+  if (!intent.market && /\bnba\b|\bbasketball\b/i.test(lower)) {
+    const nbaMarkets: Array<[RegExp, string]> = [
+      [/\b(?:points?|pts)\s*\+\s*rebounds?\s*\+\s*assists?\b|\bpra\b/i, 'pointsReboundsAssists'],
+      [/\b(?:made\s+)?(?:three[- ]?pointers?|threes?|3pm)\b/i, 'threePointersMade'],
+      [/\bassists?\b/i, 'assists'],
+    ];
+    for (const [pattern, market] of nbaMarkets) {
+      if (!pattern.test(text)) continue;
+      intent.market = market;
+      intent.requestKind = 'player_prop';
+      intent.sport = 'nba';
+      break;
+    }
+  }
+
+  if (!intent.market) {
+    for (const [pattern, market, sport] of marketPatterns) {
+      if (!pattern.test(text)) continue;
+      intent.market = market;
+      intent.requestKind = 'player_prop';
+      if (sport) intent.sport = sport;
+      break;
+    }
   }
 
   const explicitMoneyline = /\bmoney\s*line\b|\bmoneyline\b|\bh2h\b|(?:^|\s)ml(?:\s|$|s\b)/i.test(text);
@@ -469,20 +501,11 @@ export async function runAgent(
       onEvent: (event) => cb.onToolEvent?.({ name: event.name, status: event.status, summary: event.summary, data: event.data }),
     });
     for (const result of results) msgs.push({ role: 'tool', tool_call_id: result.call.id, content: result.outcome.json });
-    // Research-only, model-derived lines must not crowd real offers out of the
-    // bounded structured pool before the final route checks run.
-    const candidates = extractScreenerCandidates(msgs).filter((candidate) => {
-      const game = candidate.candidateType === 'game_market';
-      return hasCurrentMarketLine({
-        entity_type: game ? 'team' : 'player', sport: candidate.sport,
-        market: candidate.market, side: candidate.side, line: candidate.marketLine,
-        odds: game ? candidate.marketOdds : candidate.side === 'under' ? candidate.marketOddsUnder : candidate.marketOddsOver,
-        line_source: candidate.marketSource, line_checked_at: candidate.marketCheckedAt,
-      });
-    });
+    const screenerMeta = extractScreenerMeta(msgs);
+    const candidates = selectDisplayableCandidates(extractScreenerCandidates(msgs));
     const content = candidates.length
-      ? renderScreenerSummaryBlocks(candidates, requestedCountHint(msgs))
-      : '**No verified candidates found.** No current sportsbook offers were returned that can be recommended. ' + results.map((result) => result.outcome.summary).join('; ');
+      ? renderScreenerSummaryBlocks(candidates, requestedCountHint(msgs), screenerMeta)
+      : '**No picks available.** ' + results.map((result) => result.outcome.summary).join('; ');
     cb.onDelta?.(content);
     return { content, iterations: 0, modelUsed: 'deterministic-live-data' };
   }
@@ -634,9 +657,9 @@ export async function runAgent(
     // take 30s+ to write a 5-leg prose answer) and blows the 60s function budget
     // after the ~20s screener. We only fall back to the LLM closer if we have no
     // screener data to render. This guarantees the user sees real picks.
-    const screenerData = extractScreenerCandidates(msgs);
+    const screenerData = selectDisplayableCandidates(extractScreenerCandidates(msgs));
     if (screenerData.length) {
-      finalText = renderScreenerSummaryBlocks(screenerData, requestedCountHint(msgs));
+      finalText = renderScreenerSummaryBlocks(screenerData, requestedCountHint(msgs), extractScreenerMeta(msgs));
       cb.onDelta?.(finalText);
       modelUsed = modelUsed ?? 'server-template';
     } else {
@@ -652,6 +675,34 @@ export async function runAgent(
   }
 
   return { content: finalText, iterations: iterations + 1, modelUsed };
+}
+
+/**
+ * Decide which screener rows may be displayed. A row needs a current, verified
+ * sportsbook line/price. NBA player props are the one exception: with no live
+ * odds provider they are still shown as explicitly labeled research-only
+ * statistical picks. Applies to both the deterministic and model-driven paths so
+ * an unpriced non-NBA row can never be presented as a verified candidate.
+ */
+export function selectDisplayableCandidates(candidates: any[]): any[] {
+  return candidates.filter((candidate) => {
+    const game = candidate.candidateType === 'game_market';
+    const priced = hasCurrentMarketLine({
+      entity_type: game ? 'team' : 'player', sport: candidate.sport,
+      market: candidate.market, side: candidate.side, line: candidate.marketLine,
+      odds: game ? candidate.marketOdds : candidate.side === 'under' ? candidate.marketOddsUnder : candidate.marketOddsOver,
+      line_source: candidate.marketSource, line_checked_at: candidate.marketCheckedAt,
+    });
+    if (priced) return true;
+    // Research-only, model-derived lines must not crowd real offers out of the
+    // bounded structured pool before the final route checks run. NBA and NFL
+    // player props remain displayable only when the screener explicitly labeled
+    // them research-only; an unpriced legacy row stays fail-closed.
+    const sport = String(candidate.sport ?? '').toLowerCase();
+    return !game
+      && (sport === 'nba' || sport === 'nfl')
+      && (candidate.recommendationType === 'research' || candidate.researchOnly === true);
+  });
 }
 
 /** Pull the candidates array out of a slate_candidate_screener tool result. */
@@ -680,6 +731,41 @@ function extractScreenerCandidates(msgs: ChatMessage[]): any[] {
       return true;
     })
     .sort((a, b) => Number(b?.confidencePct ?? 0) - Number(a?.confidencePct ?? 0));
+}
+
+/**
+ * Pull sample-size metadata out of the most recent screener payload that
+ * actually carries it. A mixed request runs the prop screener and the game
+ * screener together; the game payload also has a `slate` object but has no
+ * sample fields, so returning the first `slate` would silently drop the
+ * insufficient-sample shortfall explanation.
+ */
+function extractScreenerMeta(msgs: ChatMessage[]): ScreenerMeta {
+  let found: ScreenerMeta = {};
+  for (const m of msgs) {
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    try {
+      const parsed = JSON.parse(m.content);
+      if (parsed?.slate && typeof parsed.slate === 'object') {
+        const slate = parsed.slate;
+        const minimumSample = Number(slate.minimumSample);
+        const insufficientSamples = Number(slate.insufficientSamples) || 0;
+        const hasGates = slate.gates && typeof slate.gates === 'object';
+        // Later payloads win so a follow-up screener call overrides earlier
+        // (non-sample) game-market metadata rather than freezing on it.
+        if (Number.isFinite(minimumSample) || insufficientSamples > 0 || hasGates) {
+          found = {
+            insufficientSamples,
+            ...(Number.isFinite(minimumSample) ? { minimumSample } : {}),
+            ...(typeof slate.priceProviderAvailable === 'boolean' ? { priceProviderAvailable: slate.priceProviderAvailable } : {}),
+            ...(slate.priceProviderReason ? { priceProviderReason: String(slate.priceProviderReason) } : {}),
+            ...(hasGates ? { gates: slate.gates } : {}),
+          };
+        }
+      }
+    } catch { /* not a screener payload */ }
+  }
+  return found;
 }
 
 /**

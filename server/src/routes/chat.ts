@@ -347,7 +347,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   res.on('finish', () => clearTimeout(requestDeadline));
 
   try {
-    sse(res, 'meta', { model: cfg.model, sport, llmConfigured: true, provider: cfg.provider });
+    sse(res, 'meta', { model: cfg.model, sport, llmConfigured: cfg.configured, provider: cfg.provider });
 
     // ── Bet Generation Engine: parse the latest user message for a BetRequest ──
     // This runs deterministically BEFORE the LLM sees any messages.
@@ -643,7 +643,11 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     const qualityRemovedLogs = preQualityLogCount - filteredLogs.length;
 
     const gateMode = (process.env.EVIDENCE_GATE ?? 'relaxed').toLowerCase();
-    if (gateMode === 'strict' && !hadStructuredCandidates && (looksLikeUnstructuredProp || asksForRecommendation)) {
+    // Explicitly labeled research-only statistical picks are not betting
+    // recommendations, so strict unstructured-recommendation mode must allow
+    // them through while still withholding unverified prose picks.
+    const hasLabeledResearch = /Research-only statistical picks|Research Pick — Odds Unavailable/i.test(finalText);
+    if (gateMode === 'strict' && !hadStructuredCandidates && !hasLabeledResearch && (looksLikeUnstructuredProp || asksForRecommendation)) {
       modelBlocked.add('unstructured-player-prop');
     }
 

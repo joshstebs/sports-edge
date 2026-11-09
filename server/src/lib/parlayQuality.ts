@@ -48,10 +48,24 @@ export function parseParlayQualityPolicy(text: string): ParlayQualityPolicy {
     one: '1', two: '2', three: '3', four: '4', five: '5',
     six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
   };
-  const normalized = String(text ?? '').toLowerCase().replace(/\b\d{4}-\d{2}-\d{2}\b/g, '').replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
-    (word) => numberWords[word],
-  );
+  const normalized = String(text ?? '').toLowerCase()
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+    // Treat hyphenated compounds as separate words so qualifiers such as
+    // "player-prop" still let "5 ... picks" read as five selections.
+    .replace(/([a-z])-(?=[a-z])/g, '$1 ')
+    .replace(
+      /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/g,
+      (word) => numberWords[word],
+    )
+    // Strip lookback windows before counting selections. "5 picks based on the
+    // last 5 and 10 games" asks for five picks; the 10 is a sample window, not a
+    // requested leg count. A games unit word is required so a count-bearing
+    // phrase like "the last 5 picks" still reads as five selections.
+    .replace(
+      /\b(?:last|past|previous|recent|trailing|prior|latest)\s+\d{1,2}(?:\s*(?:,|and|&|\+|\/|or)\s*\d{1,2})*\s+(?:games?|matches?|outings?|starts?|events?|appearances?)\b/g,
+      ' ',
+    )
+    .replace(/\bl\s*\d{1,2}\b/g, ' ');
   const aggressive = /\b(?:aggressive|high[- ]?risk|long[- ]?shot|lottery|moonshot)\b/i.test(normalized);
   const sameGameIntent = /\b(?:same[- ]?game|sgp)\b/i.test(normalized);
 

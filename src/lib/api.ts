@@ -98,9 +98,12 @@ export function displayPropMarket(value: string): string {
   const labels: Record<string, string> = {
     hits: 'Hits', totalBases: 'Total Bases', homeRuns: 'Home Runs', rbi: 'RBIs', runs: 'Runs',
     strikeouts: 'Strikeouts', outsRecorded: 'Outs Recorded', passingYards: 'Passing Yards',
-    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards', receivingYards: 'Receiving Yards',
-    receptions: 'Receptions', rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Touchdowns',
+    passingTouchdowns: 'Passing Touchdowns', rushingYards: 'Rushing Yards',
+    rushingAttempts: 'Rushing Attempts', receivingYards: 'Receiving Yards',
+    receptions: 'Receptions', receivingTargets: 'Receiving Targets',
+    rushingReceivingYards: 'Rushing + Receiving Yards', touchdowns: 'Anytime Touchdowns',
     points: 'Points', rebounds: 'Rebounds', assists: 'Assists', threePointersMade: '3-Pointers',
+    pointsReboundsAssists: 'Points + Rebounds + Assists',
     shotsOnGoal: 'Shots on Goal', hockeyPoints: 'Hockey Points', saves: 'Saves', goals: 'Goals',
   };
   return labels[value] ?? value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
