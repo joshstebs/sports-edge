@@ -827,8 +827,22 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       // All-or-nothing: an explicit SGP must be complete before any of it is
       // shown or added to the slip.
       if (notes && !finalizedParlay.complete) {
+        // Show the legs that DID pass verification, without emitting a partial
+        // slip: the user asked for six and must not be left with no information.
+        const qualifiedPreview = finalizedParlay.qualified
+          .slice(0, 6)
+          .map((leg: any) => {
+            const selection = String(leg?.selection ?? leg?.leg_name ?? '').trim();
+            const confidence = leg?.confidence ?? leg?.model_probability;
+            return selection ? `- ${selection}${confidence != null ? ` (model ${confidence}%)` : ''}` : '';
+          })
+          .filter(Boolean)
+          .join('\n');
         sse(res, 'delta', {
-          text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`,
+          text: `**Recommendation withheld:** ${notes}. The unverified recommendation text was not displayed. No partial bet was added to the slip.`
+            + (qualifiedPreview
+              ? `\n\nDefensible legs that did pass verification (not a complete parlay):\n${qualifiedPreview}`
+              : ''),
         });
       } else if (hadStructuredCandidates) {
         // Never display model-authored recommendation prose. It can mention

@@ -258,6 +258,14 @@ function halfLine(rows: HistoricalObservation[]): number {
   if (Number.isInteger(line)) line += 0.5;
   return Math.max(0.5, line);
 }
+/** Binary "did it happen" markets are only bookable as OVER ("anytime TD",
+ * "anytime goal"). Evaluating UNDER 0.5 turns every non-scorer into an
+ * 85-100% research pick and crowds real props out of the requested count. */
+export function sidesForMarket(market: string, sideFilter: RequestedSide | null): RequestedSide[] {
+  if (sideFilter) return [sideFilter];
+  return ['touchdowns', 'goals'].includes(normalizeMarket(market)) ? ['over'] : ['over', 'under'];
+}
+
 function sideHitRate(overRate: number | null | undefined, side: RequestedSide): number | null | undefined {
   if (overRate == null) return overRate;
   return side === 'over' ? overRate : Math.max(0, Math.min(1, 1 - overRate));
@@ -664,7 +672,11 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       const projection = rows.reduce((sum, row) => sum + row.value, 0) / rows.length;
       if (!isLineNearProjection(projection, line)) continue;
       const calibration = calibrationFor(learning, sport, normalizeMarket(market));
-      const sides: RequestedSide[] = sideFilter ? [sideFilter] : ['over', 'under'];
+      // Binary "did it happen" markets are only bookable as OVER ("anytime TD",
+      // "anytime goal"). Evaluating UNDER 0.5 turns every non-scorer into an
+      // 85-100% research pick, which crowds real props out of the requested
+      // count (verified 2026-11-09: 4 of 5 NFL picks were UNDER 0.5 TD).
+      const sides = sidesForMarket(market, sideFilter);
       const models = sides
         .map((side) => buildPlayerPropModel({ sport, market, side, line, observations: rows, source: history.source, calibration }))
         .filter((x) => x.available && x.probability != null)

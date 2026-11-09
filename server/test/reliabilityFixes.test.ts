@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseProplineOdds, proplineMarketsFor, PROPLINE_MARKETS } from '../src/providers/propline.js';
+import { sidesForMarket } from '../src/llm/fastSlateScreenerTool.js';
 import { isLineNearProjection, isRealisticLine } from '../src/models/playerPropModel.js';
 import { orderRosterForSampling, interleaveByPosition } from '../src/providers/slateDiscovery.js';
 import { isBlockingInjuryStatus, blockingInjuries } from '../src/models/injuryStatus.js';
@@ -146,4 +147,12 @@ test('provider market keys canonicalize into the model vocabulary', () => {
   // Model-supported markets the integrity gate used to reject outright.
   assert.equal(isPlausiblePropLine('mlb', 'earnedRuns', 2.5), true);
   assert.equal(isPlausiblePropLine('nba', 'steals', 1.5), true);
+});
+
+test('binary scoring markets are only evaluated as OVER', () => {
+  assert.deepEqual(sidesForMarket('touchdowns', null), ['over']);
+  assert.deepEqual(sidesForMarket('goals', null), ['over']);
+  assert.deepEqual(sidesForMarket('receptions', null), ['over', 'under']);
+  // An explicit user request is never silently inverted.
+  assert.deepEqual(sidesForMarket('touchdowns', 'under'), ['under']);
 });
