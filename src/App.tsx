@@ -6,7 +6,7 @@ import UpgradeModal from './components/UpgradeModal';
 import MessageList from './components/MessageList';
 import ParlaySlip, { type SlipSaveStatus } from './components/ParlaySlip';
 import SportSelector from './components/SportSelector';
-import { fetchHealth, fetchLedger, saveLedgerTicket, type HealthInfo } from './lib/api';
+import { fetchHealth, fetchLedger, saveLedgerTicket, storageNoticeForHealth, type HealthInfo } from './lib/api';
 import { fetchSession, signOut, type AuthUser } from './lib/auth';
 import { clearBillingSession, completeCheckout, fetchBillingStatus } from './lib/billing';
 import { legKey } from './lib/odds';
@@ -19,6 +19,7 @@ import {
   ledgerTicketBatches,
   ledgerTicketKey,
   mergeSgpLegs,
+  pruneStaleSlipLegs,
 } from './lib/slip';
 import { streamChat } from './lib/sse';
 import type { ChatMessage, HealthState, Sport, SgpLeg, ToolEvent } from './types';
@@ -78,7 +79,7 @@ function loadPersistedSlip(userId: string): SgpLeg[] | null {
     const raw = localStorage.getItem(userStorageKey(SLIP_STORAGE_KEY, userId));
     if (raw === null) return null;
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? mergeSgpLegs([], parsed) : null;
+    return Array.isArray(parsed) ? pruneStaleSlipLegs(mergeSgpLegs([], parsed)) : null;
   } catch {
     return null;
   }
@@ -243,12 +244,13 @@ function Workspace({
   const [researchSeed, setResearchSeed] = useState('');
   const [health, setHealth] = useState<HealthState>('checking');
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
+  const [storageNotice, setStorageNotice] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   // The bet slip is independent from chat history: retrying/starting a chat can
   // never discard saved picks. Upgrade old sessions by seeding from messages.
   const [slipLegs, setSlipLegs] = useState<SgpLeg[]>(() => {
     const saved = loadPersistedSlip(user.id);
-    return saved ?? collectMessageLegs(initial.current.messages);
+    return pruneStaleSlipLegs(saved ?? collectMessageLegs(initial.current.messages));
   });
   const [trackedLegs, setTrackedLegs] = useState<Set<string>>(() => loadTrackedLegs(user.id));
   const [slipSaveStatus, setSlipSaveStatus] = useState<SlipSaveStatus>({
@@ -311,11 +313,15 @@ function Workspace({
       })
       .catch((error: unknown) => {
         if (cancelled) return;
+        const message = error instanceof Error ? error.message : '';
+        const storageMissing = /HTTP 503|STORAGE_NOT_CONFIGURED|storage is not configured/i.test(message);
         setSlipSaveStatus({
           state: 'error',
-          message: error instanceof Error
-            ? `Could not verify prior tracked picks: ${error.message}`
-            : 'Could not verify prior tracked picks.',
+          message: storageMissing
+            ? 'Results storage is not configured on this deployment. Picks stay in this browser and are not saved to the results ledger.'
+            : message
+              ? `Could not verify prior tracked picks: ${message}`
+              : 'Could not verify prior tracked picks.',
         });
       });
     return () => {
@@ -330,6 +336,7 @@ function Workspace({
       .then((h) => {
         if (cancelled) return;
         setHealthInfo(h);
+        setStorageNotice(storageNoticeForHealth(h));
         setHealth(h.ok ? 'ok' : 'down');
       })
       .catch(() => {
@@ -477,7 +484,7 @@ function Workspace({
                       : m,
                   ),
                 );
-                setSlipLegs((prev) => mergeSgpLegs(prev, ev.legs));
+                setSlipLegs((prev) => pruneStaleSlipLegs(mergeSgpLegs(prev, ev.legs)));
                 break;
               case 'log':
                 if (ev.failed) setMessages((prev) => prev.map((m) => m.id === assistantId
@@ -634,7 +641,7 @@ function Workspace({
 
   const addTopEdgeToSlip = useCallback((pick: TopEdgePick) => {
     const leg = edgePickToLeg(pick);
-    setSlipLegs((prev) => mergeSgpLegs(prev, [leg]));
+    setSlipLegs((prev) => pruneStaleSlipLegs(mergeSgpLegs(prev, [leg])));
   }, []);
 
   const renderView = () => {
@@ -672,6 +679,7 @@ function Workspace({
                 onSave={saveSlip}
                 unsavedCount={unsavedSlipLegs.length}
                 saveStatus={slipSaveStatus}
+                storageNotice={storageNotice}
               />
             }
           />
@@ -767,6 +775,7 @@ function Workspace({
                       onSave={saveSlip}
                       unsavedCount={unsavedSlipLegs.length}
                       saveStatus={slipSaveStatus}
+                      storageNotice={storageNotice}
                       className="max-h-[380px]"
                     />
                   </>
@@ -785,6 +794,7 @@ function Workspace({
               onSave={saveSlip}
               unsavedCount={unsavedSlipLegs.length}
               saveStatus={slipSaveStatus}
+              storageNotice={storageNotice}
             />
           </div>
         </div>

@@ -6,6 +6,28 @@ export interface HealthInfo {
   version?: string;
 }
 
+export interface LedgerSourceStatus {
+  available?: boolean;
+  backend?: string;
+  durable?: boolean;
+}
+
+export function ledgerSourceStatus(info: HealthInfo | null | undefined): LedgerSourceStatus | null {
+  const ledger = info?.sources?.ledger;
+  return ledger && typeof ledger === 'object' ? ledger as LedgerSourceStatus : null;
+}
+
+/**
+ * User-facing explanation when durable results storage is missing (for example
+ * a Vercel preview without Upstash). Never claims picks were saved.
+ */
+export function storageNoticeForHealth(info: HealthInfo | null | undefined): string | null {
+  const ledger = ledgerSourceStatus(info);
+  if (!ledger) return null;
+  if (ledger.available !== false && ledger.durable !== false) return null;
+  return 'Results storage is not configured on this deployment. Picks stay in this browser and are not saved to the results ledger.';
+}
+
 export async function fetchHealth(): Promise<HealthInfo> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/health`, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`Health check returned HTTP ${res.status}`);

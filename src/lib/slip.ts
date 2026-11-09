@@ -101,6 +101,29 @@ function localDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Official slate date (America/Toronto), matching the server's event dates. */
+export function slateDateKey(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Drop selections from prior slates so a locally persisted slip is never
+ * mistaken for today's recommendations. Rows without an official event date
+ * are kept because their freshness cannot be proven stale.
+ */
+export function pruneStaleSlipLegs<T extends { eventDate?: string }>(
+  legs: readonly T[],
+  today: Date = new Date(),
+): T[] {
+  const current = slateDateKey(today);
+  return (Array.isArray(legs) ? legs : []).filter((leg) => {
+    const eventDate = typeof leg?.eventDate === 'string' ? leg.eventDate.slice(0, 10) : '';
+    return !/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || eventDate >= current;
+  });
+}
+
 /** One wager may be tracked once per local game day. */
 export function ledgerLegKey(leg: SgpLeg, date = new Date()): string {
   const officialDate = /^\d{4}-\d{2}-\d{2}$/.test(leg.eventDate ?? '')
