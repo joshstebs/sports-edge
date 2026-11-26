@@ -1,9 +1,7 @@
 name: SportsEdge pilot monitoring
 
+# Automatic monitoring paused; manual runs remain available.
 on:
-  schedule:
-    - cron: '11 * * * *'
-    - cron: '37 4 * * *'
   workflow_dispatch:
 
 permissions:
