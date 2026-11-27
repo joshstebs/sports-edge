@@ -1,3 +1,5 @@
+import type { OddsBoardEvent, OddsBoardSport } from '../workspace.js';
+
 // ESPN odds provider — real sportsbook odds via ESPN's summary payload
 // (site.web.api.espn.com). Verified live Aug 2026: the scoreboard carries no
 // odds, but the per-event SUMMARY endpoint carries a `pickcenter` array with
@@ -40,7 +42,7 @@ export interface EspnOddsResult {
   home: string | null;
   moneyline: { away: string | null; home: string | null; awayOpen: string | null; homeOpen: string | null } | null;
   runline: { awayLine: string | null; awayOdds: string | null; homeLine: string | null; homeOdds: string | null } | null;
-  total: { line: string | null; overOdds: string | null; underOdds: string | null; openLine: string | null } | null;
+  total: { line: string | null; underLine?: string | null; overOdds: string | null; underOdds: string | null; openLine: string | null } | null;
   retrievedAt: string;
 }
 
@@ -58,7 +60,7 @@ async function pacedFetch(url: string): Promise<Response> {
   }
 }
 
-async function getScoreboard(sportPath: string): Promise<Array<{ id: string; away: string; home: string }>> {
+async function getScoreboard(sportPath: string): Promise<Array<{ id: string; away: string; home: string; commenceTime: string; completed: boolean }>> {
   const res = await pacedFetch(`${API}/${sportPath}/scoreboard`);
   if (!res.ok) throw new Error(`scoreboard HTTP ${res.status}`);
   const d: any = await res.json();
@@ -67,8 +69,17 @@ async function getScoreboard(sportPath: string): Promise<Array<{ id: string; awa
     const teams: any[] = comp?.competitors ?? [];
     const away = teams.find((c) => c.homeAway === 'away')?.team?.displayName ?? null;
     const home = teams.find((c) => c.homeAway === 'home')?.team?.displayName ?? null;
-    return { id: String(e.id), away, home };
+    return { id: String(e.id ?? ''), away, home, commenceTime: String(e.date ?? ''), completed: Boolean(e.status?.type?.completed) };
   });
+}
+
+export async function getUpcomingOddsEvents(sport: OddsBoardSport): Promise<OddsBoardEvent[]> {
+  const events = await getScoreboard(SPORT_PATHS[sport]);
+  const now = Date.now();
+  return events.filter(event =>
+    !event.completed && /^\d+$/.test(event.id) && event.away && event.home && Date.parse(event.commenceTime) > now,
+  ).sort((a, b) => Date.parse(a.commenceTime) - Date.parse(b.commenceTime))
+    .slice(0, 24).map(({ id, away, home, commenceTime }) => ({ id, away, home, commenceTime, selections: [] }));
 }
 
 async function getSummaryOdds(eventId: string, sportKey: string): Promise<any> {
@@ -156,6 +167,7 @@ export async function getGameOdds(
       total: tot
         ? {
             line: espnLineText(tot.over?.close?.line ?? tot.overUnder ?? null),
+            underLine: espnLineText(tot.under?.close?.line ?? tot.overUnder ?? null),
             overOdds: tot.over?.close?.odds ?? null,
             underOdds: tot.under?.close?.odds ?? null,
             openLine: tot.over?.open?.line ?? null,

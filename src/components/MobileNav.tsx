@@ -9,7 +9,7 @@ interface MobileNavProps {
   slipCount: number;
 }
 
-const PRIMARY: View[] = ['today', 'best-bets', 'research', 'chat'];
+const PRIMARY: View[] = ['today', 'workspace', 'research', 'chat'];
 
 export default function MobileNav({ user, view, onNavigate, slipCount }: MobileNavProps) {
   const [more, setMore] = useState(false);

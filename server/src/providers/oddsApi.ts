@@ -10,6 +10,8 @@
 //  - Track x-requests-remaining; skip pulls when remaining < 50.
 
 import { normalizeName } from './http.js';
+import { normalizeFeaturedOdds } from './oddsBoard.js';
+import type { OddsBoardEvent, OddsBoardSport } from '../workspace.js';
 
 const BASE = 'https://api.the-odds-api.com/v4';
 const SOURCE = 'api.the-odds-api.com';
@@ -21,6 +23,7 @@ const SPORT_KEYS: Record<string, string> = {
   football: 'americanfootball_nfl',
   nba: 'basketball_nba',
   basketball: 'basketball_nba',
+  nhl: 'icehockey_nhl',
 };
 
 let remaining: number | null = null;
@@ -83,6 +86,14 @@ function pickBookmaker(event: any, markets: string[]): any {
     if (markets.every((m) => present.includes(m))) return bm;
   }
   return bms[0] ?? null;
+}
+
+export async function getBookmakerBoard(sport: OddsBoardSport): Promise<OddsBoardEvent[]> {
+  if (!oddsConfigured() || (remaining !== null && remaining < 50)) return [];
+  const { ok, body } = await getJson(
+    `${BASE}/sports/${SPORT_KEYS[sport]}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=american`,
+  );
+  return ok ? normalizeFeaturedOdds(body) : [];
 }
 
 /** Featured odds (list of events) for a sport. */

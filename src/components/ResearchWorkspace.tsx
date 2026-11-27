@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { Connector, LineMovement, WorkspaceSnapshot } from '../../server/src/workspace';
-import type { View } from '../lib/nav';
 import WorkspaceTracking from './WorkspaceTracking';
 
 const button = 'min-h-10 rounded-lg border border-line px-3 text-sm font-semibold text-head hover:bg-panel2 focus-visible:outline-edge aria-pressed:border-edge aria-pressed:text-edge';
@@ -38,10 +37,7 @@ function askAbout(row: LineMovement, onAsk: (prompt: string) => void) {
   onAsk(`Analyze this BetTrack movement snapshot: ${row.matchup}, ${marketLabels[row.market] ?? row.market}, ${row.type}, average movement ${movementSize(row)} across ${row.books} books, detected at ${row.detectedAt}. Explain what the snapshot supports and what needs a fresh price check. Do not infer a specific side or direction from the aggregate.`);
 }
 
-export default function ResearchWorkspace({ onAsk, onNavigate }: {
-  onAsk: (prompt: string) => void;
-  onNavigate: (view: View) => void;
-}) {
+export default function ResearchWorkspace({ onAsk }: { onAsk: (prompt: string) => void }) {
   const [section, setSection] = useState<'research' | 'tracking'>('research');
   const [hours, setHours] = useState('24');
   const [refresh, setRefresh] = useState(0);
@@ -70,10 +66,10 @@ export default function ResearchWorkspace({ onAsk, onNavigate }: {
   }, [hours, key]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-8">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
         <div>
-          <h1 className="text-3xl font-semibold text-head">Research Workspace</h1>
+          <h2 className="text-2xl font-semibold text-head">BetTrack &amp; BetIQ</h2>
           <p className="mt-2 text-sm text-frost">Review market moves, check model performance and follow your picks.</p>
         </div>
         {section === 'research' && <button type="button" className={button} onClick={() => setRefresh((count) => count + 1)}>Refresh</button>}
@@ -159,11 +155,7 @@ export default function ResearchWorkspace({ onAsk, onNavigate }: {
             </div>
           )}
 
-          <nav aria-label="Research tools" className="flex flex-wrap gap-2">
-            <button type="button" className={button} onClick={() => onNavigate('research')}>Prop Research</button>
-            <button type="button" className={button} onClick={() => onNavigate('my-picks')}>My Picks</button>
-            <button type="button" className={button} onClick={() => onNavigate('results')}>Results</button>
-          </nav>
+
         </>
       )}
     </div>

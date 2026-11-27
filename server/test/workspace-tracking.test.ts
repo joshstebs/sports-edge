@@ -110,6 +110,11 @@ test('workspace tracking scopes local records, previews overlaps, and reads the 
     body: JSON.stringify({ sport: 'nba', market: 'not-a-market' }),
   })).status, 400);
 
+  const board = `${base}/api/odds-board`;
+  assert.equal((await fetch(`${board}?sport=nba`)).status, 402);
+  assert.equal((await fetch(`${board}?sport=unknown`, { headers: headers('tester') })).status, 400);
+  assert.equal((await fetch(`${board}/game?sport=nba&event=abc`, { headers: headers('admin') })).status, 400);
+
   const unconfiguredResponse = await fetch(endpoint, { headers: headers('admin') });
   assert.match(unconfiguredResponse.headers.get('cache-control') ?? '', /no-store/);
   const unconfigured = await unconfiguredResponse.json() as TrackingSnapshot;

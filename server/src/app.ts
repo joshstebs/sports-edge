@@ -20,6 +20,7 @@ import { createBillingRouter, customerIdFromRequest, customerIsEntitled } from '
 import { healthRouter } from './routes/health.js';
 import { ledgerRouter } from './routes/ledger.js';
 import { evaluationRouter, predictionsRouter } from './routes/predictions.js';
+import { oddsBoardRouter } from './routes/oddsBoard.js';
 import { oddsCacheRouter } from './routes/oddsCache.js';
 import { statsRouter } from './routes/stats.js';
 import { calibrationRouter } from './routes/calibration.js';
@@ -102,6 +103,7 @@ app.use('/api/billing', createBillingRouter(authConfig.sessionSecret));
 // by requireChatAccess for entitled customers) and 401 without it.
 app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
+app.use('/api/odds-board', requireChatAccess, chatLimiter, oddsBoardRouter);
 app.use('/api/stats', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
 app.use('/api/workspace', requireRole('admin'), chatLimiter, workspaceRouter);

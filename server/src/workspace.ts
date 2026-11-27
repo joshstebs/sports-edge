@@ -83,3 +83,37 @@ export interface PropLearningReport {
   settled: number;
   trends: PropTrend[];
 }
+
+export type OddsBoardSport = 'nba' | 'nfl' | 'nhl' | 'mlb';
+export type OddsBoardMarket = 'h2h' | 'spreads' | 'totals';
+
+export interface SportsbookQuote {
+  book: string;
+  odds: number;
+  updatedAt: string | null;
+}
+
+export interface OddsBoardSelection {
+  market: OddsBoardMarket;
+  name: string;
+  line: number | null;
+  quotes: SportsbookQuote[];
+}
+
+export interface OddsBoardEvent {
+  id: string;
+  home: string;
+  away: string;
+  commenceTime: string;
+  selections: OddsBoardSelection[];
+}
+
+export interface OddsBoard {
+  source: 'the-odds-api' | 'espn' | 'unavailable';
+  events: OddsBoardEvent[];
+}
+
+export interface GameOddsSnapshot {
+  observedAt: string;
+  selections: OddsBoardSelection[];
+}

@@ -28,6 +28,7 @@ export interface NavItem {
 export function navItems(adminOnly: boolean): NavItem[] {
   const base: Array<Omit<NavItem, 'icon'>> = [
     { id: 'today', label: 'Today', short: 'Home' },
+    { id: 'workspace', label: 'Supercenter', short: 'Center' },
     { id: 'best-bets', label: 'Edge Desk', short: 'Desk' },
     { id: 'research', label: 'Prop Research', short: 'Research' },
     { id: 'games', label: 'Game Center', short: 'Games' },
@@ -38,7 +39,6 @@ export function navItems(adminOnly: boolean): NavItem[] {
     { id: 'results', label: 'Results', short: 'Results' },
   ];
   if (adminOnly) base.push(
-    { id: 'workspace', label: 'Workspace', short: 'Workspace', adminOnly: true },
     { id: 'model-lab', label: 'Model Lab', short: 'Lab', adminOnly: true },
   );
   return base.map((item) => ({ ...item, icon: iconFor(item.id) }));

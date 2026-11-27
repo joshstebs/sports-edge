@@ -34,7 +34,7 @@ const BestBetsPage = lazy(() => import('./components/BestBets'));
 const ParlayBuilder = lazy(() => import('./components/ParlayBuilder'));
 const MyPicks = lazy(() => import('./components/MyPicks'));
 const Results = lazy(() => import('./components/Results'));
-const ResearchWorkspace = lazy(() => import('./components/ResearchWorkspace'));
+const Supercenter = lazy(() => import('./components/Supercenter'));
 const ModelLab = lazy(() => import('./components/ModelLab'));
 const ResearchDesk = lazy(() => import('./components/ResearchDesk'));
 const ExperienceApp = lazy(() => import('./ExperienceApp'));
@@ -633,7 +633,7 @@ function Workspace({
       || item.short.toLowerCase() === needle
       || item.label.toLowerCase().includes(needle) && needle.length > 3,
     );
-    if (match && !/\s/.test(needle) || match && ['today', 'edge desk', 'research', 'prop research', 'ask', 'ask sportsedge', 'parlays', 'slip', 'my picks', 'results', 'watchlist', 'game center', 'games', 'model lab'].includes(needle)) {
+    if (match && !/\s/.test(needle) || match && ['today', 'edge desk', 'research', 'prop research', 'ask', 'ask sportsedge', 'parlays', 'slip', 'my picks', 'results', 'watchlist', 'game center', 'games', 'model lab', 'sports betting supercenter'].includes(needle)) {
       setView(match.id);
       return;
     }
@@ -701,7 +701,7 @@ function Workspace({
       case 'results':
         return <Results />;
       case 'workspace':
-        return user.role === 'admin' ? <ResearchWorkspace onAsk={goAsk} onNavigate={setView} /> : null;
+        return <Supercenter user={user} onAsk={goAsk} onNavigate={setView} />;
       case 'model-lab':
         return user.role === 'admin' ? <ModelLab /> : null;
       case 'chat':

@@ -3,6 +3,7 @@ import { displayPropMarket, fetchPlayerResearch, type PlayerResearchResponse } f
 import { researchSummary } from '../lib/research';
 import { loadWatchlist, saveWatchlist, upsertWatch, type WatchItem } from '../lib/watchlist';
 import PlayerHeadshot from './PlayerHeadshot';
+import QuoteComparison from './QuoteComparison';
 import PropTrendChart from './PropTrendChart';
 
 const MARKETS: Record<string, string[]> = {
@@ -169,6 +170,11 @@ export default function ResearchDesk({
             <button type="button" onClick={() => bookmark(hasLine ? 'prop' : 'research')} className="min-h-11 border border-line px-4 text-sm font-semibold text-head">{hasLine ? 'Save this line' : 'Save research view'}</button>
             <button type="button" onClick={() => onAsk(`Research ${data.player} ${sport} ${displayPropMarket(market)}${hasLine ? ` ${side} ${line}` : ''}. Verify current availability, matchup and the exact sportsbook price before recommending a pick.`)} className="min-h-11 border border-edge/50 px-4 text-sm font-semibold text-edge">Ask the analyst to verify this angle</button>
           </div>
+          {hasLine && (
+            <div className="mt-4">
+              <QuoteComparison key={JSON.stringify([sport, data.playerId, data.player, market, side, numericLine])} />
+            </div>
+          )}
           {saved && <p className="mt-3 text-sm text-edge" role="status">{saved}</p>}
         </section>
       )}
