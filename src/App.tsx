@@ -34,6 +34,7 @@ const BestBetsPage = lazy(() => import('./components/BestBets'));
 const ParlayBuilder = lazy(() => import('./components/ParlayBuilder'));
 const MyPicks = lazy(() => import('./components/MyPicks'));
 const Results = lazy(() => import('./components/Results'));
+const ResearchWorkspace = lazy(() => import('./components/ResearchWorkspace'));
 const ModelLab = lazy(() => import('./components/ModelLab'));
 const ResearchDesk = lazy(() => import('./components/ResearchDesk'));
 const ExperienceApp = lazy(() => import('./ExperienceApp'));
@@ -105,6 +106,7 @@ type AuthState =
 export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: 'checking', user: null, error: null });
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [checkoutAvailable, setCheckoutAvailable] = useState(false);
 
   const customerUser = (subject: string): AuthUser => ({ id: `customer:${subject}`, username: 'Trial member', role: 'customer' });
 
@@ -122,6 +124,7 @@ export default function App() {
     initialize()
       .then(({ user, billing }) => {
         if (cancelled) return;
+        setCheckoutAvailable(billing.checkoutAvailable);
         setAuth(
           user
             ? { status: 'signed-in', user, error: null }
@@ -168,7 +171,7 @@ export default function App() {
         <LoginScreen
           serviceError={auth.error}
           onAuthenticated={(user) => setAuth({ status: 'signed-in', user, error: null })}
-          onTrialRequest={() => setShowUpgrade(true)}
+          onTrialRequest={checkoutAvailable ? () => setShowUpgrade(true) : undefined}
         />
         {showUpgrade && (
           <UpgradeModal
@@ -697,6 +700,8 @@ function Workspace({
         return <MyPicks />;
       case 'results':
         return <Results />;
+      case 'workspace':
+        return user.role === 'admin' ? <ResearchWorkspace onAsk={goAsk} onNavigate={setView} /> : null;
       case 'model-lab':
         return user.role === 'admin' ? <ModelLab /> : null;
       case 'chat':

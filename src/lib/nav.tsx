@@ -13,7 +13,8 @@ export type View =
   | 'results'
   | 'watchlist'
   | 'games'
-  | 'model-lab';
+  | 'model-lab'
+  | 'workspace';
 
 export interface NavItem {
   id: View;
@@ -36,7 +37,10 @@ export function navItems(adminOnly: boolean): NavItem[] {
     { id: 'my-picks', label: 'My Picks', short: 'Picks' },
     { id: 'results', label: 'Results', short: 'Results' },
   ];
-  if (adminOnly) base.push({ id: 'model-lab', label: 'Model Lab', short: 'Lab', adminOnly: true });
+  if (adminOnly) base.push(
+    { id: 'workspace', label: 'Workspace', short: 'Workspace', adminOnly: true },
+    { id: 'model-lab', label: 'Model Lab', short: 'Lab', adminOnly: true },
+  );
   return base.map((item) => ({ ...item, icon: iconFor(item.id) }));
 }
 
@@ -52,6 +56,7 @@ function pathStroke(id: View): { d: string; extra?: string } {
       return { d: 'M8 21h12M12 17v4M17 3H7a1 1 0 00-1 1v12a1 1 0 001 1h10a1 1 0 001-1V4a1 1 0 00-1-1z', extra: 'M10 8h4M10 12h4' };
     case 'my-picks':
       return { d: 'M9 12l2 2 4-4', extra: 'M12 3l7 4v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V7l7-4z' };
+    case 'workspace':
     case 'results':
       return { d: 'M3 3v18h18', extra: 'M7 14l3-4 3 3 4-6' };
     case 'model-lab':

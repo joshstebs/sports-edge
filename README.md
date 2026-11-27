@@ -40,6 +40,10 @@ The deterministic `player_prop_model` supports MLB, NFL, NBA, and NHL player mar
 - **Self-learning predictions**: every trusted server-generated pick appends a structured `[PREDICTION_LOG]` block. The daily Vercel Cron (`GET /api/evaluate`, protected by `CRON_SECRET`) grades a bounded batch against final official MLB box scores and official ESPN NFL/NBA/NHL game logs, retries provider/not-final failures, excludes unsupported or ambiguous legs, and rebuilds calibration from the full settled history. Only samples of at least 20 verified picks can produce confidence-adjustment rules.
 - **Persistence**: local development uses atomic files under `server/data`. Vercel requires `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`; stateful writes fail closed with HTTP 503 when durable storage is absent, rather than falsely succeeding in ephemeral `/tmp`.
 
+## Research Workspace
+
+The admin workspace brings together BetTrack line movements, BetIQ model and bankroll analytics, and a unified history of tracked picks. The comparison uses BetIQ's settled pregame picks and model paper bets. See the [integration plan and local setup](docs/super-app.md).
+
 ## Model fallback chain
 The chat brain rotates through models when one is unavailable (Gemini free-tier quotas are per-model):
 `gemini-3.5-flash` → `gemini-flash-latest` → `gemini-2.5-flash-lite` → (if `OPENAI_API_KEY` set) `gpt-4o-mini`.
@@ -80,6 +84,10 @@ npm test
 ```
 
 The same install, build, and test sequence runs automatically in GitHub Actions for every pull request into `master` and every push to `master`.
+
+## Independent hosting
+
+Use the [hosting guide](docs/hosting.md) to run SportsEdge on a Docker or Node.js host with HTTPS and a persistent ledger.
 
 ## Chat API
 `POST /api/chat` `{messages:[{role,content}], sport?: "mlb"|"nfl"|"nba"|"nhl"}` → SSE stream of `meta`, `tool`, `delta`, `sgp`, `log`, `done`, `error` events. Auth is required. When the user asks for a parlay, the model emits a ` ```sgp ``` ` JSON block that the backend validates, availability-checks, and parses into structured leg cards.

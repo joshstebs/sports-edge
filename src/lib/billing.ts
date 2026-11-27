@@ -1,4 +1,5 @@
 export interface BillingStatus {
+  checkoutAvailable: boolean;
   entitled: boolean;
   status: string;
   trialEndsAt: number | null;
@@ -7,6 +8,7 @@ export interface BillingStatus {
 }
 
 const EMPTY_STATUS: BillingStatus = {
+  checkoutAvailable: false,
   entitled: false,
   status: 'none',
   trialEndsAt: null,
@@ -35,6 +37,7 @@ export async function fetchBillingStatus(): Promise<BillingStatus> {
     if (!res.ok) return EMPTY_STATUS;
     const body = (await res.json()) as Partial<BillingStatus>;
     return {
+      checkoutAvailable: Boolean(body.checkoutAvailable),
       entitled: Boolean(body.entitled),
       status: body.status || 'none',
       trialEndsAt: body.trialEndsAt ?? null,

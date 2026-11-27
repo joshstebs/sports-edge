@@ -197,11 +197,13 @@ export function createBillingRouter(sessionSecret: string): Router {
   router.get('/status', async (req, res) => {
     noStore(res);
     const customerId = customerIdFromRequest(req, sessionSecret);
-    if (!stripe || !customerId) return res.json({ entitled: false, status: 'none', trialEndsAt: null, periodEnd: null, subject: null });
+    const checkoutAvailable = Boolean(stripe && PRICE_ID);
+    if (!stripe || !customerId) return res.json({ checkoutAvailable, entitled: false, status: 'none', trialEndsAt: null, periodEnd: null, subject: null });
     try {
       const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 10 });
       const sub = subs.data.find(isEntitled) || null;
       return res.json({
+        checkoutAvailable,
         entitled: Boolean(sub),
         status: sub?.status ?? 'none',
         trialEndsAt: sub?.trial_end ?? null,
@@ -210,7 +212,7 @@ export function createBillingRouter(sessionSecret: string): Router {
       });
     } catch (err: unknown) {
       console.error('billing status error:', err instanceof Error ? err.message : String(err));
-      return res.json({ entitled: false, status: 'none', trialEndsAt: null, periodEnd: null, subject: null });
+      return res.json({ checkoutAvailable, entitled: false, status: 'none', trialEndsAt: null, periodEnd: null, subject: null });
     }
   });
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchLedger, type LedgerPick } from '../lib/api';
+import { fetchLedger, setLedgerResult, type LedgerPick } from '../lib/api';
 import { formatAmerican } from '../lib/odds';
+import ManualPickForm from './ManualPickForm';
 import { EmptyHint, Skeleton, SportTag, Stat } from './ui/primitives';
 
 type RangeFilter = 'today' | '7d' | '30d' | 'all';
@@ -45,8 +46,26 @@ function unitsFor(pick: LedgerPick): number | null {
   return null;
 }
 
+function downloadPicks(picks: LedgerPick[]) {
+  const now = new Date().toISOString();
+  const records = picks.map(({ id, createdAt, eventDate, eventId, sport, game, selection, market, line, odds, status,
+    settledAt, settlementSource, entrySource, justification }) => ({
+    id, createdAt, eventDate, eventId, sport, game, selection, market, line, odds, status, settledAt,
+    settlementSource, entrySource, justification,
+  }));
+  const file = new Blob([JSON.stringify({ exportedAt: now, picks: records }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `sportsedge-picks-${now.slice(0, 10)}.json`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function MyPicks() {
   const [picks, setPicks] = useState<LedgerPick[] | null>(null);
+  const [grading, setGrading] = useState<string | null>(null);
+  const [gradeError, setGradeError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeFilter>('7d');
@@ -62,6 +81,22 @@ export default function MyPicks() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  function updatePick(pick: LedgerPick) {
+    setPicks((current) => [pick, ...(current ?? []).filter(({ id }) => id !== pick.id)]);
+  }
+
+  async function gradePick(id: string, status: 'won' | 'lost' | 'push') {
+    setGrading(id);
+    setGradeError(null);
+    try {
+      updatePick(await setLedgerResult(id, status));
+    } catch (error) {
+      setGradeError(error instanceof Error ? error.message : 'Could not save result.');
+    } finally {
+      setGrading(null);
+    }
+  }
 
   const filtered = useMemo(() => {
     const list = (picks ?? []).filter((pick) =>
@@ -91,10 +126,26 @@ export default function MyPicks() {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-3 py-4 pb-24 sm:px-5 md:pb-8">
-      <header className="mb-4">
-        <h2 className="text-lg font-bold tracking-tight text-head">My Picks</h2>
-        <p className="mt-0.5 text-[11px] text-muted">Every bet you saved &amp; tracked, settled independently against real outcomes.</p>
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-bold tracking-tight text-head">My Picks</h2>
+          <p className="mt-0.5 text-[11px] text-muted">Track individual picks and record the results.</p>
+        </div>
+        {picks?.length ? (
+          <button type="button" onClick={() => downloadPicks(picks)}
+            className="min-h-9 rounded-lg border border-line px-3 text-xs font-semibold text-frost hover:bg-panel2">
+            Export all picks
+          </button>
+        ) : null}
       </header>
+
+      {!loading && !error && <ManualPickForm onSave={(pick) => {
+        updatePick(pick);
+        setRange('7d');
+        setStatus('all');
+        setSport('ALL');
+      }} />}
+      {gradeError && <p role="alert" className="mb-3 text-sm text-danger">{gradeError}</p>}
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -151,7 +202,7 @@ export default function MyPicks() {
 
           {filtered.length === 0 ? (
             <EmptyHint>
-              No tracked picks in this view yet. Save a slip with “Save &amp; track” and every leg lands here for independent settlement.
+              No tracked picks in this view. Log a pick above or save a leg from your slip.
             </EmptyHint>
           ) : (
             <ul className="space-y-2">
@@ -191,6 +242,18 @@ export default function MyPicks() {
                         )}
                       </div>
                     </div>
+                    {pick.entrySource === 'manual' && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label={`Result for ${pick.selection}`}>
+                        <span className="text-xs text-frost2">{grading === pick.id ? 'Saving result…' : 'Set result'}</span>
+                        {(['won', 'lost', 'push'] as const).map((result) => (
+                          <button key={result} type="button" disabled={grading !== null || pick.status === result}
+                            className="min-h-8 rounded border border-line px-2 text-xs capitalize text-frost hover:bg-panel2 disabled:opacity-60"
+                            onClick={() => void gradePick(pick.id, result)}>
+                            {result}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </li>
                 );
               })}

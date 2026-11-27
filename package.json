@@ -12,7 +12,8 @@
     "build:server": "tsc -p server/tsconfig.json",
     "test": "npm run test:frontend && npm run test --prefix server",
     "test:frontend": "node --import tsx --test test/*.test.ts",
-    "setup": "npm install && npm install --prefix server"
+    "setup": "npm install && npm install --prefix server",
+    "start": "node --env-file-if-exists=server/.env server/dist/production.js"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

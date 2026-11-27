@@ -36,6 +36,7 @@ export interface LedgerPick {
   status: 'pending' | 'won' | 'lost' | 'push';
   settledAt?: string | null;
   settlementSource?: 'manual' | 'prediction-evaluator' | null;
+  entrySource?: 'manual';
 }
 
 interface LedgerFile { picks: LedgerPick[] }
@@ -60,9 +61,10 @@ async function load(): Promise<LedgerFile> {
   if (process.env.VERCEL) throw new StorageNotConfiguredError();
   try {
     const value = JSON.parse(await fs.readFile(FILE, 'utf8'));
-    return value && Array.isArray(value.picks) ? value : emptyLedger();
+    if (!value || !Array.isArray(value.picks)) throw new Error('Stored ledger is corrupt');
+    return value;
   } catch (error: any) {
-    if (error?.code === 'ENOENT' || error instanceof SyntaxError) return emptyLedger();
+    if (error?.code === 'ENOENT') return emptyLedger();
     throw error;
   }
 }
@@ -246,10 +248,14 @@ function optionalNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-ledgerRouter.get('/ledger', async (_req, res) => {
-  const userId = requestUserId(_req);
+export async function loadLedgerPicks(userId: string): Promise<LedgerPick[]> {
+  const file = await load();
+  return file.picks.filter((pick) => ownedBy(pick, userId));
+}
+
+ledgerRouter.get('/ledger', async (req, res) => {
   try {
-    const file = await load(); const picks = file.picks.filter((pick) => ownedBy(pick, userId));
+    const picks = await loadLedgerPicks(requestUserId(req));
     res.json({ picks, summary: computeSummary(picks) });
   }
   catch (error) { apiError(res, error); }
@@ -270,6 +276,7 @@ ledgerRouter.post('/ledger', async (req, res) => {
     const now = new Date().toISOString();
     const added: LedgerPick[] = legs.map((leg) => ({
       id: randomUUID(), userId, idempotencyKey, createdAt: now,
+      ...(leg.entrySource === 'manual' ? { entrySource: 'manual' as const } : {}),
       sport: leg.sport ?? null, game: leg.game ?? null,
       eventDate: typeof leg.eventDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(leg.eventDate)
         ? leg.eventDate : null,
@@ -330,7 +337,7 @@ for _, p in ipairs(doc.picks or {}) do
   local legacyGame = string.lower(p.game or '') == string.lower(ARGV[6])
   local sameGame = (not p.game) or ARGV[1] == '' or p.matchGameKey == ARGV[1] or legacyGame
   local sameSelection = p.matchSelectionKey == ARGV[2] or string.lower(p.selection or '') == string.lower(ARGV[7])
-  if owner == ARGV[5] and p.status == 'pending' and sameGame and sameSelection then
+  if owner == ARGV[5] and p.status == 'pending' and p.entrySource ~= 'manual' and sameGame and sameSelection then
     p.status = ARGV[3]
     p.settledAt = ARGV[4]
     p.settlementSource = 'prediction-evaluator'
@@ -353,7 +360,7 @@ export async function settleLedgerMatches(
     const file = await load();
     let changed = 0;
     for (const pick of file.picks) {
-      if (pick.status !== 'pending' || !ownedBy(pick, userId)) continue;
+      if (pick.status !== 'pending' || pick.entrySource === 'manual' || !ownedBy(pick, userId)) continue;
       const sameGame = !pick.game || !gameKey || norm(pick.game) === gameKey;
       if (sameGame && norm(pick.selection) === selectionKey) {
         pick.status = outcome;

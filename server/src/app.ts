@@ -11,6 +11,7 @@ import {
   enforceTrustedOrigin,
   loadAuthConfig,
   requireAuth,
+  requireRole,
   requireJsonRequest,
   securityHeaders,
 } from './auth/index.js';
@@ -25,6 +26,7 @@ import { calibrationRouter } from './routes/calibration.js';
 import { monitorRouter } from './routes/monitor.js';
 import { playerProfileRouter } from './routes/playerProfile.js';
 import { playerResearchRouter } from './routes/playerResearch.js';
+import { workspaceRouter } from './routes/workspace.js';
 
 const app = express();
 const authConfig = loadAuthConfig();
@@ -102,6 +104,7 @@ app.use('/api/chat', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/ledger', requireChatAccess, durableWriteLimiter, writeLimiter);
 app.use('/api/stats', requireChatAccess, durableChatLimiter, chatLimiter);
 app.use('/api/predictions', durableWriteLimiter, writeLimiter);
+app.use('/api/workspace', requireRole('admin'), chatLimiter, workspaceRouter);
 app.use('/api/calibration', calibrationRouter);
 app.use('/api/monitor', monitorRouter);
 app.use('/api', healthRouter);

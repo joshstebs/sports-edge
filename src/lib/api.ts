@@ -38,7 +38,7 @@ export interface SaveLedgerResponse {
   ok: boolean;
   duplicate?: boolean;
   added?: number;
-  picks?: unknown[];
+  picks?: LedgerPick[];
   summary?: unknown;
 }
 
@@ -61,6 +61,7 @@ export interface LedgerPick {
   status: 'pending' | 'won' | 'lost' | 'push';
   settledAt?: string | null;
   settlementSource?: 'manual' | 'prediction-evaluator' | null;
+  entrySource?: 'manual';
 }
 
 export interface LedgerResponse {
@@ -102,6 +103,19 @@ export async function saveLedgerTicket(
     throw new Error(payload?.error || `Could not track bet (HTTP ${res.status})`);
   }
   return payload as SaveLedgerResponse;
+}
+
+export async function setLedgerResult(id: string, status: 'won' | 'lost' | 'push'): Promise<LedgerPick> {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/ledger/${encodeURIComponent(id)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  const payload = await res.json().catch(() => null) as { pick?: LedgerPick; error?: string } | null;
+  if (!res.ok || !payload?.pick) {
+    throw new Error(payload?.error || `Could not save result (HTTP ${res.status})`);
+  }
+  return payload.pick;
 }
 
 export interface PerformanceBand {
