@@ -10,10 +10,14 @@ function manualPrice(value: string): number | null {
   return /^[+-]?\d+$/.test(value.trim()) && Number.isSafeInteger(price) && Math.abs(price) >= 100 ? price : null;
 }
 
-export default function QuoteComparison({ quotes = [] }: { quotes?: SportsbookQuote[] }) {
+export default function QuoteComparison({ quotes = [], strategyEstimate = null }: {
+  quotes?: SportsbookQuote[];
+  strategyEstimate?: number | null;
+}) {
   const [first, setFirst] = useState('');
   const [second, setSecond] = useState('');
   const [estimate, setEstimate] = useState('');
+  const [fromReplay, setFromReplay] = useState(false);
   const manual = [first, second].flatMap((value, index) => {
     const odds = manualPrice(value);
     return odds === null ? [] : [{ book: `Manual quote ${index + 1}`, odds, updatedAt: null, manual: true }];
@@ -40,10 +44,16 @@ export default function QuoteComparison({ quotes = [] }: { quotes?: SportsbookQu
           <input className={control} value={second} onChange={event => setSecond(event.target.value)} placeholder="+105" maxLength={10} />
         </label>
         <label className="text-xs text-frost">Your probability estimate (%)
-          <input className={control} value={estimate} onChange={event => setEstimate(event.target.value)}
+          <input className={control} value={estimate} onChange={event => { setEstimate(event.target.value); setFromReplay(false); }}
             type="number" min="0.01" max="99.99" step="any" placeholder="Optional" />
         </label>
       </div>
+      {strategyEstimate !== null && (
+        <button type="button" className="min-h-9 rounded-lg border border-line px-3 text-xs font-semibold text-head hover:border-edge"
+          onClick={() => { setEstimate(strategyEstimate.toFixed(1)); setFromReplay(true); }}>
+          Use {strategyEstimate.toFixed(1)}% replay estimate
+        </button>
+      )}
       {hasInvalid && <p className="text-sm text-warn">Use whole American odds such as -110 or +105.</p>}
       {estimate.trim() && !hasEstimate && <p className="text-sm text-warn">Enter a probability between 0% and 100%.</p>}
       {rows.length > 0 && (
@@ -81,7 +91,7 @@ export default function QuoteComparison({ quotes = [] }: { quotes?: SportsbookQu
           </table>
         </div>
       )}
-      {hasEstimate && <p className="text-xs text-frost2">Scenario uses your estimate and assumes there is no push.</p>}
+      {hasEstimate && <p className="text-xs text-frost2">Scenario uses {fromReplay ? 'the rounded replay estimate' : 'your estimate'} and assumes there is no push.</p>}
     </section>
   );
 }

@@ -39,3 +39,9 @@ The learning cohort uses half-point offers with a matching game, fresh SportsGam
 Adjustments group outcomes by sport, market, side, and model version. SportsEdge fits a capped adjustment on earlier dates and applies it only if it lowers Brier score on separate later dates. Outcomes unavailable at the first later quote are excluded from training. The default model stays in use for thin or inconclusive samples. The comparison measures probability accuracy and does not claim a historical return.
 
 SportsGameOdds pricing requires `SPORTSGAMEODDS_API_KEY`. Other price feeds still support the existing slate workflow. Their quotes are outside this learning cohort until SportsEdge can match them to an exact game.
+
+### Replay a specific player prop
+
+In **Supercenter → Player research**, load a player and enter a line and side. The strategy check compares rolling five- and ten-decision forecasts. Each forecast uses only earlier game dates, draws short samples toward 50%, and excludes pushes. Both approaches are scored on the same later outcomes. The test applies the entered line to those stats and does not simulate past prices or returns.
+
+A replay must include at least eight later decisions across five dates before it can supply a price estimate. Both windows must beat a flat 50% forecast and their latest estimates must be within 15 percentage points. When they qualify, compare quotes using the lower estimate. Use the current book price and check today's lineup or role separately.

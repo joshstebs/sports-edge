@@ -378,6 +378,7 @@ export async function fetchPlayerProfile(sport: string, name: string): Promise<P
 }
 
 export interface PlayerResearchObservation {
+  minutes?: number | null;
   date: string | null;
   value: number;
   opponent: string | null;

@@ -46,10 +46,16 @@ export default function Supercenter({ user, onAsk, onNavigate }: {
       {section === 'edge' && (
         <div className="space-y-4">
           {admin && <PropLearningPanel />}
-          <button type="button" onClick={() => onNavigate('best-bets')}
-            className="min-h-10 rounded-lg border border-line bg-panel px-3 text-sm font-semibold text-head hover:border-edge">
-            Open Edge Desk
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSection('props')}
+              className="min-h-10 rounded-lg border border-line bg-panel px-3 text-sm font-semibold text-head hover:border-edge">
+              Test a player prop
+            </button>
+            <button type="button" onClick={() => onNavigate('best-bets')}
+              className="min-h-10 rounded-lg border border-line bg-panel px-3 text-sm font-semibold text-head hover:border-edge">
+              Open Edge Desk
+            </button>
+          </div>
         </div>
       )}
       {section === 'performance' && <Results />}

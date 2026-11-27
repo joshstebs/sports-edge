@@ -18,7 +18,7 @@ playerResearchRouter.get('/player-research', async (req: Request, res: Response)
   const sport = parseSportKey(String(req.query.sport ?? ''));
   const market = normalizeMarket(String(req.query.market ?? '').trim());
   const requestedLimit = Number(req.query.limit ?? 10);
-  const limit = Math.max(3, Math.min(20, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 10));
+  const limit = Math.max(3, Math.min(40, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 10));
 
   if (!player || !sport || !market) {
     res.status(400).json({
@@ -82,13 +82,12 @@ playerResearchRouter.get('/player-research', async (req: Request, res: Response)
       const value = espnObservation(sport, market, game.stats);
       if (value == null || !Number.isFinite(value)) return [];
       // Zero-minute NBA rows are DNPs, not played games.
-      if (sport === 'nba') {
-        const minutes = minutesFromStats(game.stats ?? {});
-        if (minutes != null && minutes <= 0) return [];
-      }
+      const minutes = sport === 'nba' ? minutesFromStats(game.stats ?? {}) : null;
+      if (minutes != null && minutes <= 0) return [];
       return [{
         date: game.gameDate || null,
         value,
+        minutes,
         opponent: game.opponent || null,
         result: game.result || null,
         gameId: game.gameId || null,
