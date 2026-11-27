@@ -25,7 +25,7 @@ test('each security scan runs on any delivered schedule event or manual dispatch
   }
 });
 
-test('hourly and daily schedules remain configured for trigger redundancy', () => {
-  assert.match(workflow, /cron: '11 \* \* \* \*'/);
-  assert.match(workflow, /cron: '37 4 \* \* \*'/);
+test('the paused pilot monitor can be dispatched manually', () => {
+  assert.match(workflow, /^  workflow_dispatch:/m);
+  assert.doesNotMatch(workflow, /^  schedule:/m);
 });

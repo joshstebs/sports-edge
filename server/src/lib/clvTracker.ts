@@ -1,8 +1,9 @@
 // CLV (Closing Line Value) Tracking System
 // Captures closing lines, computes CLV beat rates, and calibrates model probabilities
 
-import { getAllPredictions, updatePrediction, Prediction, PredictionLeg } from './predictionStore.js';
-import { fetchTheOddsAPI, OddsProviderConfig } from '../providers/oddsAggregator.js';
+import { getAllPredictions, updatePrediction, playerNameForEvidence } from './predictionStore.js';
+import { findClosingMarket, parseAmericanPrice } from './closingMarket.js';
+import { fetchTheOddsAPI, type OddsProviderConfig } from '../providers/oddsAggregator.js';
 
 export interface ClvRecord {
   predictionId: string;
@@ -17,7 +18,7 @@ export interface ClvRecord {
   closingImplied: number;
   modelProbability: number;
   clvPercent: number;          // (closingImplied - openingImplied) / openingImplied * 100
-  beatClosing: boolean;        // modelProbability > closingImplied
+  beatClosing: boolean;        // tracked price beats closing price
   actualOutcome?: 'won' | 'lost' | 'push';
   gameDate: string;
   capturedAt: string;
@@ -69,71 +70,68 @@ export const DEFAULT_CLV_CONFIG: ClvConfig = {
 
 /** Capture closing lines for pending predictions */
 export async function captureClosingLines(config: ClvConfig = DEFAULT_CLV_CONFIG): Promise<ClvRecord[]> {
+  const now = Date.now();
+  const windowMs = config.captureWindowMinutes * 60_000;
   const predictions = await getAllPredictions();
-  const pending = predictions.filter(p => p.status === 'pending');
-  
-  if (pending.length === 0) return [];
-  
-  // Fetch current odds (closing lines) for relevant games
+  const pending = predictions.filter(prediction => {
+    const gameTime = Date.parse(prediction.gameDate ?? '');
+    return prediction.status === 'pending' && gameTime >= now && gameTime <= now + windowMs &&
+      prediction.legs.some(leg => leg.market?.startsWith('player_') && leg.side &&
+        Number.isFinite(leg.line) && !leg.closing_odds_source);
+  });
+  if (!pending.length || !config.oddsApiKey) return [];
+
+  // The provider needs explicit prop market keys. Request only markets present in the ledger.
   const oddsConfig: OddsProviderConfig = {
     theOddsApiKey: config.oddsApiKey,
     sports: config.sports,
     regions: ['us'],
-    markets: ['h2h', 'spreads', 'totals', 'player_props'],
+    markets: [],
+    marketsBySport: Object.fromEntries(config.sports.map(sport => [
+      sport,
+      [...new Set(pending.filter(prediction => sport.endsWith('_' + prediction.sport.toLowerCase()))
+        .flatMap(prediction => prediction.legs.flatMap(leg =>
+          leg.market?.startsWith('player_') ? [leg.market] : [])))],
+    ])),
     bookmakers: ['pinnacle', 'draftkings', 'fanduel', 'betmgm', 'caesars'],
+    eventWindow: { from: now, through: now + windowMs },
   };
-  
+
   const liveOdds = await fetchTheOddsAPI(oddsConfig);
   const records: ClvRecord[] = [];
-  const now = Date.now();
-  
   for (const prediction of pending) {
-    const gameTime = prediction.gameDate ? new Date(prediction.gameDate).getTime() : 0;
-    const minutesToGame = (gameTime - now) / (1000 * 60);
-    
-    // Only capture if we're within the capture window of game time
-    if (minutesToGame > config.captureWindowMinutes || minutesToGame < -120) continue;
-    
-    // Find matching game odds
-    const gameOdds = liveOdds.find(go => 
-      go.gameId === prediction.event_id ||
-      go.gameId === prediction.gamePk?.toString() ||
-      `${go.awayTeam}_vs_${go.homeTeam}`.toLowerCase() === prediction.matchup.toLowerCase().replace(/\s+/g, '_')
+    const gameTime = Date.parse(prediction.gameDate ?? '');
+    const gameOdds = liveOdds.find(game =>
+      Date.parse(game.startTime) === gameTime &&
+      (game.gameId === String(prediction.event_id ?? '') ||
+        game.gameId === String(prediction.gamePk ?? '') ||
+        (game.sport.endsWith('_' + prediction.sport.toLowerCase()) &&
+          `${game.awayTeam}_vs_${game.homeTeam}`.toLowerCase().replace(/\s+/g, '_') ===
+            prediction.matchup.toLowerCase().replace(/\s+/g, '_')))
     );
-    
     if (!gameOdds) continue;
-    
-    // Process each leg
-    for (const leg of prediction.legs) {
-      if (!leg.line || !leg.side || !leg.model_probability) continue;
-      
-      const modelProb = typeof leg.model_probability === 'string' 
-        ? parseFloat(leg.model_probability) 
-        : leg.model_probability;
-      
-      if (!Number.isFinite(modelProb)) continue;
-      
-      // Find matching market in live odds
-      const openingOdds = typeof leg.implied_odds === 'string'
-        ? parseInt(leg.implied_odds.replace(/[^\d-]/g, ''), 10)
-        : (leg.implied_odds as number | null);
-      
-      if (!openingOdds) continue;
-      
-      // Find best closing line for this prop
-      const closingMarket = findClosingMarket(gameOdds, leg.leg_name, leg.market || '', leg.side, leg.line);
-      if (!closingMarket) continue;
-      
+
+    const captured: ClvRecord[] = [];
+    const legs = prediction.legs.map(leg => {
+      if (leg.closing_odds_source || !leg.side || !leg.market || leg.line == null) return leg;
+      const modelProb = Number(leg.model_probability);
+      const openingOdds = parseAmericanPrice(leg.implied_odds);
+      if (!(modelProb > 0 && modelProb < 1) || openingOdds === null) return leg;
+      const closingMarket = findClosingMarket(gameOdds, {
+        player: playerNameForEvidence(leg), market: leg.market, side: leg.side, line: leg.line,
+      }, { from: Math.max(gameTime - windowMs, Date.parse(prediction.timestamp)), through: Math.min(gameTime, Date.now()) });
+      if (!closingMarket) return leg;
+
       const openingImplied = americanToImplied(openingOdds);
       const closingImplied = americanToImplied(closingMarket.odds);
       const clvPercent = ((closingImplied - openingImplied) / openingImplied) * 100;
-      const beatClosing = modelProb > closingImplied;
-      
-      const record: ClvRecord = {
+      const beatClosing = clvPercent > 0;
+      const capturedAt = new Date(closingMarket.lastUpdated).toISOString();
+      captured.push({
         predictionId: prediction.prediction_id,
         legName: leg.leg_name,
         sport: prediction.sport,
-        market: leg.market || 'unknown',
+        market: leg.market,
         side: leg.side,
         line: leg.line,
         openingOdds,
@@ -143,69 +141,25 @@ export async function captureClosingLines(config: ClvConfig = DEFAULT_CLV_CONFIG
         modelProbability: modelProb,
         clvPercent,
         beatClosing,
-        gameDate: prediction.gameDate || '',
-        capturedAt: new Date().toISOString(),
-      };
-      
-      records.push(record);
-      
-      // Update prediction with CLV data
-      await updatePrediction(prediction.prediction_id, {
-        legs: prediction.legs.map(l => {
-          if (l.leg_name !== leg.leg_name) return l;
-          return {
-            ...l,
-            closing_odds: closingMarket.odds,
-            closing_implied: closingImplied,
-            clv_percent: clvPercent,
-            beat_closing: beatClosing,
-            clv_captured_at: record.capturedAt,
-          };
-        }),
+        gameDate: prediction.gameDate ?? '',
+        capturedAt,
       });
+      return {
+        ...leg,
+        closing_odds: closingMarket.odds,
+        closing_implied: closingImplied,
+        closing_odds_at: capturedAt,
+        closing_odds_source: 'The Odds API: ' + closingMarket.book,
+        clv_percent: clvPercent,
+        beat_closing: beatClosing,
+        clv_captured_at: capturedAt,
+      };
+    });
+    if (captured.length && await updatePrediction(prediction.prediction_id, { legs })) {
+      records.push(...captured);
     }
   }
-  
   return records;
-}
-
-/** Find closing market match in live odds */
-function findClosingMarket(
-  gameOdds: any,
-  playerName: string,
-  market: string,
-  side: 'over' | 'under',
-  line: number
-): { odds: number; book: string } | null {
-  for (const prop of gameOdds.playerProps) {
-    const nameMatch = prop.playerName.toLowerCase().includes(playerName.toLowerCase()) ||
-      playerName.toLowerCase().includes(prop.playerName.toLowerCase());
-    if (!nameMatch) continue;
-    
-    const exact = prop.markets.find((m: any) => 
-      m.market === market && m.side === side && m.line === line
-    );
-    if (exact) return { odds: exact.odds, book: exact.book };
-    
-    // Find closest line (seed with the first candidate so best is never null mid-reduce)
-    const candidates = prop.markets
-      .filter((m: any) => m.market === market && m.side === side);
-    if (!candidates.length) continue;
-    const best = candidates.reduce((best: any, current: any) => {
-      if (!best) return current;
-      if (side === 'over') {
-        if (current.line > best.line) return current;
-        if (current.line === best.line && current.odds > best.odds) return current;
-      } else {
-        if (current.line < best.line) return current;
-        if (current.line === best.line && current.odds > best.odds) return current;
-      }
-      return best;
-    }, null as any);
-    
-    if (best) return { odds: best.odds, book: best.book };
-  }
-  return null;
 }
 
 /** Convert American odds to implied probability */
@@ -244,7 +198,7 @@ export async function computeCalibration(config: ClvConfig = DEFAULT_CLV_CONFIG)
       if (!Number.isFinite(modelProb)) continue;
       
       const clvPercent = (leg as any).clv_percent ?? 0;
-      const beatClosing = (leg as any).beat_closing ?? false;
+      const beatClosing = Number((leg as any).clv_percent) > 0;
       const closingOdds = (leg as any).closing_odds;
       const decimalOdds = closingOdds ? americanToDecimal(closingOdds) : 0;
       

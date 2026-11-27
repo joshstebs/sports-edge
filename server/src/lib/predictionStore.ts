@@ -34,6 +34,9 @@ export interface PredictionLeg {
   game_odds?: string | null;
   /** Availability-gate note persisted at logging time ("lineup not yet confirmed…"). */
   gate_note?: string | null;
+  closing_odds?: number;
+  closing_odds_source?: string;
+  closing_odds_at?: string;
   outcome?: LegOutcome | null;
   actual?: number | null;
   evaluation_note?: string | null;
