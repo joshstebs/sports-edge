@@ -16,6 +16,7 @@ export interface SlateEvent {
   home: { id: string | null; name: string };
   venue: string | null;
   status: string | null;
+  commenceTime?: string;
   awayProbable?: string | null;
   homeProbable?: string | null;
 }
@@ -79,6 +80,7 @@ export async function discoverSlateEvents(
       sport,
       eventId: game.gamePk,
       date: game.officialDate,
+      commenceTime: game.gameDate,
       away: { id: null, name: game.away.name },
       home: { id: null, name: game.home.name },
       venue: game.venue ?? null,
@@ -99,6 +101,7 @@ export async function discoverSlateEvents(
     return {
       sport,
       eventId: String(event?.id ?? ''),
+      commenceTime: event?.date,
       date: event?.date ? new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
       }).format(new Date(event.date)) : date,
@@ -385,6 +388,7 @@ export interface SharpPrice {
   source?: string;
   checkedAt?: string;
   lineLabel?: string;
+  matchup?: { home: string; away: string; commenceTime: string };
 }
 
 export interface SlatePriceResult {
@@ -473,8 +477,10 @@ export async function getConsensusSlatePrices(
             player: prop.playerName, market, line, over: null, under: null,
             book: 'SportsGameOdds consensus', books: [], bookCount: 0, source: 'api.sportsgameodds.com',
             checkedAt: result.checkedAt,
+            matchup: { home: event.home, away: event.away, commenceTime: event.commenceTime },
             lineType: 'primary', isAlternate: false, consensusRank: 1, lineLabel: 'PRIMARY / CONSENSUS LINE',
           };
+          if (current.matchup?.commenceTime !== event.commenceTime || current.matchup?.home !== event.home) continue;
           if (prop.checkedAt && (!current.checkedAt || Date.parse(prop.checkedAt) < Date.parse(current.checkedAt))) current.checkedAt = prop.checkedAt;
           if (prop.side === 'over') current.over = prop.odds ?? current.over;
           if (prop.side === 'under') current.under = prop.odds ?? current.under;

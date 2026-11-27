@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { propLearningRouter } from './propLearning.js';
 import { number, readConnector, record, string } from '../lib/workspaceConnector.js';
 import { loadTrackingSnapshot } from '../lib/workspaceTracking.js';
 import type { LineMovement, WorkspaceSnapshot } from '../workspace.js';
@@ -27,6 +28,7 @@ function parseMovements(value: unknown) {
 }
 
 export const workspaceRouter = Router();
+workspaceRouter.use('/prop-learning', propLearningRouter);
 
 workspaceRouter.get('/', async (req, res) => {
   const hours = req.query.hours ?? '24';

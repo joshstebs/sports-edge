@@ -98,6 +98,18 @@ test('workspace tracking scopes local records, previews overlaps, and reads the 
   assert.equal((await fetch(endpoint, { headers: headers('tester') })).status, 403);
   assert.equal((await fetch(`${endpoint}?days=14`, { headers: headers('admin') })).status, 400);
 
+  const propLearning = `${base}/api/workspace/prop-learning`;
+  assert.equal((await fetch(propLearning)).status, 401);
+  assert.equal((await fetch(propLearning, { headers: headers('tester') })).status, 403);
+  const propReport = await fetch(propLearning, { headers: headers('admin') });
+  assert.equal(propReport.status, 200);
+  assert.deepEqual(await propReport.json(), { tracked: 0, pending: 0, settled: 0, trends: [] });
+  assert.equal((await fetch(`${propLearning}/scan`, {
+    method: 'POST',
+    headers: { ...headers('admin'), Origin: process.env.APP_ORIGIN!, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sport: 'nba', market: 'not-a-market' }),
+  })).status, 400);
+
   const unconfiguredResponse = await fetch(endpoint, { headers: headers('admin') });
   assert.match(unconfiguredResponse.headers.get('cache-control') ?? '', /no-store/);
   const unconfigured = await unconfiguredResponse.json() as TrackingSnapshot;

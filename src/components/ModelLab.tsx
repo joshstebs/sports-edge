@@ -6,6 +6,7 @@ import {
   type DiagnosticsSnapshot,
   type PerformanceSummary,
 } from '../lib/api';
+import PropLearningPanel from './PropLearningPanel';
 import { Section, Stat } from './ui/primitives';
 
 function StatusPill({ status }: { status: 'ready' | 'fallback' | 'unavailable' }) {
@@ -75,6 +76,8 @@ export default function ModelLab() {
           </span>
         </div>
       </div>
+
+      <PropLearningPanel />
 
       {loading && <div className="h-40 animate-pulse rounded-2xl border border-line/60 bg-panel2/40" />}
       {error && !loading && (

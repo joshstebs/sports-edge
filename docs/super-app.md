@@ -23,3 +23,13 @@ In **Workspace → Ledger & comparison**, filter the unified ledger by source an
 The overlap review matches BetTrack and SportsEdge selections only when they share an Odds API-style event ID, a supported market (moneyline, spread or total), a selection name and any applicable line. Repeated wagers on the same selection can still be distinct tickets. BetIQ’s user history does not expose fixture IDs, so its tickets cannot be matched to the other sources reliably. The ledger displays recent records even when a different source is unavailable, and backfill requires validation against live history.
 
 Choose a 7-, 30- or 90-day window for **You vs. the model**. The comparison uses BetIQ’s game dates and native cohort rules. It requests pregame user picks and excludes cash-outs. P&L reflects BetIQ’s recorded stake and profit, and the model side uses paper bets. The ledger’s source filter applies only to the history list.
+
+## Player Prop Lab
+
+Open **Model Lab → Player Prop Lab** as an admin. Scan a sport or a specific market to collect pregame prices and review the slate without an analyst API key. The scan also attempts to grade prior candidates. **Grade completed games** runs the bounded grader on demand.
+
+The learning cohort uses half-point offers with a matching game, fresh SportsGameOdds price, and baseline model probability recorded before the game starts. Grading uses the matching game ID. Research thresholds stay available when the slate lacks priced offers.
+
+Adjustments group outcomes by sport, market, side, and model version. SportsEdge fits a capped adjustment on earlier dates and applies it only if it lowers Brier score on separate later dates. Outcomes unavailable at the first later quote are excluded from training. The default model stays in use for thin or inconclusive samples. The comparison measures probability accuracy and does not claim a historical return.
+
+SportsGameOdds pricing requires `SPORTSGAMEODDS_API_KEY`. Other price feeds still support the existing slate workflow. Their quotes are outside this learning cohort until SportsEdge can match them to an exact game.

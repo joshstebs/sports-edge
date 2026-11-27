@@ -140,7 +140,7 @@ function americanImplied(odds: number | null | undefined): number | null {
   return odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100);
 }
 
-function grade(probability: number, sampleSize: number): 'A' | 'B' | 'C' | 'D' {
+export function gradePropProbability(probability: number, sampleSize: number): 'A' | 'B' | 'C' | 'D' {
   // Keep the displayed/tool grade aligned with the same thresholds used by
   // the prompt, parlay gate, and frontend. Sample gates still prevent a short
   // hot streak from receiving an A/B recommendation label.
@@ -236,7 +236,7 @@ export function buildPlayerPropModel(input: PlayerPropModelInput): PlayerPropMod
     losses: input.side === 'over' ? unders : overs,
     pushes, probability: round(probability), rawProbability: round(rawProbability), pOver: round(pOver), pUnder: round(pUnder), pPush: round(pPush),
     average: round(mean), median: round(median), standardDeviation: round(Math.sqrt(variance)),
-    recentAverage: round(recentAverage), grade: grade(probability, values.length),
+    recentAverage: round(recentAverage), grade: gradePropProbability(probability, values.length),
     impliedProbability: impliedProbability == null ? null : round(impliedProbability),
     estimatedEdge: estimatedEdge == null ? null : round(estimatedEdge),
     calibrationApplied,

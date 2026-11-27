@@ -3,10 +3,12 @@ import * as espn from '../providers/espn.js';
 import { normalizeName } from '../providers/http.js';
 import { isBlockingInjuryStatus } from '../models/injuryStatus.js';
 import { discoverPlayersForEvent, discoverSlateEvents, discoverUpcomingNflSlate, getConsensusSlatePrices, type DiscoveredPlayer } from '../providers/slateDiscovery.js';
-import { buildPlayerPropModel, espnObservation, snapToRealisticLine, isLineNearProjection, mlbObservation, minimumSampleFor, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
+import { buildPlayerPropModel, gradePropProbability, espnObservation, snapToRealisticLine, isLineNearProjection, mlbObservation, minimumSampleFor, normalizeMarket, type HistoricalObservation, type ModelSport } from '../models/playerPropModel.js';
 import { evaluatePropLine } from '../models/propLineEvaluation.js';
 import { featureWindow, type PlayerFeatureProfile } from '../candidates/featureProfile.js';
-import { recordCandidateEvaluations } from '../candidates/candidateHistory.js';
+import { loadCandidateHistory, recordCandidateEvaluations, type CandidateHistoryRecord } from '../candidates/candidateHistory.js';
+import { adjustedPropProbability, learnPropTrends } from '../candidates/propLearning.js';
+import type { SharpPrice } from '../providers/slateDiscovery.js';
 import { hasCurrentMarketLine } from '../lib/parlayQuality.js';
 import { loadLearning } from '../lib/predictionStore.js';
 import type { ToolDef, ToolOutcome } from './tools.js';
@@ -710,12 +712,12 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     return unavailable(reason);
   }
   console.log(`[slateScreener] evaluated ${evaluated.length} player-markets; ${evaluated.filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence).length} above ${Math.round(minConfidence * 100)}% before dedupe`);
-  await recordCandidateEvaluations(evaluated.map(({ player, market, line, model, profile, source }) => ({
+  const screeningRows: Parameters<typeof recordCandidateEvaluations>[0] = evaluated.map(({ player, market, line, model, profile, source }) => ({
     eventDate: player.eventDate, eventId: player.eventId, sport, player: player.name, team: player.team, opponent: player.opponent,
     market, side: model.side, line, modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
     modelVersion: model.modelVersion, modelSource: source, sources: profile.sources, fallbackUsed: sport !== 'mlb',
     metadata: { lineupSlot: player.lineupSlot, availability: profile.availability },
-  }))).catch(() => {});
+  }));
 
   const qualified = evaluated
     .filter(({ model }) => model.grade !== 'D' && (model.probability ?? 0) >= minConfidence)
@@ -767,6 +769,53 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     return match ?? null;
   };
 
+  const initials = new Map(scopedEvents.map(event => [String(event.eventId), event]));
+  const trends = learnPropTrends(await loadCandidateHistory());
+  const priceRows: Parameters<typeof recordCandidateEvaluations>[0] = [];
+  const currentLines = new Map<typeof evaluated[number], ReturnType<typeof evaluatePropLine>>();
+  const matchedPrices = new Set<typeof evaluated[number]>();
+  for (const item of evaluated) {
+    const { player, market, observations, source, calibration, profile } = item;
+    const quote: SharpPrice | null = sharpline(player.name, market);
+    if (!quote || !Number.isFinite(quote.line)) continue;
+    const current = evaluatePropLine({
+      sport, market, line: quote.line, observations, source, calibration,
+      requestedSide: sideFilter, oddsOver: quote.over, oddsUnder: quote.under,
+    });
+    currentLines.set(item, current);
+
+    const event = initials.get(String(player.eventId));
+    const eventStart = event?.commenceTime;
+    // Require an exact pregame fixture match before a quote can enter the learning cohort.
+    if (!event || !eventStart || !quote.matchup || Math.abs(quote.line % 1) !== 0.5
+      || Math.abs(Date.parse(eventStart) - Date.parse(quote.matchup.commenceTime)) > 5 * 60_000
+      || !Number.isFinite(Date.parse(quote.matchup.commenceTime))
+      || normalizeName(event.home.name) !== normalizeName(quote.matchup.home)
+      || normalizeName(event.away.name) !== normalizeName(quote.matchup.away)
+      || !(Date.now() < Date.parse(eventStart))
+      || !quote.source || !quote.checkedAt || !(Date.parse(quote.checkedAt) <= Date.now())) continue;
+
+    for (const model of [current.over, current.under]) {
+      if (!model || model.probability == null || !model.grade) continue;
+      const odds = model.side === 'over' ? quote.over : quote.under;
+      if (odds == null || !Number.isInteger(odds) || Math.abs(odds) < 100 || !hasCurrentMarketLine({
+        entity_type: 'player', sport, market, side: model.side, line: quote.line,
+        odds, line_source: quote.source, line_checked_at: quote.checkedAt,
+      })) continue;
+      if (current.chosen?.side === model.side) matchedPrices.add(item);
+      const price: CandidateHistoryRecord['price'] = {
+        americanOdds: odds, source: quote.source, checkedAt: quote.checkedAt, eventStart,
+      };
+      priceRows.push({
+        sport, eventDate: player.eventDate, eventId: player.eventId, playerId: player.id, player: player.name,
+        team: player.team, opponent: player.opponent, market, side: model.side, line: quote.line,
+        modelProbability: model.probability, grade: model.grade, sampleSize: model.sampleSize,
+        modelVersion: model.modelVersion, modelSource: source, sources: profile.sources, fallbackUsed: sport !== 'mlb', price,
+      });
+    }
+  }
+  await recordCandidateEvaluations([...screeningRows, ...priceRows]).catch(() => {});
+
   // A player's highest model score may be on an unposted market. Choose the
   // best offered market first, then keep one leg per player. Unpriced rows
   // remain useful research but must never displace a verified offer.
@@ -784,13 +833,11 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   });
   gates.duplicatePlayer = qualified.length - deduped.length;
 
-  const candidates = deduped.slice(0, Math.max(12, requested * 2)).flatMap(({ player, market, line, model, profile, observations, gameRows, calibration, injury, history }) => {
+  const candidates = deduped.slice(0, Math.max(12, requested * 2)).flatMap((item) => {
+    const { player, market, line, model, profile, observations, gameRows, injury, history } = item;
     const live = sharpline(player.name, market);
     const liveLine = live != null && Number.isFinite(Number(live.line)) ? Number(live.line) : null;
-    const liveEvaluation = liveLine == null ? null : evaluatePropLine({
-      sport, market, line: liveLine, observations, source: profile.sources?.[0] ?? 'unknown',
-      calibration, requestedSide: sideFilter, oddsOver: live?.over ?? null, oddsUnder: live?.under ?? null,
-    });
+    const liveEvaluation = currentLines.get(item) ?? null;
     const finalModel = (liveEvaluation?.chosen ?? model)!;
     // Re-apply the quality gate AFTER re-scoring at the live line. A candidate
     // that qualified at the screening line can fall to a D grade or below the
@@ -798,6 +845,10 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     // recommend a leg the screen itself rejects.
     if (!finalModel?.available || finalModel.probability == null || !finalModel.grade
       || finalModel.grade === 'D' || finalModel.probability < minConfidence) return [];
+    const trend = matchedPrices.has(item)
+      ? trends.getTrend({ sport, market, side: finalModel.side, modelVersion: finalModel.modelVersion }) : null;
+    const decisionProbability = trend ? adjustedPropProbability(finalModel.probability, trend.adjustment) : finalModel.probability;
+    const decisionEdge = finalModel.impliedProbability == null ? null : decisionProbability - finalModel.impliedProbability;
     const finalLine = liveLine ?? line;
     const recentValues = observations.map((row: HistoricalObservation) => row.value);
     const hitRateAtLine = (windowSize: number): number | null | undefined => {
@@ -845,8 +896,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
     const verified = liveLine != null
       && sideOdds != null
       && finalModel.grade !== 'D'
-      && finalModel.estimatedEdge != null
-      && finalModel.estimatedEdge > 0
+      && decisionProbability >= minConfidence
+      && decisionEdge != null
+      && decisionEdge > 0
       && hasCurrentMarketLine({
         entity_type: 'player', sport, market, side: finalModel.side, line: liveLine,
         odds: sideOdds, line_source: live?.source, line_checked_at: live?.checkedAt,
@@ -893,8 +945,9 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       homeAway: player.homeAway,
       matchupContext: `${player.homeAway === 'home' ? 'vs' : '@'} ${player.opponent}`,
       market, side: displayedSide, suggestedLine: line, modelLine: line,
-      screeningSide: model.side, confidencePct: Math.round((finalModel.probability ?? 0) * 1000) / 10,
-      grade: finalModel.grade, sampleSize: finalModel.sampleSize,
+      screeningSide: model.side, confidencePct: Math.round(decisionProbability * 1000) / 10,
+      learnedAdjustmentPct: trend ? Math.round(trend.adjustment * 1000) / 10 : null,
+      grade: trend ? gradePropProbability(decisionProbability, finalModel.sampleSize) : finalModel.grade, sampleSize: finalModel.sampleSize,
       projection: researchOnly ? researchForm.projection : finalModel.average ?? null,
       recommendationType: verified ? 'verified' : researchOnly ? 'research' : 'unverified',
       researchOnly,
@@ -903,7 +956,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       historicalThresholdSource: researchOnly
         ? (liveLine != null ? 'current market line (edge not verified)' : 'sample-derived model benchmark rounded to a conventional half-point (not a sportsbook line)')
         : null,
-      marketProbability: researchOnly || liveLine == null ? null : finalModel.probability ?? null,
+      marketProbability: researchOnly || liveLine == null ? null : decisionProbability,
       marketLine: researchOnly ? null : (live?.line ?? null),
       marketOddsOver: researchOnly ? null : (live?.over ?? null),
       marketOddsUnder: researchOnly ? null : (live?.under ?? null),
@@ -915,7 +968,7 @@ const handler = async (args: any): Promise<ToolOutcome> => {
       isAlternate: researchOnly ? false : (live?.isAlternate ?? false),
       lineLabel: researchOnly ? null : (live?.lineLabel ?? null),
       alternateLines: researchOnly ? [] : (alternatesByKey.get(`${player.name.toLowerCase()}|${normalizeMarket(market).toLowerCase()}`) ?? []),
-      estimatedEdge: researchOnly ? null : (liveEvaluation?.chosen?.estimatedEdge == null ? null : Math.round(liveEvaluation.chosen.estimatedEdge * 1000) / 10),
+      estimatedEdge: researchOnly || decisionEdge == null ? null : Math.round(decisionEdge * 1000) / 10,
       edgeOver: researchOnly ? null : (liveEvaluation?.edgeOver == null ? null : Math.round(liveEvaluation.edgeOver * 1000) / 10),
       edgeUnder: researchOnly ? null : (liveEvaluation?.edgeUnder == null ? null : Math.round(liveEvaluation.edgeUnder * 1000) / 10),
       edgeLine: researchOnly ? null : liveLine,
@@ -967,8 +1020,8 @@ const handler = async (args: any): Promise<ToolOutcome> => {
   // Rank verified-price candidates first (either side has a real edge — matches the
   // "verified lines" requirement), then by chosen-side edge, then confidence.
   candidates.sort((a: any, b: any) => {
-    const aPriced = (a.edgeOver != null || a.edgeUnder != null) ? 0 : 1;
-    const bPriced = (b.edgeOver != null || b.edgeUnder != null) ? 0 : 1;
+    const aPriced = a.recommendationType === 'verified' ? 0 : 1;
+    const bPriced = b.recommendationType === 'verified' ? 0 : 1;
     return aPriced - bPriced
       || (b.estimatedEdge ?? -Infinity) - (a.estimatedEdge ?? -Infinity)
       || (b.confidencePct ?? 0) - (a.confidencePct ?? 0);

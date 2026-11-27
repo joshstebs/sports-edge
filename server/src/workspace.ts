@@ -63,3 +63,23 @@ export interface TrackingSnapshot {
   comparison: Connector<{ since: string; user: ComparisonResults; model: ComparisonResults }>;
   overlaps: Array<{ ticketId: string; selectionId: string; sportsEdgeIds: string[] }>;
 }
+
+export interface PropTrend {
+  sport: string;
+  market: string;
+  side: 'over' | 'under';
+  modelVersion: string;
+  trainCount: number;
+  holdoutCount: number;
+  baselineBrier: number;
+  adjustedBrier: number;
+  adjustment: number;
+  active: boolean;
+}
+
+export interface PropLearningReport {
+  tracked: number;
+  pending: number;
+  settled: number;
+  trends: PropTrend[];
+}
