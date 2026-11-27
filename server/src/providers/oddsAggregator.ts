@@ -41,6 +41,8 @@ export interface OddsProviderConfig {
   sports: string[];
   markets: string[];
   regions: string[];     // 'us', 'us2', 'uk', 'eu', 'au'
+  marketsBySport?: Record<string, string[]>;
+  eventWindow?: { from: number; through: number };
   bookmakers: string[];  // specific books to fetch
 }
 
@@ -138,6 +140,8 @@ export async function fetchTheOddsAPI(config: OddsProviderConfig): Promise<GameO
   const sports = config.sports || ['baseball_mlb', 'americanfootball_nfl', 'basketball_nba', 'icehockey_nhl'];
   
   for (const sport of sports) {
+    const markets = config.marketsBySport?.[sport] ?? config.markets;
+    if (config.marketsBySport && !markets?.length) continue;
     try {
       // Get events
       const eventsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${config.theOddsApiKey}`;
@@ -147,7 +151,9 @@ export async function fetchTheOddsAPI(config: OddsProviderConfig): Promise<GameO
       
       // Get odds for each event
       for (const event of events) {
-        const oddsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${config.theOddsApiKey}&regions=${(config.regions || ['us']).join(',')}&markets=${(config.markets || ['h2h', 'spreads', 'totals', 'player_props']).join(',')}&bookmakers=${(config.bookmakers || ['pinnacle', 'draftkings', 'fanduel', 'betmgm', 'caesars']).join(',')}`;
+        const start = Date.parse(event.commence_time);
+        if (config.eventWindow && !(start >= config.eventWindow.from && start <= config.eventWindow.through)) continue;
+        const oddsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?oddsFormat=american&apiKey=${config.theOddsApiKey}&regions=${(config.regions || ['us']).join(',')}&markets=${(markets || ['h2h', 'spreads', 'totals', 'player_props']).join(',')}&bookmakers=${(config.bookmakers || ['pinnacle', 'draftkings', 'fanduel', 'betmgm', 'caesars']).join(',')}`;
         const oddsRes = await fetch(oddsUrl);
         if (!oddsRes.ok) continue;
         const oddsData = await oddsRes.json();
@@ -178,7 +184,7 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
   for (const book of bookmakers) {
     for (const market of book.markets) {
       const bookName = book.key;
-      const lastUpdate = book.last_update;
+      const lastUpdate = market.last_update ?? book.last_update;
       
       if (market.key === 'h2h') {
         for (const outcome of market.outcomes) {
@@ -202,8 +208,9 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
         }
       } else if (market.key.startsWith('player_')) {
         // Player props
-        const canonicalMarket = normalizeMarketName(market.key, oddsData.sport || '');
+        const canonicalMarket = normalizeMarketName(market.key, oddsData.sport_key || '');
         for (const outcome of market.outcomes) {
+          if (!['Over', 'Under'].includes(outcome.name)) continue;
           allMarkets.push({
             market: canonicalMarket,
             playerName: String(outcome.description ?? outcome.player ?? outcome.participant ?? '').trim(),
@@ -239,7 +246,7 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
     }
     playerProps.push({
       playerName: first.playerName ?? '',
-      sport: oddsData.sport || '',
+      sport: oddsData.sport_key || '',
       gameId: event.id,
       markets,
       bestLines,
@@ -248,7 +255,7 @@ function transformTheOddsAPI(event: any, oddsData: any): GameOdds {
   
   return {
     gameId: event.id,
-    sport: oddsData.sport || '',
+    sport: oddsData.sport_key || '',
     homeTeam: event.home_team,
     awayTeam: event.away_team,
     startTime: event.commence_time,
