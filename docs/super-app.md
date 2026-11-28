@@ -8,7 +8,7 @@ SportsEdge provides the signed-in workspace, analyst chat, prop research, and th
 
 ## Sports Betting Supercenter
 
-Open **Supercenter** to move between game odds, player research, edge analysis, model results, and your picks. The game board uses The Odds API if `ODDS_API_KEY` or `THE_ODDS_API_KEY` is set and returns upcoming events. ESPN provides a single-feed fallback. Book quotes are grouped by the same game, market, selection, and point value. Each threshold is compared separately.
+Open **Supercenter** to move between game odds, player research, edge analysis, model results, and your picks. With no keys, the game board checks today's and tomorrow's ESPN schedules (Eastern time) and shows sportsbook prices published in each game's ESPN summary. The Odds API takes priority after `ODDS_API_KEY` or `THE_ODDS_API_KEY` is configured and returns upcoming priced events. Automatic player-prop prices require a separate provider. Book quotes are grouped by the same game, market, selection, and point value.
 
 Use **Compare quotes** to enter prices from two books for the same game and selection. Add your probability estimate for a break-even, edge, and expected-return comparison. Player research opens the same comparison when you enter a prop line. Historical hit rates are shown separately from the probability you enter. Admin users can open **BetTrack & BetIQ** for line movements, model analytics, and the connected history.
 

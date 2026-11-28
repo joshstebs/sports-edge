@@ -96,6 +96,12 @@ export default function OddsBoard() {
       {board && board.source !== 'unavailable' && !event && <p className="text-sm text-frost2">No upcoming {sport.toUpperCase()} games listed.</p>}
       {espnEventId && !snapshotResponse && <p role="status" className="text-sm text-frost2">Loading game prices…</p>}
       {espnEventId && snapshotResponse && !selections.length && <p className="text-sm text-frost2">ESPN has no posted prices for this game.</p>}
+      {espnEventId && (
+        <a className="inline-block text-sm text-head underline" target="_blank" rel="noreferrer"
+          href={`https://www.espn.com/${sport}/game/_/gameId/${encodeURIComponent(espnEventId)}`}>
+          Check the source game on ESPN
+        </a>
+      )}
 
       {selected && (
         <div className="flex flex-wrap items-end gap-3">

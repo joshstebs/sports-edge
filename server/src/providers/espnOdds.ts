@@ -60,8 +60,9 @@ async function pacedFetch(url: string): Promise<Response> {
   }
 }
 
-async function getScoreboard(sportPath: string): Promise<Array<{ id: string; away: string; home: string; commenceTime: string; completed: boolean }>> {
-  const res = await pacedFetch(`${API}/${sportPath}/scoreboard`);
+async function getScoreboard(sportPath: string, date?: string): Promise<Array<{ id: string; away: string; home: string; commenceTime: string; completed: boolean }>> {
+  const query = date ? `?dates=${date}` : '';
+  const res = await pacedFetch(`${API}/${sportPath}/scoreboard${query}`);
   if (!res.ok) throw new Error(`scoreboard HTTP ${res.status}`);
   const d: any = await res.json();
   return (d?.events ?? []).map((e: any) => {
@@ -74,9 +75,19 @@ async function getScoreboard(sportPath: string): Promise<Array<{ id: string; awa
 }
 
 export async function getUpcomingOddsEvents(sport: OddsBoardSport): Promise<OddsBoardEvent[]> {
-  const events = await getScoreboard(SPORT_PATHS[sport]);
+  const path = SPORT_PATHS[sport];
   const now = Date.now();
-  return events.filter(event =>
+  const easternDate = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const dateKey = (time: number) => {
+    const parts = Object.fromEntries(easternDate.formatToParts(time).map(part => [part.type, part.value]));
+    return `${parts.year}${parts.month}${parts.day}`;
+  };
+  const today = await getScoreboard(path, dateKey(now)).catch(() => null);
+  const tomorrow = await getScoreboard(path, dateKey(now + 86_400_000)).catch(() => null);
+  const events = today || tomorrow ? [...(today ?? []), ...(tomorrow ?? [])] : await getScoreboard(path);
+  return [...new Map(events.map(event => [event.id, event])).values()].filter(event =>
     !event.completed && /^\d+$/.test(event.id) && event.away && event.home && Date.parse(event.commenceTime) > now,
   ).sort((a, b) => Date.parse(a.commenceTime) - Date.parse(b.commenceTime))
     .slice(0, 24).map(({ id, away, home, commenceTime }) => ({ id, away, home, commenceTime, selections: [] }));

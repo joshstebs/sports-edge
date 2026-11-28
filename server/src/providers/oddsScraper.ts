@@ -29,10 +29,7 @@ function parseState(html: string): any | null {
   const m = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\});\s*<\/script>/);
   if (!m) return null;
   try {
-    // The blob ends at the first ";\n" that closes the assignment; decode safely.
-    const json = m[1];
-    const dec = new Function('return ' + json)();
-    return dec;
+    return JSON.parse(m[1]);
   } catch {
     return null;
   }
@@ -86,6 +83,10 @@ export async function scrapeOddsTrader(teamA?: string, teamB?: string, sport = '
       runline: { away: sp.away ?? sp.awayOdds ?? null, home: sp.home ?? sp.homeOdds ?? null },
       total: { line: tot.line ?? tot.total ?? null, over: tot.over ?? tot.overOdds ?? null, under: tot.under ?? tot.underOdds ?? null },
     };
+    if (![out.moneyline?.away, out.moneyline?.home, out.runline?.away, out.runline?.home,
+      out.total?.over, out.total?.under].some(price =>
+      typeof price === 'string' && /^[+-]?\d+$/.test(price) && Math.abs(Number(price)) >= 100,
+    )) return { available: false, source: SOURCE, reason: 'no posted prices in public page data' };
     return out;
   } catch (e: any) {
     return { available: false, source: SOURCE, reason: `scrape error: ${e?.message ?? e}` };
